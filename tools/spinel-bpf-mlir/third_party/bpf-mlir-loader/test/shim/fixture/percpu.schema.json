@@ -1,0 +1,23 @@
+{
+ "version": 1,
+ "coverage": {"programs": "omitted", "maps": "complete", "records": "complete", "telemetry": "complete"},
+ "core": {
+  "records": [
+   {"symbol": "tri", "id": 0, "size": 12, "min_size": 12, "alignment": 4, "required_through": "", "note": "E007 H4",
+    "fields": [
+     {"name": "a", "offset": 0, "expose": "int", "note": "", "type": {"kind":"int","bits":32,"signed":false,"endianness":"little","alignment":4}},
+     {"name": "b", "offset": 4, "expose": "int", "note": "", "type": {"kind":"int","bits":32,"signed":false,"endianness":"little","alignment":4}},
+     {"name": "c", "offset": 8, "expose": "int", "note": "", "type": {"kind":"int","bits":32,"signed":false,"endianness":"little","alignment":4}}
+    ]}
+  ],
+  "maps": [
+   {"symbol": "pa", "kind": "percpu_array", "key": {"kind":"int","bits":32,"signed":false,"endianness":"little","alignment":4}, "value": {"kind":"int","bits":32,"signed":true,"endianness":"little","alignment":4}, "max_entries": 2, "flags": 0, "record": "", "note": "E007 H4"},
+   {"symbol": "ph", "kind": "percpu_hash", "key": {"kind":"int","bits":32,"signed":false,"endianness":"little","alignment":4}, "value": {"kind": "record_ref", "symbol": "tri"}, "max_entries": 8, "flags": 0, "record": "", "note": "E007 H4"}
+  ],
+  "programs": [
+   {"name": "prog", "kind": "xdp", "attach_target": "", "maps": ["pa", "ph"], "note": "E007 H4"}
+  ]
+ },
+ "telemetry": {"clocks": [], "value_maps": [], "bounds_sets": [], "signals": []},
+ "extensions": {}
+}

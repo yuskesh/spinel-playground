@@ -1,0 +1,666 @@
+--- a/doomgeneric/Makefile.headless
++++ b/doomgeneric/Makefile.headless
+@@ -19,6 +19,7 @@
+ CFLAGS+=-DDG_DUMP_HOOK
+ CFLAGS+=-DDG_E047_HOOK
+ CFLAGS+=-DDG_E051_HOOK
++CFLAGS+=-DDG_E052_HOOK
+ # NOTE (macOS/arm64, Apple clang 21): the doomgeneric sources at dcb7a8d compile
+ # clean under -Wall with *no* -Wno-* suppressions and *no* source edits.
+ # The only macOS frictions are in the stock Makefile, and both are link flags
+@@ -31,7 +32,7 @@
+ OBJDIR=build_headless
+ OUTPUT=doomgeneric_headless
+ 
+-SRC_DOOM = dummy.o am_map.o doomdef.o doomstat.o dstrings.o d_event.o d_items.o d_iwad.o d_loop.o d_main.o d_mode.o d_net.o f_finale.o f_wipe.o g_game.o hu_lib.o hu_stuff.o info.o i_cdmus.o i_endoom.o i_joystick.o i_scale.o i_sound.o i_system.o i_timer.o memio.o m_argv.o m_bbox.o m_cheat.o m_config.o m_controls.o m_fixed.o m_menu.o m_misc.o m_random.o p_ceilng.o p_doors.o p_enemy.o p_floor.o p_inter.o p_lights.o p_map.o p_maputl.o p_mobj.o p_plats.o p_pspr.o p_saveg.o p_setup.o p_sight.o p_spec.o p_switch.o p_telept.o p_tick.o p_user.o r_bsp.o r_data.o r_draw.o r_main.o r_plane.o r_segs.o r_sky.o r_things.o sha1.o sounds.o statdump.o st_lib.o st_stuff.o s_sound.o tables.o v_video.o wi_stuff.o w_checksum.o w_file.o w_main.o w_wad.o z_zone.o w_file_stdc.o i_input.o i_video.o doomgeneric.o doomgeneric_headless.o doomgeneric_dump.o doomgeneric_e047.o doomgeneric_e051.o
++SRC_DOOM = dummy.o am_map.o doomdef.o doomstat.o dstrings.o d_event.o d_items.o d_iwad.o d_loop.o d_main.o d_mode.o d_net.o f_finale.o f_wipe.o g_game.o hu_lib.o hu_stuff.o info.o i_cdmus.o i_endoom.o i_joystick.o i_scale.o i_sound.o i_system.o i_timer.o memio.o m_argv.o m_bbox.o m_cheat.o m_config.o m_controls.o m_fixed.o m_menu.o m_misc.o m_random.o p_ceilng.o p_doors.o p_enemy.o p_floor.o p_inter.o p_lights.o p_map.o p_maputl.o p_mobj.o p_plats.o p_pspr.o p_saveg.o p_setup.o p_sight.o p_spec.o p_switch.o p_telept.o p_tick.o p_user.o r_bsp.o r_data.o r_draw.o r_main.o r_plane.o r_segs.o r_sky.o r_things.o sha1.o sounds.o statdump.o st_lib.o st_stuff.o s_sound.o tables.o v_video.o wi_stuff.o w_checksum.o w_file.o w_main.o w_wad.o z_zone.o w_file_stdc.o i_input.o i_video.o doomgeneric.o doomgeneric_headless.o doomgeneric_dump.o doomgeneric_e047.o doomgeneric_e051.o doomgeneric_e052.o
+ OBJS += $(addprefix $(OBJDIR)/, $(SRC_DOOM))
+ 
+ all: $(OUTPUT)
+--- a/doomgeneric/d_main.c
++++ b/doomgeneric/d_main.c
+@@ -1168,6 +1168,9 @@
+ #endif
+ #ifdef DG_E051_HOOK
+ void DG_E051Hook(void);   // doomgeneric_e051.c
++#endif
++#ifdef DG_E052_HOOK
++void E052_Init(void);      // doomgeneric_e052.c
+ #endif
+ 
+ void D_DoomMain (void)
+@@ -1819,6 +1822,14 @@
+     // Record a demo named x.lmp.
+     //
+ 
++#ifdef DG_E052_HOOK
++    // spinel-llvm E052 (P004 Phase 4): per-tic oracles (random stream, player
++    // state, thinker snapshots, frame hashes).  No-op unless DG_E052_DIR is
++    // set; unlike E047/E051 it does *not* exit -- it instruments the demo run.
++    // Placed above the -playdemo / -timedemo branches because both of those
++    // call D_DoomLoop() and return early.  E052_Init() is idempotent.
++    E052_Init();
++#endif
+     p = M_CheckParmWithArgs("-record", 1);
+ 
+     if (p)
+@@ -1871,6 +1882,12 @@
+     // DG_E051_DIR is set; exits when it is.
+     DG_E051Hook();
+ #endif
++#ifdef DG_E052_HOOK
++    // spinel-llvm E052 (P004 Phase 4): per-tic oracles (random stream, player
++    // state, thinker snapshots, frame hashes).  No-op unless DG_E052_DIR is
++    // set; unlike E047/E051 it does *not* exit -- it instruments the demo run.
++    E052_Init();
++#endif
+     D_DoomLoop ();
+ }
+ 
+--- a/doomgeneric/g_game.c
++++ b/doomgeneric/g_game.c
+@@ -76,6 +76,12 @@
+ #define SAVEGAMESIZE	0x2c000
+ 
+ void	G_ReadDemoTiccmd (ticcmd_t* cmd); 
++
++#ifdef DG_E052_HOOK
++// spinel-llvm E052 (P004 Phase 4) reference oracle hooks.
++void E052_TicHook (void);
++void E052_DemoTiccmd (const ticcmd_t* cmd);
++#endif
+ void	G_WriteDemoTiccmd (ticcmd_t* cmd); 
+ void	G_PlayerReborn (int player); 
+  
+@@ -1023,6 +1029,11 @@
+ 	D_PageTicker (); 
+ 	break;
+     }        
++#ifdef DG_E052_HOOK
++    // spinel-llvm E052: one oracle line per tic, taken *after* the full
++    // G_Ticker body so that P_Ticker / ST_Ticker have already run.
++    E052_TicHook ();
++#endif
+ } 
+  
+  
+@@ -1919,6 +1930,9 @@
+     }
+ 
+     cmd->buttons = (unsigned char)*demo_p++; 
++#ifdef DG_E052_HOOK
++    E052_DemoTiccmd (cmd);
++#endif
+ } 
+ 
+ // Increase the size of the demo buffer to allow unlimited demos
+--- a/doomgeneric/i_video.c
++++ b/doomgeneric/i_video.c
+@@ -95,6 +95,9 @@
+ #ifdef DG_FRAME_HOOK
+ /* spinel-llvm R007: implemented by doomgeneric_headless.c */
+ void DG_FrameHook(const unsigned char *buf, int n);
++#ifdef DG_E052_HOOK
++void E052_Frame(const unsigned char *buf, int n);
++#endif
+ #endif
+ 
+ // The screen buffer; this is modified to draw things to the screen
+@@ -343,7 +346,13 @@
+        i.e. before any palette expansion happens below. */
+     DG_FrameHook((const unsigned char *) I_VideoBuffer,
+                  SCREENWIDTH * SCREENHEIGHT);
++#ifdef DG_E052_HOOK
++    // spinel-llvm E052: same capture point, but keyed by gametic and with the
++    // correct FNV-1a 64 offset basis (the R007 harness has a typo).
++    E052_Frame((const unsigned char *) I_VideoBuffer,
++               SCREENWIDTH * SCREENHEIGHT);
+ #endif
++#endif
+ 
+     /* DRAW SCREEN */
+     line_in  = (unsigned char *) I_VideoBuffer;
+--- a/doomgeneric/m_random.c
++++ b/doomgeneric/m_random.c
+@@ -63,3 +63,26 @@
+ {
+     rndindex = prndindex = 0;
+ }
++
++#ifdef DG_E052_HOOK
++// spinel-llvm E052 (P004 Phase 4) oracle (a): the P_Random call stream.
++// m_random.c does not include m_random.h, so the macros above do not apply
++// here and P_Random/M_Random below are the real functions.
++void E052_Rand (const char* site, int kind, int before, int after, int value);
++
++int P_Random_e052 (const char* site)
++{
++    int before = prndindex;
++    int v = P_Random();
++    E052_Rand(site, 0, before, prndindex, v);
++    return v;
++}
++
++int M_Random_e052 (const char* site)
++{
++    int before = rndindex;
++    int v = M_Random();
++    E052_Rand(site, 1, before, rndindex, v);
++    return v;
++}
++#endif
+--- a/doomgeneric/m_random.h
++++ b/doomgeneric/m_random.h
+@@ -35,5 +35,17 @@
+ // Fix randoms for demos.
+ void M_ClearRandom (void);
+ 
++#ifdef DG_E052_HOOK
++// spinel-llvm E052 (P004 Phase 4): route every draw through a wrapper that
++// records the call site.  Additive: the plain P_Random/M_Random definitions in
++// m_random.c are untouched, the wrappers call them.
++int P_Random_e052 (const char* site);
++int M_Random_e052 (const char* site);
++#define E052_STR2(x) #x
++#define E052_STR(x) E052_STR2(x)
++#define P_Random() P_Random_e052(__FILE__ ":" E052_STR(__LINE__))
++#define M_Random() M_Random_e052(__FILE__ ":" E052_STR(__LINE__))
++#endif
+ 
++
+ #endif
+--- a/doomgeneric/r_plane.c
++++ b/doomgeneric/r_plane.c
+@@ -360,6 +360,10 @@
+ // R_DrawPlanes
+ // At the end of each frame.
+ //
++#ifdef DG_E052_HOOK
++void E052_DumpPlanes(void);
++#endif
++
+ void R_DrawPlanes (void)
+ {
+     visplane_t*		pl;
+@@ -368,6 +372,10 @@
+     int			stop;
+     int			angle;
+     int                 lumpnum;
++
++#ifdef DG_E052_HOOK
++    E052_DumpPlanes();
++#endif
+ 				
+ #ifdef RANGECHECK
+     if (ds_p - drawsegs > MAXDRAWSEGS)
+--- a/doomgeneric/doomgeneric_e052.c
++++ b/doomgeneric/doomgeneric_e052.c
+@@ -0,0 +1,468 @@
++//
++// doomgeneric_e052.c
++//
++// spinel-llvm / E052 (P004 Phase 4 前半) reference oracle hooks.
++//
++// Additive on top of the R007 headless harness and the E044 / E047 / E051 dump
++// hooks.  Same shape as all three: one new .c file plus a handful of #ifdef'd
++// call sites, and a hook that is a complete no-op unless DG_E052_DIR is set.
++//
++// Phase 4 is about *time*, so everything here is keyed by gametic.  The four
++// staged oracles P004/E052 asks for:
++//
++//   (a) rand.tsv     -- every single P_Random / M_Random call, with the source
++//                       file:line it was made from, the index before and after
++//                       and the value.  This is the strongest intermediate
++//                       oracle: it breaks one call before anything else does.
++//   (b) player.tsv   -- one line per tic: the ticcmd that was played back, the
++//                       player mobj (x,y,z,angle,mom,health,state) and the
++//                       view/bob state.
++//   (c) mobjs.tsv    -- a snapshot of every thinker in P_RunThinkers order
++//                       every DG_E052_MOBJ_EVERY tics (default 1).
++//   (d) frames.tsv   -- gametic + fnv1a64 (with the *correct* offset basis;
++//                       the R007 harness has a typo, see E044 3.7) + sha256 of
++//                       the 320x200 8bit index buffer, one line per frame.
++//
++// Nothing here re-implements any part of the game.  Every number is read out
++// of the reference implementation's own live state.
++//
++// Environment variables:
++//
++//   DG_E052_DIR         output directory.  Unset -> the hook does nothing.
++//   DG_E052_WHAT        comma separated subset of "rand,player,mobj,frame,demo"
++//                       (default: all)
++//   DG_E052_MAX_TIC     stop dumping (and exit) after this gametic (0 = never)
++//   DG_E052_MOBJ_EVERY  mobj snapshot period in tics (default 1)
++//
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <stdint.h>
++
++#include "doomtype.h"
++#include "doomdef.h"
++#include "doomstat.h"
++#include "d_player.h"
++#include "p_local.h"
++#include "p_mobj.h"
++#include "info.h"
++#include "r_state.h"
++#include "r_defs.h"
++#include "r_plane.h"
++
++#ifdef __APPLE__
++#include <CommonCrypto/CommonDigest.h>
++#define E052_HAVE_SHA256 1
++#endif
++
++extern int gametic;
++extern int rndindex;
++extern int prndindex;
++extern thinker_t thinkercap;
++
++// ------------------------------------------------------------------- state
++
++static int   s_on = 0;
++static char  s_dir[512];
++static int   s_want_rand = 1, s_want_player = 1, s_want_mobj = 1,
++             s_want_frame = 1, s_want_demo = 1;
++static int   s_max_tic = 0;
++static int   s_mobj_every = 1;
++
++static FILE *s_rand = NULL;
++static FILE *s_player = NULL;
++static FILE *s_mobj = NULL;
++static FILE *s_frame = NULL;
++static FILE *s_demo = NULL;
++
++static long  s_rand_seq = 0;     // global P_Random ordinal
++static long  s_mrand_seq = 0;    // global M_Random ordinal
++static long  s_rand_in_tic = 0;  // P_Random calls in the current tic
++static long  s_frameno = 0;
++
++static FILE *e052_open(const char *name)
++{
++    char path[700];
++    FILE *fp;
++    snprintf(path, sizeof(path), "%s/%s", s_dir, name);
++    fp = fopen(path, "w");
++    if (fp == NULL)
++    {
++        fprintf(stderr, "E052: cannot open %s\n", path);
++        exit(1);
++    }
++    return fp;
++}
++
++static int e052_want(const char *list, const char *what)
++{
++    return strstr(list, what) != NULL;
++}
++
++void E052_Init(void)
++{
++    const char *dir = getenv("DG_E052_DIR");
++    const char *what = getenv("DG_E052_WHAT");
++    const char *maxt = getenv("DG_E052_MAX_TIC");
++    const char *every = getenv("DG_E052_MOBJ_EVERY");
++
++    if (s_on)
++        return;                 // idempotent: called from 3 places in d_main.c
++    if (dir == NULL || dir[0] == '\0')
++        return;
++
++    snprintf(s_dir, sizeof(s_dir), "%s", dir);
++    s_on = 1;
++
++    if (what != NULL && what[0] != '\0')
++    {
++        s_want_rand   = e052_want(what, "rand");
++        s_want_player = e052_want(what, "player");
++        s_want_mobj   = e052_want(what, "mobj");
++        s_want_frame  = e052_want(what, "frame");
++        s_want_demo   = e052_want(what, "demo");
++    }
++    if (maxt != NULL && maxt[0] != '\0')
++        s_max_tic = atoi(maxt);
++    if (every != NULL && every[0] != '\0')
++        s_mobj_every = atoi(every);
++    if (s_mobj_every < 1)
++        s_mobj_every = 1;
++
++    if (s_want_rand)
++    {
++        s_rand = e052_open("rand.tsv");
++        fprintf(s_rand, "#seq\tkind\tgametic\tleveltime\tidx_before\tidx_after\tvalue\tsite\n");
++    }
++    if (s_want_player)
++    {
++        s_player = e052_open("player.tsv");
++        fprintf(s_player,
++                "#gametic\tleveltime\tprndindex\trndindex\trandcalls\t"
++                "fwd\tside\taturn\tbuttons\t"
++                "x\ty\tz\tangle\tmomx\tmomy\tmomz\t"
++                "floorz\tceilingz\tsubsector\tstate\ttics\tsprite\tframe\thealth\t"
++                "viewz\tviewheight\tdeltaviewheight\tbob\t"
++                "armorpoints\tplayerstate\treadyweapon\tpendingweapon\t"
++                "attackdown\tusedown\trefire\tkillcount\titemcount\tsecretcount\t"
++                "extralight\tfixedcolormap\tdamagecount\tbonuscount\t"
++                "psp0state\tpsp0sx\tpsp0sy\tpsp1state\tnthinkers\n");
++    }
++    if (s_want_mobj)
++    {
++        s_mobj = e052_open("mobjs.tsv");
++        fprintf(s_mobj, "#gametic\tslot\tkind\ttype\tx\ty\tz\tangle\tmomx\tmomy\tmomz\t"
++                        "state\ttics\tsprite\tframe\tflags\thealth\tmovedir\tmovecount\t"
++                        "reactiontime\tthreshold\ttarget\tfloorz\tceilingz\n");
++    }
++    if (s_want_frame)
++    {
++        s_frame = e052_open("frames.tsv");
++        // viewhash = the 3D view only (the top 168 rows). The status bar is the bottom
++        // 32 rows, so "the view matches but the status bar not yet" is a stage of its own.
++        fprintf(s_frame, "#frame\tgametic\tfnv1a64\tviewhash\tsha256\n");
++    }
++    if (s_want_demo)
++    {
++        s_demo = e052_open("demo.tsv");
++        fprintf(s_demo, "#seq\tgametic\tfwd\tside\taturn\tbuttons\n");
++    }
++    fprintf(stderr, "E052: hooks on, dir=%s\n", s_dir);
++}
++
++// ------------------------------------------------------------------- (a) random
++
++void E052_Rand(const char *site, int kind, int before, int after, int value)
++{
++    if (!s_on || s_rand == NULL)
++        return;
++    if (kind == 0)
++    {
++        fprintf(s_rand, "%ld\tP\t%d\t%d\t%d\t%d\t%d\t%s\n",
++                s_rand_seq++, gametic, leveltime, before, after, value, site);
++        s_rand_in_tic++;
++    }
++    else
++    {
++        fprintf(s_rand, "%ld\tM\t%d\t%d\t%d\t%d\t%d\t%s\n",
++                s_mrand_seq++, gametic, leveltime, before, after, value, site);
++    }
++}
++
++// ------------------------------------------------------------------- (e) demo
++
++void E052_DemoTiccmd(const ticcmd_t *cmd)
++{
++    static long seq = 0;
++    if (!s_on || s_demo == NULL)
++        return;
++    fprintf(s_demo, "%ld\t%d\t%d\t%d\t%d\t%d\n",
++            seq++, gametic, cmd->forwardmove, cmd->sidemove,
++            (int)cmd->angleturn, (int)(unsigned char)cmd->buttons);
++}
++
++// ------------------------------------------------------------------- helpers
++
++static int e052_stateno(const state_t *st)
++{
++    if (st == NULL)
++        return -1;
++    return (int)(st - states);
++}
++
++static int e052_mobjslot(const mobj_t *mo)
++{
++    // Slot = position in the thinker list (P_RunThinkers order).
++    thinker_t *t;
++    int i = 0;
++    for (t = thinkercap.next; t != &thinkercap; t = t->next, i++)
++        if ((const mobj_t *)t == mo)
++            return i;
++    return -1;
++}
++
++// ------------------------------------------------------------------- (b)(c) per-tic
++
++void E052_TicHook(void)
++{
++    player_t *p;
++    mobj_t *mo;
++    thinker_t *t;
++    int nthinkers = 0;
++    int slot;
++
++    if (!s_on)
++        return;
++    if (gamestate != GS_LEVEL)
++    {
++        s_rand_in_tic = 0;
++        return;
++    }
++
++    for (t = thinkercap.next; t != &thinkercap; t = t->next)
++        nthinkers++;
++
++    p = &players[0];
++    mo = p->mo;
++
++    if (s_player != NULL && mo != NULL)
++    {
++        fprintf(s_player,
++                "%d\t%d\t%d\t%d\t%ld\t"
++                "%d\t%d\t%d\t%d\t"
++                "%d\t%d\t%d\t%u\t%d\t%d\t%d\t"
++                "%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t"
++                "%d\t%d\t%d\t%d\t"
++                "%d\t%d\t%d\t%d\t"
++                "%d\t%d\t%d\t%d\t%d\t%d\t"
++                "%d\t%d\t%d\t%d\t"
++                "%d\t%d\t%d\t%d\t%d\n",
++                gametic, leveltime, prndindex, rndindex, s_rand_in_tic,
++                p->cmd.forwardmove, p->cmd.sidemove, (int)p->cmd.angleturn,
++                (int)(unsigned char)p->cmd.buttons,
++                mo->x, mo->y, mo->z, (unsigned)mo->angle,
++                mo->momx, mo->momy, mo->momz,
++                mo->floorz, mo->ceilingz,
++                (int)(mo->subsector - subsectors), e052_stateno(mo->state),
++                mo->tics, mo->sprite, mo->frame, mo->health,
++                p->viewz, p->viewheight, p->deltaviewheight, p->bob,
++                p->armorpoints, (int)p->playerstate, (int)p->readyweapon,
++                (int)p->pendingweapon,
++                p->attackdown, p->usedown, p->refire,
++                p->killcount, p->itemcount, p->secretcount,
++                p->extralight, p->fixedcolormap, p->damagecount, p->bonuscount,
++                e052_stateno(p->psprites[0].state), p->psprites[0].sx,
++                p->psprites[0].sy, e052_stateno(p->psprites[1].state),
++                nthinkers);
++        fflush(s_player);
++    }
++
++    if (s_mobj != NULL && (leveltime % s_mobj_every) == 0)
++    {
++        slot = 0;
++        for (t = thinkercap.next; t != &thinkercap; t = t->next, slot++)
++        {
++            // Only mobj thinkers carry P_MobjThinker.  Everything else (doors,
++            // platforms, lights, ...) is dumped as its function identity so the
++            // Ruby side can at least see that the same *kind* of thinker sits in
++            // the same slot.
++            if (t->function.acp1 == (actionf_p1)P_MobjThinker)
++            {
++                mo = (mobj_t *)t;
++                fprintf(s_mobj,
++                        "%d\t%d\tmobj\t%d\t%d\t%d\t%d\t%u\t%d\t%d\t%d\t"
++                        "%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n",
++                        gametic, slot, (int)mo->type,
++                        mo->x, mo->y, mo->z, (unsigned)mo->angle,
++                        mo->momx, mo->momy, mo->momz,
++                        e052_stateno(mo->state), mo->tics, mo->sprite,
++                        mo->frame, mo->flags, mo->health,
++                        mo->movedir, mo->movecount, mo->reactiontime,
++                        mo->threshold,
++                        mo->target ? e052_mobjslot(mo->target) : -1,
++                        mo->floorz, mo->ceilingz);
++            }
++            else
++            {
++                const char *kind = "other";
++                if (t->function.acv == (actionf_v)(-1))
++                    kind = "removed";
++                else if (t->function.acp1 == NULL)
++                    kind = "null";
++                fprintf(s_mobj,
++                        "%d\t%d\t%s\t-1\t0\t0\t0\t0\t0\t0\t0\t"
++                        "-1\t0\t0\t0\t0\t0\t0\t0\t0\t0\t-1\t0\t0\n",
++                        gametic, slot, kind);
++            }
++        }
++        fflush(s_mobj);
++    }
++
++    s_rand_in_tic = 0;
++
++    if (s_max_tic != 0 && gametic >= s_max_tic)
++    {
++        fprintf(stderr, "E052: reached DG_E052_MAX_TIC=%d, exiting\n", s_max_tic);
++        if (s_rand)   fclose(s_rand);
++        if (s_player) fclose(s_player);
++        if (s_mobj)   fclose(s_mobj);
++        if (s_frame)  fclose(s_frame);
++        if (s_demo)   fclose(s_demo);
++        exit(0);
++    }
++}
++
++// ------------------------------------------------------------------- (d) frame
++
++static uint64_t e052_fnv1a64(const unsigned char *p, size_t n)
++{
++    // The *correct* FNV-1a 64 constants.  The R007 harness writes the offset
++    // basis as 1469598103934665603 (one digit short); see E044 3.7.
++    uint64_t h = 14695981039346656037ULL;
++    size_t i;
++    for (i = 0; i < n; i++)
++    {
++        h ^= (uint64_t)p[i];
++        h *= 1099511628211ULL;
++    }
++    return h;
++}
++
++void E052_Frame(const unsigned char *buf, int n)
++{
++    uint64_t fh;
++    char sha_hex[65];
++
++    if (!s_on || s_frame == NULL)
++        return;
++
++    fh = e052_fnv1a64(buf, (size_t)n);
++#ifdef E052_HAVE_SHA256
++    {
++        unsigned char md[CC_SHA256_DIGEST_LENGTH];
++        int i;
++        CC_SHA256(buf, (CC_LONG)n, md);
++        for (i = 0; i < CC_SHA256_DIGEST_LENGTH; i++)
++            snprintf(sha_hex + i * 2, 3, "%02x", md[i]);
++    }
++#else
++    strcpy(sha_hex, "-");
++#endif
++    {
++        uint64_t vh = e052_fnv1a64(buf, (size_t)(320 * 168));
++        fprintf(s_frame, "%ld\t%d\t%016llx\t%016llx\t%s\n",
++                s_frameno++, gametic, (unsigned long long)fh,
++                (unsigned long long)vh, sha_hex);
++    }
++    fflush(s_frame);
++}
++
++// ------------------------------------------------------- (f) visplane snapshot
++//
++// Dumps the visplane table for one gametic only: a tool to tell in one step
++// "which plane differs" when a frame differs.
++// Does nothing unless DG_E052_PLANE_TIC is set.
++
++extern visplane_t visplanes[];
++extern visplane_t *lastvisplane;
++
++void E052_DumpPlanes(void)
++{
++    static int done = 0;
++    const char *want = getenv("DG_E052_PLANE_TIC");
++    visplane_t *pl;
++    FILE *fp;
++    char path[700];
++    int i, x;
++
++    if (!s_on || want == NULL || want[0] == '\0' || done)
++        return;
++    if (gametic != atoi(want))
++        return;
++    done = 1;
++    snprintf(path, sizeof(path), "%s/planes.tsv", s_dir);
++    fp = fopen(path, "w");
++    if (fp == NULL)
++        return;
++    fprintf(fp, "#sizeof=%d topoff=%d botoff=%d nplanes=%d\n",
++            (int)sizeof(visplane_t),
++            (int)((char *)visplanes[0].top - (char *)&visplanes[0]),
++            (int)((char *)visplanes[0].bottom - (char *)&visplanes[0]),
++            (int)(lastvisplane - visplanes));
++    fprintf(fp, "#i\theight\tpicnum\tlightlevel\tminx\tmaxx\ttopsum\tbotsum\ttop0\tbot0\n");
++    for (pl = visplanes, i = 0; pl < lastvisplane; pl++, i++)
++    {
++        long ts = 0, bs = 0;
++        for (x = pl->minx; x <= pl->maxx && x < SCREENWIDTH; x++)
++        {
++            ts += pl->top[x];
++            bs += pl->bottom[x];
++        }
++        fprintf(fp, "%d\t%d\t%d\t%d\t%d\t%d\t%ld\t%ld", i, pl->height,
++                pl->picnum, pl->lightlevel, pl->minx, pl->maxx, ts, bs);
++        for (x = 0; x < 320; x += 40)
++            fprintf(fp, "\t%d:%d/%d", x, pl->top[x], pl->bottom[x]);
++        fprintf(fp, "\n");
++    }
++    fclose(fp);
++    {
++        extern drawseg_t drawsegs[];
++        extern drawseg_t *ds_p;
++        
++        drawseg_t *ds;
++        int k = 0;
++        snprintf(path, sizeof(path), "%s/drawsegs.tsv", s_dir);
++        fp = fopen(path, "w");
++        if (fp != NULL)
++        {
++            fprintf(fp, "#i\tseg\tlinedef\tx1\tx2\tscale1\tscale2\tsil\tmasked\n");
++            for (ds = drawsegs; ds < ds_p; ds++, k++)
++                fprintf(fp, "%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n",
++                        k, (int)(ds->curline - segs),
++                        (int)(ds->curline->linedef - lines),
++                        ds->x1, ds->x2, ds->scale1, ds->scale2,
++                        ds->silhouette, ds->maskedtexturecol != NULL);
++            fclose(fp);
++        }
++    }
++    {
++        extern vissprite_t vissprites[];
++        extern vissprite_t *vissprite_p;
++        vissprite_t *vs;
++        int k = 0;
++        snprintf(path, sizeof(path), "%s/vissprites.tsv", s_dir);
++        fp = fopen(path, "w");
++        if (fp != NULL)
++        {
++            fprintf(fp, "#i\tx1\tx2\tgx\tgy\tgz\tscale\tpatch\tflags\tcmapidx\n");
++            for (vs = vissprites; vs < vissprite_p; vs++, k++)
++                fprintf(fp, "%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n",
++                        k, vs->x1, vs->x2, vs->gx, vs->gy, vs->gz, vs->scale,
++                        vs->patch, vs->mobjflags,
++                        (int)(vs->colormap ? (vs->colormap - colormaps) / 256 : -1));
++            fclose(fp);
++        }
++    }
++    fprintf(stderr, "E052: dumped %d visplanes at gametic %d\n", i, gametic);
++}

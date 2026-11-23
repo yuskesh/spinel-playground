@@ -1,0 +1,128 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+#
+# tools/zephyr-full/spinel-zephyr-full -- a hosted Spinel program, with its
+# collector, on Zephyr's POSIX layer on the FRDM-MCXN947 (decision 0038).
+#
+#   spinel-zephyr-full build [--userspace] [--heap BYTES] [--peer HOST:PORT]
+#                            [--trace-io] APP.rb OUTDIR
+#       compiles APP.rb, then builds the Zephyr application in host/ with the
+#       pinned runtime compiled inside it; OUTDIR/zephyr.bin is the flash
+#       image (load it at 0x10000000), OUTDIR/build the Zephyr build
+#
+#   --userspace  runs the program in a user-mode thread (host/userspace.conf);
+#                decision 0038 records that it faults in Zephyr's POSIX layer
+#   --heap N     the malloc arena in bytes (default: the RAM nothing else uses)
+#   --peer H:P   set as ZFULL_PEER for the program, e.g. the echo peer's address
+#   --trace-io   print each read/fcntl/send/recv/connect/poll on the console
+#
+# Environment (docs/building.md, "Zephyr, for CORE applications"):
+#   ZEPHYR_BASE             the pinned Zephyr v4.4.2 tree
+#   ZEPHYR_SDK_INSTALL_DIR  the Zephyr SDK 1.0.1
+#   west on PATH            the installation's venv first
+#   SPINEL_DIR              the Spinel checkout (default: vendor/spinel)
+#
+# The build log must show that tree and that SDK, since
+# ZEPHYR_SDK_INSTALL_DIR alone does not select the SDK. Exit 2 when the
+# environment is missing.
+require "fileutils"
+require "open3"
+
+ROOT = File.expand_path("../..", __dir__)
+HERE = __dir__
+BOARD = "frdm_mcxn947/mcxn947/cpu0"
+ZEPHYR_VERSION = "4.4.2"
+SDK_VERSION = "1.0.1"
+USAGE = "build [--userspace] [--heap BYTES] [--peer HOST:PORT] [--trace-io] APP.rb OUTDIR"
+
+def die(msg, code = 1)
+  warn "spinel-zephyr-full: #{msg}"
+  exit code
+end
+
+def env!(name)
+  v = ENV.fetch(name, "")
+  die("#{name} is not set", 2) if v.empty?
+  v
+end
+
+def run!(*cmd, chdir: nil, log: nil)
+  opts = chdir ? { chdir: chdir } : {}
+  out, st = Open3.capture2e(*cmd, **opts)
+  File.write(log, out) if log
+  return out if st.success?
+
+  warn out.lines.last(30).join
+  die("failed: #{cmd.first(3).join(' ')} ...")
+end
+
+def spinel_dir
+  File.expand_path(ENV.fetch("SPINEL_DIR", File.join(ROOT, "vendor/spinel")))
+end
+
+def cmd_build(args)
+  opts = { userspace: false, heap: nil, peer: nil, trace: false }
+  rest = []
+  until args.empty?
+    a = args.shift
+    case a
+    when "--userspace" then opts[:userspace] = true
+    when "--trace-io" then opts[:trace] = true
+    when "--heap" then opts[:heap] = Integer(args.shift.to_s, exception: false) || die("--heap takes a number of bytes", 64)
+    when "--peer"
+      opts[:peer] = args.shift.to_s
+      die("--peer takes HOST:PORT", 64) unless opts[:peer].match?(/\A[^:\s"]+:\d+\z/)
+    else rest << a
+    end
+  end
+  die("usage: spinel-zephyr-full #{USAGE}", 64) unless rest.size == 2
+
+  zbase = File.realpath(env!("ZEPHYR_BASE")) rescue die("ZEPHYR_BASE is not a directory", 2)
+  sdk = File.realpath(env!("ZEPHYR_SDK_INSTALL_DIR")) rescue die("ZEPHYR_SDK_INSTALL_DIR is not a directory", 2)
+  gcc = File.join(sdk, "gnu/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcc")
+  die("no #{gcc}", 2) unless File.executable?(gcc)
+  die("west is not on PATH", 2) unless system("command -v west >/dev/null 2>&1")
+  spinel = File.join(spinel_dir, "bin/spinel")
+  die("no #{spinel}: build vendor/spinel first", 2) unless File.executable?(spinel)
+
+  app = File.expand_path(rest[0])
+  out = File.expand_path(rest[1])
+  die("no #{app}", 64) unless File.file?(app)
+  gen = File.join(out, "app")
+  FileUtils.mkdir_p(gen)
+  # --cc names the target's compiler, so Spinel asks it the pointer width
+  run!(spinel, File.basename(app), "--cc=#{gcc} -mcpu=cortex-m33", "-c", "-o", File.join(gen, "app.c"),
+       chdir: File.dirname(app), log: File.join(out, "spinel.log"))
+
+  defs = ["-DCMAKE_EXPORT_NO_PACKAGE_REGISTRY=ON", "-DSP_VENDOR=#{spinel_dir}", "-DSP_OUT=#{gen}",
+          "-DSP_SHIM=#{File.join(ROOT, 'tools/npu/host/shim')}", "-DSP_ROOT=#{ROOT}"]
+  defs << "-DEXTRA_CONF_FILE=userspace.conf" if opts[:userspace]
+  defs << "-DCONFIG_COMMON_LIBC_MALLOC_ARENA_SIZE=#{opts[:heap]}" if opts[:heap]
+  defs << "-DSP_PEER=#{opts[:peer]}" if opts[:peer]
+  defs << "-DSP_TRACE_IO=1" if opts[:trace]
+  build = File.join(out, "build")
+  env = { "ZEPHYR_BASE" => zbase, "ZEPHYR_SDK_INSTALL_DIR" => sdk }
+  log = File.join(out, "build.log")
+  o, st = Open3.capture2e(env, "west", "build", "-p", "always", "-b", BOARD, "-d", build,
+                          File.join(HERE, "host"), "--", *defs)
+  File.write(log, o)
+  unless st.success?
+    warn o.lines.grep(/error|undefined reference|multiple definition/).first(20).join
+    die("west build failed; see #{log}")
+  end
+  # the tree and the SDK the build really used
+  unless o.include?("Zephyr version: #{ZEPHYR_VERSION} (#{zbase})")
+    die("the build did not use Zephyr #{ZEPHYR_VERSION} at #{zbase}; see #{log}")
+  end
+  unless o.include?("Found toolchain: zephyr #{SDK_VERSION} (#{sdk})")
+    die("the build did not use the Zephyr SDK #{SDK_VERSION} at #{sdk}; see #{log}")
+  end
+  bin = File.join(out, "zephyr.bin")
+  FileUtils.cp(File.join(build, "zephyr/zephyr.bin"), bin)
+  puts bin
+end
+
+case ARGV.shift
+when "build" then cmd_build(ARGV)
+else die("usage: spinel-zephyr-full #{USAGE}", 64)
+end

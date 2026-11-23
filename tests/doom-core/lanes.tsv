@@ -1,0 +1,58 @@
+# tests/doom-core/lanes.tsv — every suite in tests/doom-core, and how it is run.
+#
+# Decision 0008 task 9: "the runner enumerates ... lanes. Each lane reports
+# checked, pass, fail and executed/unmeasured counts." This is the enumeration,
+# and tests/doom-core/run.sh reads it. THE FIRST THING THAT RUNNER CHECKS IS
+# THIS FILE AGAINST THE DIRECTORY, in both directions: a suite on disk with no
+# row here is a lane nobody runs, and a row here with no file is a lane nobody
+# can run. Which suites exist was maintained by memory until 2026-09-18, and
+# three drifts found by one sweep that day -- a table missing eleven units, an
+# entry list missing two contracts, an orphan variable nothing reached on this
+# host -- are what that costs.
+#
+# COLUMNS
+#   lane     the file, under tests/doom-core/
+#   role     top                   run by run.sh
+#            under:NAME            run by that suite, not again by run.sh
+#            subject:NAME          run by that suite against copied trees
+#   summary  how the lane reports: `checked:LABEL` for a
+#            "LABEL: N checked, N pass, N fail" line, `executed:LABEL` for
+#            fork-compat's executed/not-executed counts, `passed:LABEL` for a
+#            "LABEL: N passed, N failed" line. THE LABEL IS NOT ALWAYS THE FILE
+#            NAME -- fork-compat-controls.sh prints `fork-controls`.
+#   needs    what must be in the environment for the lane to check everything
+#            it has: environment variable names, `A|B` for either of two, and
+#            `kernel:--option` for a capability the kernel must have. `-` for a
+#            lane that needs nothing. tests/doom-core/run.sh reads this column
+#            BEFORE IT RUNS ANYTHING and names what is missing, with the lanes
+#            it affects -- because on 2026-09-18 a four-hour gate ended red on
+#            two absences that were knowable at second zero: HARNESS_ONE_CLOSURE
+#            for screens (one of six directories build-artifacts.sh writes) and
+#            a kernel too old for loop-reports. A FULLY GREEN REQUIRE_ALL RUN IS
+#            NOT REACHABLE FROM THE DOCUMENTED SETUP ALONE: docs/building.md
+#            names two of the compiler variables and none of the harness ones.
+#   note     what the lane is for, and what it needs to do more than skip
+#
+#lane	role	summary	needs	note
+abort-controls.sh	top	checked:abort-controls	SPINEL_TYPEDUMP	an interrupted suite reports an abort and not a finding: INT and TERM on audit.sh and source-pack.sh must print no summary, exit 130/143 and still clean up
+audit.sh	top	checked:audit	SPINEL_TYPEDUMP	the counter-examples macOS found in tools/doom/audit-core.rb, as tests; needs the contract reader
+borrowed-calls.sh	top	checked:borrowed-calls	SPINEL_TYPEDUMP KERNEL LLVM_PREFIX|CLANG	a call into a borrowed buffer is the caller's, checked against the objects; needs the reader and a compiler
+bound-resources.sh	under:verify.sh	checked:bound-resources	WAD SPINEL SPINEL_LIB LLVM_PREFIX|CLANG	decision 0021: the playable program over resources bound to a read-only session image; needs verify.sh's kernel build, the pinned compiler and the IWAD
+capacity.sh	under:verify.sh	checked:capacity	WAD	the knot stack's capacity contract: every push checked, exhaustion deterministic; needs the IWAD
+control-flow.sh	top	checked:control-flow	SPINEL_TYPEDUMP KERNEL LLVM_PREFIX|CLANG	the control-flow shapes the kernel admits, each with the diagnostic it refuses by; needs the kernel
+entries.sh	under:verify.sh	checked:entries	-	the three entries are what tools/doom/core-entries.rb writes, and the field map holds
+fork-compat.sh	subject:fork-compat-controls.sh	executed:fork-compat	LLVM_PREFIX|CLANG	the forked compiler's rows, executed against this tree; a documented nonapplicable row is not a pass
+fork-compat-controls.sh	top	checked:fork-controls	LLVM_PREFIX|CLANG	fork-compat.sh's own refusals, planted in copied trees
+loop-reports.sh	top	passed:loop-reports	SPINEL_TYPEDUMP KERNEL LLVM_PREFIX|CLANG kernel:--report	the loop reports the kernel emits per entry, against the contracts on disk; REQUIRES a directory argument (it exits 2 without one). DORMANT against a kernel older than f65b5a8 (2026-09-16), which added the --report and --profile options this lane is built on: the shared e2f5676 build predates it by seventeen hours, so with the documented tools the lane has not been runnable since the day it landed. It says so and exits 3 rather than failing 42 entries over 7912 s
+native-scenario-diff.sh	under:verify.sh	checked:native-scenario-diff	WAD	the scenario corpus through the compiled step entry (0009, 2026-09-18); needs the built entries, the adapter and the IWAD
+native.sh	under:verify.sh	checked:native	WAD SPINEL SPINEL_LIB LLVM_PREFIX|CLANG	the playable program built with the entries, over the recordings; needs the pinned compiler and the IWAD
+object-relocs.sh	under:verify.sh	checked:object-relocs	LLVM_PREFIX|CLANG	the link rule demonstrated on arm64 Mach-O objects built here; needs a cross-capable clang
+screens.sh	top	checked:screens	WAD ADAPTER HARNESS_ONE_CLOSURE HARNESS_AUDIT_DIR HARNESS_ADAPTER_LIB HARNESS_SOURCE_LIB HARNESS_SESSION_DIR HARNESS_SESSION_ROOT	every route's frames against the recordings, and the job-mode equality; needs the IWAD and a compiler
+session-image.sh	top	checked:session-image	-	decision 0021: tools/doom/session-image.rb on a synthetic session: the image's parts and digests, the demo lump found and recorded, and each broken lump refused by name
+source-pack.sh	top	checked:source-pack	SPINEL_TYPEDUMP KERNEL LLVM_PREFIX|CLANG SPINEL SPINEL_SEAM	the packer's refusals, and the bijections between the units, the manifest, the README, the NOTICE and the built-entry list; its kernel lane needs SPINEL_SEAM (tools/core/spinel-core-build reads that, not SPINEL), and in a worktree without it 7 checks fail on the absent vendor/spinel rather than skipping
+state.sh	top	checked:state	SPINEL_TYPEDUMP KERNEL LLVM_PREFIX|CLANG WAD	Full's session, resources and reference against the schema; needs the IWAD
+tick.sh	top	checked:tick	SPINEL_TYPEDUMP KERNEL ADAPTER LLVM_PREFIX|CLANG WAD	the frame lane: every route over the recorded frames, with its artifacts; needs the kernel, the adapter and the IWAD
+verify.sh	top	checked:verify	SPINEL_TYPEDUMP KERNEL ADAPTER LLVM_PREFIX|CLANG WAD SPINEL SPINEL_LIB	decision 0008's three entries end to end, and the five lanes above that it runs itself; needs the kernel, the adapter, the pinned compiler and the IWAD
+widths.sh	under:verify.sh	checked:widths	WAD	decision 0018: examples/doom/core/widths.tsv against DEMO1-3 played through the compiled entries (tools/doom/core-ranges.rb) and a fresh scan of the stores (tools/doom/core-store-widths.rb); needs the built entries, the adapter and the IWAD
+rt1186.sh	top	checked:rt1186	WAD ZEPHYR_BASE ZEPHYR_SDK_INSTALL_DIR SPINEL SPINEL_LIB LLVM_PREFIX|CLANG RT1186_HOST	decision 0021: the board lane -- the entries for thumbv8m, each demo's session image and NOR image, tests/app/session.sh, and with a board (RT1186_HOST) every frame of DEMO1-3 played on FRDM-IMXRT1186 against the recording; not a realtime claim; long, run at the end of 0021
+run-controls.sh	top	checked:run-controls	-	what run.sh refuses: a suite nobody listed, a row with no file, a lane whose summary and status disagree, a lane that says nothing

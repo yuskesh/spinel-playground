@@ -1,0 +1,48 @@
+# tools/app/zephyr/v4.4.2/screen.tsv -- the provider screen of decision 0014
+# §6: an adapter or provider object whose undefined symbols include a listed
+# name is refused. Direct calls only; a call through a function pointer is
+# not seen, so passing the screen is evidence, not proof. The entry-symbol
+# set (any spinel_core_ export or generated entry wrapper) is added by the
+# build from the application's own entries.
+# set	symbol	reason
+alloc	k_malloc	allocates from the kernel heap
+alloc	k_free	frees kernel heap memory
+alloc	k_calloc	allocates from the kernel heap
+alloc	k_aligned_alloc	allocates from the kernel heap
+alloc	k_heap_alloc	allocates from a heap, may wait
+alloc	k_heap_aligned_alloc	allocates from a heap, may wait
+alloc	k_heap_free	frees heap memory
+alloc	k_mem_slab_alloc	takes a slab block, may wait
+alloc	malloc	allocates from the libc heap
+alloc	calloc	allocates from the libc heap
+alloc	realloc	allocates from the libc heap
+alloc	free	frees libc heap memory
+block	k_sleep	suspends the caller
+block	k_msleep	suspends the caller
+block	k_usleep	suspends the caller
+block	k_sem_take	waits on a semaphore
+block	k_mutex_lock	waits on a mutex
+block	k_condvar_wait	waits on a condition variable
+block	k_queue_get	waits on a queue
+block	k_msgq_get	waits on a message queue
+block	k_msgq_put	may wait on a message queue
+block	k_pipe_get	waits on a pipe
+block	k_pipe_put	may wait on a pipe
+block	k_poll	waits on poll events
+block	k_thread_join	waits for a thread
+block	z_impl_k_sleep	suspends the caller (syscall implementation)
+block	z_impl_k_sem_take	waits on a semaphore (syscall implementation)
+irqconfig	irq_connect_dynamic	installs an interrupt handler at run time
+irqconfig	arch_irq_connect_dynamic	installs an interrupt handler at run time
+irqconfig	arch_irq_enable	enables an interrupt line
+irqconfig	arch_irq_disable	disables an interrupt line
+irqconfig	arm_irq_enable	enables an interrupt line (what arch_irq_enable and irq_enable expand to on Cortex-M: include/zephyr/arch/arm/irq.h at dccb0959; found by Task 10's glue-irq control)
+irqconfig	arm_irq_disable	disables an interrupt line (what arch_irq_disable and irq_disable expand to on Cortex-M)
+irqconfig	arm_irq_priority_set	changes an interrupt priority (what z_arm_irq_priority_set expands to on Cortex-M)
+irqconfig	z_soc_irq_enable	enables an interrupt line (the expansion under CONFIG_ARM_CUSTOM_INTERRUPT_CONTROLLER)
+irqconfig	z_soc_irq_disable	disables an interrupt line (the expansion under CONFIG_ARM_CUSTOM_INTERRUPT_CONTROLLER)
+irqconfig	z_soc_irq_priority_set	changes an interrupt priority (the expansion under CONFIG_ARM_CUSTOM_INTERRUPT_CONTROLLER)
+irqconfig	z_arm_irq_priority_set	changes an interrupt priority
+irqconfig	arch_irq_priority_set	changes an interrupt priority
+irqconfig	irq_enable	enables an interrupt line
+irqconfig	irq_disable	disables an interrupt line

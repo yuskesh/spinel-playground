@@ -1,0 +1,408 @@
+# frozen_string_literal: true
+#
+# E372 (S5): the ringbuf record contract's evolution gate.
+#
+# Two things are pinned here:
+#
+#   (1) the LIVE gate — the committed derived artifacts are what the current
+#       src/codegen_c/record_schema.h generates, and the contract is append-only
+#       with respect to tests/golden/record_schema.snapshot.json. This is the
+#       same check `ruby tools/record_gate.rb` performs, run as part of the unit
+#       suite so a schema edit cannot land without it.
+#
+#   (2) the RULES themselves — negative controls fed to RecordGate.violations()
+#       as synthetic projections. Each asserts that one class of breaking change
+#       is caught: a moved field, a retyped field, a removed field, a withdrawn
+#       Ruby property, a tightened accepted prefix, a dropped egress key, a
+#       withdrawn typed consumer. Without these, a bug in the checker would make
+#       the gate silently permissive (green means nothing).
+require "minitest/autorun"
+require "json"
+require_relative "../../tools/record_gate"
+
+class RecordGateTest < Minitest::Test
+  GATE = RecordGate
+
+  # --- (1) the live gate ----------------------------------------------------
+
+  def test_committed_artifacts_match_the_declaration
+    hdr, js = GATE.regenerate
+    assert_empty GATE.regen_violations(hdr, js),
+                 "生成物が宣言表と別世代 (make -C src/codegen_c mirror して commit)"
+  end
+
+  def test_current_contract_is_append_only_against_the_snapshot
+    assert File.exist?(GATE::SNAPSHOT), "snapshot が無い (ruby tools/record_gate.rb --update)"
+    _hdr, js = GATE.regenerate
+    old = JSON.parse(File.read(GATE::SNAPSHOT))
+    assert_equal GATE::SNAPSHOT_SCHEMA, old["schema"]
+    assert_empty GATE.violations(old, GATE.project(JSON.parse(js))),
+                 "record 契約が append-only でない変わり方をした"
+  end
+
+  def test_snapshot_is_the_current_contract
+    _hdr, js = GATE.regenerate
+    # 構造で比べる (テキストでない)。`JSON.pretty_generate` は空配列を json >= 2.12 で
+    # `[]`、それ未満で `[\n\n]` と書くので、テキスト比較にすると host と container の
+    # どちらか一方でしか green にできない (2026-08-04 実測: host json 2.12.2 /
+    # spnl715 json 2.7.2)。契約は構造であって、生成器の空白の入れ方は契約項目でない。
+    assert_equal JSON.parse(File.read(GATE::SNAPSHOT)),
+                 JSON.parse(GATE.snapshot_text(GATE.project(JSON.parse(js)))),
+                 "snapshot が古い (追加のみでも baseline は更新して commit する)"
+  end
+
+  # --- (2) negative controls: each rule must actually bite ------------------
+
+  # 最小の合法な projection。以下の各テストはこれを 1 箇所だけ壊す。
+  def base
+    { "schema" => GATE::SNAPSHOT_SCHEMA,
+      "channels" => {
+        "demo" => {
+          "record_struct" => "<unit>_demo_event",
+          "ringbuf_map" => "<unit>_demo_events",
+          "record_bytes" => 32, "record_min_bytes" => 32,
+          "producers" => ["emit_demo"],
+          "fields" => [
+            { "name" => "hdr", "ctype" => "struct spnl_event_hdr", "count" => 0,
+              "offset" => 0, "bytes" => 16, "expose" => "" },
+            { "name" => "pid", "ctype" => "__u32", "count" => 0,
+              "offset" => 16, "bytes" => 4, "expose" => "int" },
+            { "name" => "cgid", "ctype" => "__u64", "count" => 0,
+              "offset" => 24, "bytes" => 8, "expose" => "" },
+          ],
+          "egress" => { "push_fn" => "spnl_otlp_demo_span_push", "span_name" => "demo {x}",
+                        "span_kind" => "INTERNAL",
+                        # E434: an attribute row carries the rule for WHEN it is on the span,
+                        # so the baseline can catch "the key is still there, it just stopped
+                        # appearing" -- a change nothing downstream errors on.
+                        "timing_form" => { "start" => "record_ktime:hdr.timestamp",
+                                           "clock" => "monotonic", "end" => "start" },
+                        "drop_when" => "never",
+                        "attributes" => [{ "key" => "a.b", "present" => "always" },
+                                         { "key" => "c.d", "present" => "nonzero(pid)" }],
+                        "enrichers" => %w[k8s] },
+          "consumer" => { "drain_fn" => "spnl_rec_demo_drain", "to_span_fn" => "spnl_rec_demo_to_span",
+                          "properties" => [{ "name" => "pid", "kind" => "field",
+                                             "expose" => "int", "ffi" => "spnl_rec_demo_pid",
+                                             "residue" => "declared" }] },
+          "metrics" => [
+            { "id" => "count", "name" => "spnl.demo.count", "kind" => "counter",
+              "unit" => "{demo}", "value_from" => "", "bounds" => "", "series_bound" => 3,
+              "labels" => [{ "key" => "spnl.demo.kind", "from" => "kind", "bound" => 3,
+                             "bound_from" => "value_map", "fallback" => "other" }] },
+          ],
+        },
+      } }
+  end
+
+  def mutate
+    d = JSON.parse(JSON.generate(base))   # deep copy
+    yield d
+    GATE.violations(base, d)
+  end
+
+  def test_unchanged_contract_is_clean
+    assert_empty GATE.violations(base, base)
+  end
+
+  def test_moving_an_existing_field_is_rejected
+    v = mutate { |d| d["channels"]["demo"]["fields"][2]["offset"] = 32 }
+    assert_match(/field `cgid` offset changed 24 -> 32/, v.join("\n"))
+  end
+
+  def test_retyping_an_existing_field_is_rejected
+    v = mutate do |d|
+      f = d["channels"]["demo"]["fields"][1]
+      f["ctype"] = "__u64"; f["bytes"] = 8
+    end
+    assert_match(/field `pid` ctype changed "__u32" -> "__u64"/, v.join("\n"))
+    assert_match(/field `pid` bytes changed 4 -> 8/, v.join("\n"))
+  end
+
+  def test_removing_a_field_is_rejected
+    v = mutate { |d| d["channels"]["demo"]["fields"].delete_at(2) }
+    assert_match(/field `cgid` was removed/, v.join("\n"))
+  end
+
+  def test_inserting_a_field_before_an_existing_one_is_rejected
+    v = mutate do |d|
+      d["channels"]["demo"]["fields"].insert(2, { "name" => "flags", "ctype" => "__u32",
+                                                  "count" => 0, "offset" => 20, "bytes" => 4,
+                                                  "expose" => "" })
+    end
+    assert_match(/fields were reordered/, v.join("\n"))
+  end
+
+  # 末尾追加は許す (これを落としてしまうと契約が育たない)
+  def test_appending_a_field_at_the_end_is_allowed
+    v = mutate do |d|
+      c = d["channels"]["demo"]
+      c["fields"] << { "name" => "retries", "ctype" => "__u32", "count" => 0,
+                       "offset" => 32, "bytes" => 4, "expose" => "" }
+      c["record_bytes"] = 40   # min は据え置き = 古い producer の record も受け付ける
+    end
+    assert_empty v
+  end
+
+  # ただし「末尾に足したが accepted prefix を緩めていない」= 古い producer の record が
+  # 落ちる、という半端な追加は落とす (Cap'n Proto の後半のルール)。
+  def test_appending_without_relaxing_the_accepted_prefix_is_rejected
+    v = mutate do |d|
+      c = d["channels"]["demo"]
+      c["fields"] << { "name" => "retries", "ctype" => "__u32", "count" => 0,
+                       "offset" => 32, "bytes" => 4, "expose" => "" }
+      c["record_bytes"] = 40
+      c["record_min_bytes"] = 40
+    end
+    assert_match(/record_min_bytes rose 32 -> 40/, v.join("\n"))
+  end
+
+  def test_withdrawing_a_ruby_visible_property_is_rejected
+    v = mutate do |d|
+      d["channels"]["demo"]["fields"][1]["expose"] = ""
+      d["channels"]["demo"]["consumer"]["properties"] = []
+    end
+    assert_match(/field `pid` expose changed "int" -> ""/, v.join("\n"))
+    assert_match(/consumer property `ev\.pid` was removed/, v.join("\n"))
+  end
+
+  # 逆向き (非公開 -> 公開) は追加なので許す
+  def test_exposing_a_previously_hidden_field_is_allowed
+    v = mutate do |d|
+      d["channels"]["demo"]["fields"][2]["expose"] = "int"
+      d["channels"]["demo"]["consumer"]["properties"] << {
+        "name" => "cgid", "kind" => "field", "expose" => "int", "ffi" => "spnl_rec_demo_cgid"
+      }
+    end
+    assert_empty v
+  end
+
+  def test_changing_a_property_type_is_rejected
+    v = mutate { |d| d["channels"]["demo"]["consumer"]["properties"][0]["expose"] = "str" }
+    assert_match(/consumer property `ev\.pid` expose changed "int" -> "str"/, v.join("\n"))
+  end
+
+  # E376: 生フィールドの expose を取り下げて **同名の derived** に付け替える (単位を span と
+  # 揃える等) は、名前も Ruby 型も FFI シンボルも変わらないのに **2 つのルールに当たる**。
+  # 落ちること自体が正しい — 値が変わる変更を黙って通してはいけないので、gate は「見に来い」
+  # と言う役目を果たす。**ただし gate が見ているのは形であって値ではない** (projection に値は
+  # 無い) ので、これが「動いている consumer にとって何なのか」の判断は人間に残る。
+  def test_reclassifying_a_field_property_as_derived_is_flagged
+    v = mutate do |d|
+      d["channels"]["demo"]["fields"][1]["expose"] = ""            # フィールドの露出を下ろし
+      d["channels"]["demo"]["consumer"]["properties"][0]["kind"] = "derived"   # 同名 derived に
+    end
+    assert_match(/field `pid` expose changed "int" -> ""/, v.join("\n"))
+    assert_match(/consumer property `ev\.pid` kind changed "field" -> "derived"/, v.join("\n"))
+    assert_equal 2, v.length, "この付け替えで当たるルールは 2 つ (名前と型は不変なので他は鳴らない)"
+  end
+
+  # --- E378: derivation の出力容量 -----------------------------------------
+  #
+  # cap は「両側 (生成 accessor と span builder) が同じ幅を渡す」の *その幅* (E377)。
+  # 広げるのは加法 (今まで入っていた値は入り続ける) だが、狭めると **今まで丸ごと届いて
+  # いた値が切り詰まる** — `ev.<name>` と、それが作る span 属性の両方で同時に。だから
+  # 破壊的変更として扱う。
+  def with_derived_cap(cap)
+    d = JSON.parse(JSON.generate(base))
+    p = { "name" => "label", "kind" => "derived", "expose" => "str",
+          "ffi" => "spnl_rec_demo_label" }
+    p["cap"] = cap unless cap.nil?
+    d["channels"]["demo"]["consumer"]["properties"] << p
+    d
+  end
+
+  def test_narrowing_a_derivation_cap_is_rejected
+    v = GATE.violations(with_derived_cap(256), with_derived_cap(64))
+    assert_match(/consumer property `ev\.label` cap shrank 256 -> 64/, v.join("\n"))
+  end
+
+  def test_widening_a_derivation_cap_is_allowed
+    assert_empty GATE.violations(with_derived_cap(64), with_derived_cap(256))
+  end
+
+  # E378 以前の snapshot には cap が無い。比較する材料が無いだけなので違反にはしない
+  # (次の --update で baseline に入り、そこから先は守られる)。
+  def test_a_snapshot_without_caps_is_not_a_violation
+    assert_empty GATE.violations(with_derived_cap(nil), with_derived_cap(64))
+  end
+
+  # 生フィールド由来のプロパティに cap は無い (record のバイトをそのまま読むので、幅は
+  # フィールドの `bytes` = 既に snapshot にある)。null 同士の比較で誤検知しないこと。
+  def test_field_properties_have_no_cap_rule
+    assert_empty GATE.violations(base, base)
+    assert_nil base["channels"]["demo"]["consumer"]["properties"][0]["cap"]
+  end
+
+  def test_dropping_an_egress_attribute_is_rejected
+    v = mutate { |d| d["channels"]["demo"]["egress"]["attributes"] = [{ "key" => "a.b", "present" => "always" }] }
+    assert_match(/egress attribute `c\.d` was removed/, v.join("\n"))
+  end
+
+  def test_adding_an_egress_attribute_is_allowed
+    v = mutate { |d| d["channels"]["demo"]["egress"]["attributes"] << { "key" => "e.f", "present" => "always" } }
+    assert_empty v
+  end
+
+  # E434: the quiet one. The key survives, every span still validates, and the
+  # attribute simply stops appearing on records it used to describe -- so a
+  # dashboard filtering on it goes empty with nothing to point at.
+  def test_narrowing_when_an_attribute_appears_is_rejected
+    v = mutate { |d| d["channels"]["demo"]["egress"]["attributes"][0]["present"] = "nonzero(pid)" }
+    assert_match(/`a\.b` changed WHEN it is present/, v.join("\n"))
+  end
+
+  def test_changing_the_span_timing_is_rejected
+    v = mutate { |d| d["channels"]["demo"]["egress"]["timing_form"]["end"] = "start_plus:duration_ns" }
+    assert_match(/egress timing_form changed/, v.join("\n"))
+  end
+
+  # E434: taking a body away from every existing reader. The other direction
+  # (giving one) is additive and stays silent.
+  def test_moving_a_derivation_out_of_the_declaration_is_rejected
+    v = mutate { |d|
+      d["channels"]["demo"]["consumer"]["properties"][0]["residue"] = "parse"
+    }
+    assert_match(/`pid` was declared and is now parse/, v.join("\n"))
+  end
+
+  def test_moving_a_derivation_into_the_declaration_is_allowed
+    v = mutate { |d|
+      d["channels"]["demo"]["consumer"]["properties"][0]["residue"] = "declared"
+      d["channels"]["demo"]["consumer"]["properties"][0]["residue"] = "declared"
+    }
+    assert_empty v
+  end
+
+  def test_renaming_the_push_fn_is_rejected
+    v = mutate { |d| d["channels"]["demo"]["egress"]["push_fn"] = "spnl_otlp_demo2_span_push" }
+    assert_match(/egress push_fn changed/, v.join("\n"))
+  end
+
+  def test_withdrawing_the_typed_consumer_is_rejected
+    v = mutate { |d| d["channels"]["demo"]["consumer"] = nil }
+    assert_match(/typed consumer was withdrawn/, v.join("\n"))
+  end
+
+  # 型付き consumer の後付け (S5 の横展開そのもの) は追加なので許す
+  def test_adding_a_typed_consumer_is_allowed
+    old = JSON.parse(JSON.generate(base))
+    old["channels"]["demo"].delete("consumer")
+    assert_empty GATE.violations(old, base)
+  end
+
+  # --- E400: the metric contract -------------------------------------------
+  #
+  # A metric is queried by name from outside the process, so the breaking changes
+  # are the ones that make a dashboard stop finding it (removed / renamed /
+  # re-typed) or start answering a different question (a label that vanishes
+  # merges series that were distinguished; a label that keeps its key and changes
+  # its source keeps the query working and changes what it means -- the worst of
+  # the three, because it is the only one nothing else can notice).
+
+  def test_removing_a_metric_is_rejected
+    v = mutate { |d| d["channels"]["demo"]["metrics"] = [] }
+    assert_match(/metric `count` was removed/, v.join("\n"))
+  end
+
+  def test_renaming_a_metric_is_rejected
+    v = mutate { |d| d["channels"]["demo"]["metrics"][0]["name"] = "spnl.demo.total" }
+    assert_match(/metric `count` name changed/, v.join("\n"))
+  end
+
+  def test_changing_a_metric_kind_is_rejected
+    v = mutate { |d| d["channels"]["demo"]["metrics"][0]["kind"] = "histogram" }
+    assert_match(/metric `count` kind changed/, v.join("\n"))
+  end
+
+  def test_changing_a_metric_unit_is_rejected
+    v = mutate { |d| d["channels"]["demo"]["metrics"][0]["unit"] = "s" }
+    assert_match(/metric `count` unit changed/, v.join("\n"))
+  end
+
+  def test_removing_a_metric_label_is_rejected
+    v = mutate { |d| d["channels"]["demo"]["metrics"][0]["labels"] = [] }
+    assert_match(/lost label `spnl.demo.kind`/, v.join("\n"))
+  end
+
+  def test_repointing_a_label_at_another_property_is_rejected
+    v = mutate { |d| d["channels"]["demo"]["metrics"][0]["labels"][0]["from"] = "pid" }
+    assert_match(/label `spnl.demo.kind` now reads `pid`/, v.join("\n"))
+  end
+
+  def test_adding_a_metric_is_allowed
+    v = mutate do |d|
+      d["channels"]["demo"]["metrics"] << {
+        "id" => "dur", "name" => "spnl.demo.duration", "kind" => "histogram", "unit" => "s",
+        "value_from" => "duration_ns", "bounds" => "otel_duration_s", "series_bound" => 1,
+        "labels" => [],
+      }
+    end
+    assert_empty v
+  end
+
+  # Widening a permitted set raises the ceiling. That is allowed -- it is how a
+  # status code gets added -- but the number lands in the snapshot, so it can only
+  # move through a reviewed diff. This test pins that it is allowed, so that the
+  # rule above is not read as "the bound may never change".
+  def test_widening_a_labels_bound_is_allowed_but_visible
+    v = mutate do |d|
+      m = d["channels"]["demo"]["metrics"][0]
+      m["labels"][0]["bound"] = 5
+      m["series_bound"] = 5
+    end
+    assert_empty v
+    refute_equal base["channels"]["demo"]["metrics"][0]["series_bound"], 5,
+                 "この test は series_bound が snapshot に載っていることに依存している"
+  end
+
+  # E400 の中心: series_bound は宣言だけから計算できる数でなければならない。
+  # 実物の契約でそれが成り立っているか (label の bound の積 == series_bound) を、
+  # 合成でなく **committed な生成物** に対して確かめる。
+  def test_declared_series_bound_is_the_product_of_its_label_bounds
+    doc = JSON.parse(File.read(File.expand_path("../../src/spinel_ebpf/record_schema_gen.json", __dir__)))
+    seen = 0
+    doc["channels"].each do |c|
+      Array(c["metrics"]).each do |m|
+        want = Array(m["labels"]).map { |l| l["bound"] }.reduce(1, :*)
+        assert_equal want, m["series_bound"],
+                     "#{c['id']}.#{m['id']}: series_bound が label bound の積と違う"
+        Array(m["labels"]).each do |l|
+          assert_includes %w[declared_set value_map], l["bound_from"],
+                          "#{l['key']}: bound の出所が宣言されていない"
+          if l["bound_from"] == "declared_set"
+            assert_equal Array(l["values"]).length + 1, l["bound"],
+                         "#{l['key']}: bound が「集合 + fallback」と一致しない"
+            refute_empty l["fallback"].to_s, "#{l['key']}: 集合外の行き先が無い"
+          end
+        end
+        seen += 1
+      end
+    end
+    assert_operator seen, :>, 0, "metric が 1 つも宣言されていない (この test が空回りしている)"
+  end
+
+  def test_removing_a_channel_is_rejected
+    v = mutate { |d| d["channels"].delete("demo") }
+    assert_match(/channel `demo` was removed/, v.join("\n"))
+  end
+
+  def test_adding_a_channel_is_allowed
+    v = mutate do |d|
+      d["channels"]["other"] = d["channels"]["demo"].merge(
+        "record_struct" => "<unit>_other_event", "ringbuf_map" => "<unit>_other_events"
+      )
+    end
+    assert_empty v
+  end
+
+  def test_renaming_the_ringbuf_map_is_rejected
+    v = mutate { |d| d["channels"]["demo"]["ringbuf_map"] = "<unit>_demo_ring" }
+    assert_match(/ringbuf_map changed/, v.join("\n"))
+  end
+
+  def test_dropping_a_producer_is_rejected
+    v = mutate { |d| d["channels"]["demo"]["producers"] = [] }
+    assert_match(/producer `emit_demo` no longer writes this channel/, v.join("\n"))
+  end
+end

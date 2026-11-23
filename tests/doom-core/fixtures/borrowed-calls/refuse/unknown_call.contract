@@ -1,0 +1,7 @@
+core-contract 1
+root refuse/unknown_call.rb
+entry unknown_call
+result i64
+param data buffer i32 in count n_data
+param n_data scalar u64
+param i scalar i64

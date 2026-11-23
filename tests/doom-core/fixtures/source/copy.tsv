@@ -1,0 +1,49 @@
+# tests/doom-core/fixtures/source/copy.tsv — what the boundary copy carries.
+#
+# One step-written buffer per line that a PORTED CORE reader needs, copied into
+# the port's storage once per frame between the tickers and the render. The
+# list is checked by tests/doom-core/copy-check.rb in BOTH directions: every
+# buffer a ported reader needs is here, and nothing is here that no ported
+# reader needs. A buffer enters in the same commit as its first CORE reader, so
+# porting a definition that reads step state fails the check until the buffer
+# is added, and the list maintains itself rather than being remembered.
+#
+# THE SECOND COLUMN IS WHERE LEAVING THE BUFFER OUT FIRST SHOWS in DEMO1: the
+# earliest frame at which a live comparison (frame, plane or end-of-frame screen)
+# disagrees when SOURCE_PORT_COPY_SKIP names it. tests/doom-core/screens.sh
+# asserts that frame EXACTLY, so a poison that equals the truth for a while and
+# shows late -- as hud_message_on once did -- fails, and so does one that shows
+# somewhere else. The status bar reads its three from frame 0; the first flat
+# animates at frame 8; the first HUD message comes on at frame 60; the sprite
+# projection and the per-sector walk read the things, their links and the
+# sectors from frame 0, and each skipped copy first shows as a leaf
+# disagreement there.
+#
+# THE THIRD COLUMN, WHERE THERE IS ONE, IS THE BOUND THE COPY RUNS TO. The
+# things are copied up to the tick's high-water mark, Game@@mobj_alloc, not to
+# their declared capacity limit:maxmobjs (4096): measured over the whole of the
+# three demos the mark reaches 222 (DEMO1), 316 (DEMO2) and 273 (DEMO3), so the
+# seven arrays cost at most 7 * 316 cells a frame where the capacity would be
+# 7 * 4096. The things' links, game_thing_next, are per thing and run to the
+# same mark on a row of their own; the sectors' list heads and lights are per
+# sector and are copied whole, bounded by the level's declared count. screens.sh
+# asserts that no demo passes the mobj_alloc bound, that every row writing one
+# writes the same, and that the highest mark reached equals it.
+#
+#buffer	first	bound
+textures_flattranslation	8
+status_bar_faceindex	0
+status_bar_keyboxes	0
+status_bar_notdeathmatch	0
+hud_message	60
+hud_message_on	60
+game_mobj_x	0	mobj_alloc:316
+game_mobj_y	0	mobj_alloc:316
+game_mobj_z	0	mobj_alloc:316
+game_mobj_angle	0	mobj_alloc:316
+game_mobj_frame	0	mobj_alloc:316
+game_mobj_sprite	0	mobj_alloc:316
+game_mobj_flags	0	mobj_alloc:316
+game_thing_next	0	mobj_alloc:316
+game_sector_head	0	level:numsectors
+level_sector_lightlevel	0	level:numsectors

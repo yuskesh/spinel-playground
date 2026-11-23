@@ -1,0 +1,6 @@
+#entry	buffer	mode
+doom_core_step	sector_floorheight	inout
+doom_core_step	colormap	in
+doom_core_render	framebuffer	inout
+doom_core_render	clipbank	inout
+doom_core_render	colormap	in

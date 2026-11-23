@@ -1,0 +1,4 @@
+verdict	object	symbol	reason
+ALLOW	kern.arm64-host.o	_spinel_grad_sq_hinge_loss	platform extern declared by the profile
+ALLOW	kern.arm64-host.o	_spinel_hvp_sq_hinge_loss	platform extern declared by the profile
+ALLOW	kern.arm64-host.o	_spinel_trap	platform extern declared by the profile

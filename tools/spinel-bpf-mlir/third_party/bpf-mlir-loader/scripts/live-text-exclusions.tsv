@@ -1,0 +1,8 @@
+# scripts/live-text-exclusions.tsv — live の差動 (live-one.sh の (A)) で文を比べない答えの表 (E010 — レビュー役の決定 2026-09-27)。行は
+#   <名前>	<Go の文の正規表現 (sed -E)>	<C の文の正規表現>	<理由>
+# どちらの側も表の正規表現に一致する error (と E042 から unknown) の答えの文だけを <名前> に置き換えて比べる (片方だけが一致すれば差は見える)。判定 (止める / 通す) は比べ続ける。
+# 正規表現は sed の s/…/…/ に入る — `/` を書かない (`.` で)。JSON の文の `>` は Go の encoder が `>` に書く (`\\u003e` で)
+# E048: E047 の VM の文の差 V1〜V3 (LSM の attach 先・権限なしの BTF と map type の probe) は C の文を Go に合わせて外した
+F3	detect support for [^"]* for program type [^"]*	helper: probe failed	helper の probe の誤りの文 (cilium の ErrorWithLog — helper の名前の表 ~210 と verifier の log の要約) — 合成の型の表の範囲外の helper の id と不許可の組み合わせでだけ出る (実の ELF では出ない)、判定は同じで文だけ違う。写しは費用が大きい (利用者の速さ重視の決定) — 後回し
+K1	different callee denial: load program: [^"]*: cannot be determined on this target	different callee denial: load program: [^"]*: cannot be determined on this target	E042 (bpf-mlir E499): kfunc の load の probe の Unknown の文 — Go は cilium の VerifierError の %+v (verifier の log の全ての行 — probe の process の pid の即値と verification time の usec を含む)、C は log の要約。Go の文は run ごとに違う (pid・時間) ので byte では比べられない。判定 (Unknown — kfunc_allowed_unknown で止めない) と名指しの拒否の行の分類は比べ続ける (偽の答えは文を持たない)
+K2	kfunc load result does not establish named permission denial: [^"]*: cannot be determined on this target	kfunc load result does not establish named permission denial: [^"]*: cannot be determined on this target	K1 と同じ (名指しの行の無い load の失敗 — %+v の verifier の log)

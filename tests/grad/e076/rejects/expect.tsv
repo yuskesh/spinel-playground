@@ -1,0 +1,12 @@
+target	obstacle
+oint	O2
+oint_arg	O2
+opoly	O4
+odecay	accepted
+oconst	O7
+oalloc	O5
+ostr	subset
+ohash	subset
+owrt	decl
+ofwd	mode
+onoprobe	probe

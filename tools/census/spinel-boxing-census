@@ -1,0 +1,142 @@
+#!/usr/bin/env ruby
+# tools/census/spinel-boxing-census — count the amount of boxing in generated C.
+#
+#   spinel-boxing-census take   <out.tsv> [corpus...]   # record the current state
+#   spinel-boxing-census gate   <baseline.tsv> <now.tsv> # exit 1 if anything got worse
+#
+# Why it is needed: the standing gate (over 3,000 programs) looks only at **output**,
+# so it catches no regression to "correct but slow". Once, a typed
+# `a = Array.new; a << 1` array fell back to a boxed poly one, and
+# `make test` passed through at 3023/0/0. This instrument closes that blind spot.
+#
+# What it counts (all as text in the generated C):
+#   poly  … calls of `sp_poly_*`     = dispatches to the poly runtime
+#   rbval … occurrences of `sp_RbVal` = boxed slots and temporaries
+#   box   … calls of `sp_box_*`      = boxing itself
+#
+# Without a corpus, vendor/spinel's test/*.rb + benchmark/*.rb.
+# Environment variables pass through to child processes, so a census with a flag set
+#   SPINEL_LLVM_SHL_DEFER=1 spinel-boxing-census take now.tsv
+# is run like this.
+
+require "open3"
+require "tmpdir"
+require "json"
+
+ROOT   = File.expand_path("../..", __dir__)
+SPINEL = ENV["SPINEL"] || File.join(ROOT, "vendor/spinel/bin/spinel")
+
+def default_corpus
+  v = File.join(ROOT, "vendor/spinel")
+  Dir[File.join(v, "test/*.rb")].sort + Dir[File.join(v, "benchmark/*.rb")].sort
+end
+
+def counts(c)
+  { poly:  c.scan(/\bsp_poly_[a-z_0-9]+\s*\(/).size,
+    rbval: c.scan(/\bsp_RbVal\b/).size,
+    box:   c.scan(/\bsp_box_[a-z_0-9]+\s*\(/).size }
+end
+
+# Counts from the type table (--emit-types). Where the text census looks at "the generated C itself",
+# this looks at "what the analyzer knew". Having both is a form of differential check.
+# Needs vendor patch L2 (SPINEL_LLVM_TYPES_NODE_ID) — returns nil without it.
+def type_facts(rb)
+  return nil unless ENV["SPINEL_LLVM_TYPES_NODE_ID"]
+  Dir.mktmpdir do |d|
+    _o, _e, st = Open3.capture3({"SPINEL_EMIT_TYPES" => nil}, SPINEL, rb, "--emit-types", chdir: d)
+    j = Dir[File.join(d, "*.types.json")].first
+    return nil unless st.success? && j
+    t = JSON.parse(File.read(j))["types"]
+    return nil unless t && t.first && t.first.key?("node")
+    { nodes: t.size,
+      poly:  t.count { |e| e["type"] == "poly" },
+      parr:  t.count { |e| e["type"] == "poly_array" },
+      table: t }
+  end
+end
+
+def take(out, files)
+  files = default_corpus if files.empty?
+  tt = !ENV["SPINEL_LLVM_TYPES_NODE_ID"].nil?
+  File.open(out, "w") do |f|
+    f.puts(tt ? "#program\tpoly\trbval\tbox\tnodes\tpoly_nodes\tpolyarr_nodes"
+              : "#program\tpoly\trbval\tbox")
+    files.each do |rb|
+      c, _e, st = Open3.capture3(SPINEL, rb, "-S")
+      unless st.success?
+        f.puts "#{File.basename(rb)}\t" + (["EMIT-FAIL"] * (tt ? 6 : 3)).join("\t")
+        next
+      end
+      n = counts(c)
+      row = [File.basename(rb), n[:poly], n[:rbval], n[:box]]
+      if tt
+        t = type_facts(rb)
+        row += t ? [t[:nodes], t[:poly], t[:parr]] : (["NO-TYPES"] * 3)
+      end
+      f.puts row.join("\t")
+    end
+  end
+  n = File.readlines(out).size - 1
+  puts "census: #{n} programs -> #{out}"
+end
+
+def load_tsv(p)
+  h = {}
+  File.readlines(p).each do |l|
+    next if l.start_with?("#")
+    name, *v = l.chomp.split("\t")
+    h[name] = v
+  end
+  h
+end
+
+def gate(base_p, now_p)
+  base, now = load_tsv(base_p), load_tsv(now_p)
+  worse, better, appeared, vanished = [], [], [], []
+  (base.keys | now.keys).sort.each do |k|
+    b, n = base[k], now[k]
+    if b.nil?  then appeared << k; next end
+    if n.nil?  then vanished << k; next end
+    # A move to EMIT-FAIL always counts as worse (never pass "nothing was emitted" as green)
+    if n.include?("EMIT-FAIL") && !b.include?("EMIT-FAIL") then worse << [k, b, n]; next end
+    next if b.include?("EMIT-FAIL") || n.include?("EMIT-FAIL")
+    # So that comparing TSVs with different column counts (type-table version vs text version) does not break,
+    # compare only the leading columns they share. Added columns are not reported as worse.
+    m = [b.size, n.size].min
+    bi, ni = b.first(m).map(&:to_i), n.first(m).map(&:to_i)
+    worse  << [k, b, n] if ni.zip(bi).any? { |x, y| x > y }
+    better << [k, b, n] if ni.zip(bi).all? { |x, y| x <= y } && ni != bi
+  end
+  better.each { |k, b, n| puts "IMPROVED  #{k}\t#{b.join(",")} -> #{n.join(",")}" }
+  worse.each  { |k, b, n| puts "WORSE     #{k}\t#{b.join(",")} -> #{n.join(",")}" }
+  vanished.each { |k| puts "VANISHED  #{k}" }
+  appeared.each { |k| puts "NEW       #{k}" }
+  puts "---- census gate: worse=#{worse.size} improved=#{better.size} " \
+       "vanished=#{vanished.size} new=#{appeared.size} (base=#{base.size} now=#{now.size})"
+  # Vanishing fails too: a program in the baseline that silently disappears is the same kind of failure
+  exit((worse.empty? && vanished.empty?) ? 0 : 1)
+end
+
+case ARGV.shift
+when "take" then take(ARGV.shift, ARGV)
+when "gate" then gate(ARGV.shift, ARGV.shift)
+when "where" then
+  # Which expressions are poly. Needs SPINEL_LLVM_TYPES_NODE_ID=1 (vendor patch L2).
+  ENV["SPINEL_LLVM_TYPES_NODE_ID"] ||= "1"
+  ARGV.each do |rb|
+    t = type_facts(rb)
+    if t.nil?
+      warn "#{rb}: cannot get the type table (vendor patch L2 not applied, or -S failed)"
+      next
+    end
+    puts "# #{rb}  nodes=#{t[:nodes]} poly=#{t[:poly]} poly_array=#{t[:parr]}"
+    t[:table].select { |e| e["type"] == "poly" || e["type"] == "poly_array" }
+             .sort_by { |e| [e["line"], e["col"], e["node"]] }
+             .each { |e| puts "#{e["line"]}:#{e["col"]}\tnode=#{e["node"]}\t#{e["type"]}\t#{e["kind"]}\t#{e["rbs"]}" }
+  end
+else
+  warn "usage: spinel-boxing-census take <out.tsv> [files...]"
+  warn "       spinel-boxing-census gate <baseline.tsv> <now.tsv>"
+  warn "       spinel-boxing-census where <file.rb>...   # which expressions are poly"
+  exit 2
+end

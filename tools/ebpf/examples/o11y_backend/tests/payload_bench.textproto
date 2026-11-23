@@ -1,0 +1,812 @@
+resource_logs {
+  resource { attributes { key: "service.name" value { string_value: "api" } }
+             attributes { key: "host.name" value { string_value: "bench-host" } } }
+  scope_logs {
+    log_records {
+      time_unix_nano: 1700000000000000000
+      severity_number: 9
+      severity_text: "INFO"
+      body { string_value: "request handled in 0 ms" }
+      attributes { key: "http.status_code" value { int_value: 200 } }
+      attributes { key: "thread.name" value { string_value: "worker-0" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000001000000
+      severity_number: 13
+      severity_text: "WARN"
+      body { string_value: "slow upstream response 13 ms" }
+      attributes { key: "http.status_code" value { int_value: 201 } }
+      attributes { key: "thread.name" value { string_value: "worker-1" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000002000000
+      severity_number: 21
+      severity_text: "FATAL"
+      body { string_value: "payment failed for order 26" }
+      attributes { key: "http.status_code" value { int_value: 202 } }
+      attributes { key: "thread.name" value { string_value: "worker-2" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000003000000
+      severity_number: 9
+      severity_text: "INFO"
+      body { string_value: "cache hit for key user:39" }
+      attributes { key: "http.status_code" value { int_value: 203 } }
+      attributes { key: "thread.name" value { string_value: "worker-3" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000004000000
+      severity_number: 17
+      severity_text: "ERROR"
+      body { string_value: "connection timeout to db-52" }
+      attributes { key: "http.status_code" value { int_value: 204 } }
+      attributes { key: "thread.name" value { string_value: "worker-4" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000005000000
+      severity_number: 9
+      severity_text: "INFO"
+      body { string_value: "request handled in 65 ms" }
+      attributes { key: "http.status_code" value { int_value: 200 } }
+      attributes { key: "thread.name" value { string_value: "worker-5" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000006000000
+      severity_number: 13
+      severity_text: "WARN"
+      body { string_value: "slow upstream response 78 ms" }
+      attributes { key: "http.status_code" value { int_value: 201 } }
+      attributes { key: "thread.name" value { string_value: "worker-6" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000007000000
+      severity_number: 21
+      severity_text: "FATAL"
+      body { string_value: "payment failed for order 91" }
+      attributes { key: "http.status_code" value { int_value: 202 } }
+      attributes { key: "thread.name" value { string_value: "worker-7" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000008000000
+      severity_number: 9
+      severity_text: "INFO"
+      body { string_value: "cache hit for key user:104" }
+      attributes { key: "http.status_code" value { int_value: 203 } }
+      attributes { key: "thread.name" value { string_value: "worker-0" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000009000000
+      severity_number: 17
+      severity_text: "ERROR"
+      body { string_value: "connection timeout to db-117" }
+      attributes { key: "http.status_code" value { int_value: 204 } }
+      attributes { key: "thread.name" value { string_value: "worker-1" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000010000000
+      severity_number: 9
+      severity_text: "INFO"
+      body { string_value: "request handled in 130 ms" }
+      attributes { key: "http.status_code" value { int_value: 200 } }
+      attributes { key: "thread.name" value { string_value: "worker-2" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000011000000
+      severity_number: 13
+      severity_text: "WARN"
+      body { string_value: "slow upstream response 143 ms" }
+      attributes { key: "http.status_code" value { int_value: 201 } }
+      attributes { key: "thread.name" value { string_value: "worker-3" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000012000000
+      severity_number: 21
+      severity_text: "FATAL"
+      body { string_value: "payment failed for order 156" }
+      attributes { key: "http.status_code" value { int_value: 202 } }
+      attributes { key: "thread.name" value { string_value: "worker-4" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000013000000
+      severity_number: 9
+      severity_text: "INFO"
+      body { string_value: "cache hit for key user:169" }
+      attributes { key: "http.status_code" value { int_value: 203 } }
+      attributes { key: "thread.name" value { string_value: "worker-5" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000014000000
+      severity_number: 17
+      severity_text: "ERROR"
+      body { string_value: "connection timeout to db-182" }
+      attributes { key: "http.status_code" value { int_value: 204 } }
+      attributes { key: "thread.name" value { string_value: "worker-6" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000015000000
+      severity_number: 9
+      severity_text: "INFO"
+      body { string_value: "request handled in 195 ms" }
+      attributes { key: "http.status_code" value { int_value: 200 } }
+      attributes { key: "thread.name" value { string_value: "worker-7" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000016000000
+      severity_number: 13
+      severity_text: "WARN"
+      body { string_value: "slow upstream response 208 ms" }
+      attributes { key: "http.status_code" value { int_value: 201 } }
+      attributes { key: "thread.name" value { string_value: "worker-0" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000017000000
+      severity_number: 21
+      severity_text: "FATAL"
+      body { string_value: "payment failed for order 221" }
+      attributes { key: "http.status_code" value { int_value: 202 } }
+      attributes { key: "thread.name" value { string_value: "worker-1" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000018000000
+      severity_number: 9
+      severity_text: "INFO"
+      body { string_value: "cache hit for key user:234" }
+      attributes { key: "http.status_code" value { int_value: 203 } }
+      attributes { key: "thread.name" value { string_value: "worker-2" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000019000000
+      severity_number: 17
+      severity_text: "ERROR"
+      body { string_value: "connection timeout to db-247" }
+      attributes { key: "http.status_code" value { int_value: 204 } }
+      attributes { key: "thread.name" value { string_value: "worker-3" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000020000000
+      severity_number: 9
+      severity_text: "INFO"
+      body { string_value: "request handled in 260 ms" }
+      attributes { key: "http.status_code" value { int_value: 200 } }
+      attributes { key: "thread.name" value { string_value: "worker-4" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000021000000
+      severity_number: 13
+      severity_text: "WARN"
+      body { string_value: "slow upstream response 273 ms" }
+      attributes { key: "http.status_code" value { int_value: 201 } }
+      attributes { key: "thread.name" value { string_value: "worker-5" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000022000000
+      severity_number: 21
+      severity_text: "FATAL"
+      body { string_value: "payment failed for order 286" }
+      attributes { key: "http.status_code" value { int_value: 202 } }
+      attributes { key: "thread.name" value { string_value: "worker-6" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000023000000
+      severity_number: 9
+      severity_text: "INFO"
+      body { string_value: "cache hit for key user:299" }
+      attributes { key: "http.status_code" value { int_value: 203 } }
+      attributes { key: "thread.name" value { string_value: "worker-7" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000024000000
+      severity_number: 17
+      severity_text: "ERROR"
+      body { string_value: "connection timeout to db-312" }
+      attributes { key: "http.status_code" value { int_value: 204 } }
+      attributes { key: "thread.name" value { string_value: "worker-0" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000025000000
+      severity_number: 9
+      severity_text: "INFO"
+      body { string_value: "request handled in 325 ms" }
+      attributes { key: "http.status_code" value { int_value: 200 } }
+      attributes { key: "thread.name" value { string_value: "worker-1" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000026000000
+      severity_number: 13
+      severity_text: "WARN"
+      body { string_value: "slow upstream response 338 ms" }
+      attributes { key: "http.status_code" value { int_value: 201 } }
+      attributes { key: "thread.name" value { string_value: "worker-2" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000027000000
+      severity_number: 21
+      severity_text: "FATAL"
+      body { string_value: "payment failed for order 351" }
+      attributes { key: "http.status_code" value { int_value: 202 } }
+      attributes { key: "thread.name" value { string_value: "worker-3" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000028000000
+      severity_number: 9
+      severity_text: "INFO"
+      body { string_value: "cache hit for key user:364" }
+      attributes { key: "http.status_code" value { int_value: 203 } }
+      attributes { key: "thread.name" value { string_value: "worker-4" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000029000000
+      severity_number: 17
+      severity_text: "ERROR"
+      body { string_value: "connection timeout to db-377" }
+      attributes { key: "http.status_code" value { int_value: 204 } }
+      attributes { key: "thread.name" value { string_value: "worker-5" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000030000000
+      severity_number: 9
+      severity_text: "INFO"
+      body { string_value: "request handled in 390 ms" }
+      attributes { key: "http.status_code" value { int_value: 200 } }
+      attributes { key: "thread.name" value { string_value: "worker-6" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000031000000
+      severity_number: 13
+      severity_text: "WARN"
+      body { string_value: "slow upstream response 403 ms" }
+      attributes { key: "http.status_code" value { int_value: 201 } }
+      attributes { key: "thread.name" value { string_value: "worker-7" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000032000000
+      severity_number: 21
+      severity_text: "FATAL"
+      body { string_value: "payment failed for order 416" }
+      attributes { key: "http.status_code" value { int_value: 202 } }
+      attributes { key: "thread.name" value { string_value: "worker-0" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000033000000
+      severity_number: 9
+      severity_text: "INFO"
+      body { string_value: "cache hit for key user:429" }
+      attributes { key: "http.status_code" value { int_value: 203 } }
+      attributes { key: "thread.name" value { string_value: "worker-1" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000034000000
+      severity_number: 17
+      severity_text: "ERROR"
+      body { string_value: "connection timeout to db-442" }
+      attributes { key: "http.status_code" value { int_value: 204 } }
+      attributes { key: "thread.name" value { string_value: "worker-2" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000035000000
+      severity_number: 9
+      severity_text: "INFO"
+      body { string_value: "request handled in 455 ms" }
+      attributes { key: "http.status_code" value { int_value: 200 } }
+      attributes { key: "thread.name" value { string_value: "worker-3" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000036000000
+      severity_number: 13
+      severity_text: "WARN"
+      body { string_value: "slow upstream response 468 ms" }
+      attributes { key: "http.status_code" value { int_value: 201 } }
+      attributes { key: "thread.name" value { string_value: "worker-4" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000037000000
+      severity_number: 21
+      severity_text: "FATAL"
+      body { string_value: "payment failed for order 481" }
+      attributes { key: "http.status_code" value { int_value: 202 } }
+      attributes { key: "thread.name" value { string_value: "worker-5" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000038000000
+      severity_number: 9
+      severity_text: "INFO"
+      body { string_value: "cache hit for key user:494" }
+      attributes { key: "http.status_code" value { int_value: 203 } }
+      attributes { key: "thread.name" value { string_value: "worker-6" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000039000000
+      severity_number: 17
+      severity_text: "ERROR"
+      body { string_value: "connection timeout to db-507" }
+      attributes { key: "http.status_code" value { int_value: 204 } }
+      attributes { key: "thread.name" value { string_value: "worker-7" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000040000000
+      severity_number: 9
+      severity_text: "INFO"
+      body { string_value: "request handled in 520 ms" }
+      attributes { key: "http.status_code" value { int_value: 200 } }
+      attributes { key: "thread.name" value { string_value: "worker-0" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000041000000
+      severity_number: 13
+      severity_text: "WARN"
+      body { string_value: "slow upstream response 533 ms" }
+      attributes { key: "http.status_code" value { int_value: 201 } }
+      attributes { key: "thread.name" value { string_value: "worker-1" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000042000000
+      severity_number: 21
+      severity_text: "FATAL"
+      body { string_value: "payment failed for order 546" }
+      attributes { key: "http.status_code" value { int_value: 202 } }
+      attributes { key: "thread.name" value { string_value: "worker-2" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000043000000
+      severity_number: 9
+      severity_text: "INFO"
+      body { string_value: "cache hit for key user:559" }
+      attributes { key: "http.status_code" value { int_value: 203 } }
+      attributes { key: "thread.name" value { string_value: "worker-3" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000044000000
+      severity_number: 17
+      severity_text: "ERROR"
+      body { string_value: "connection timeout to db-572" }
+      attributes { key: "http.status_code" value { int_value: 204 } }
+      attributes { key: "thread.name" value { string_value: "worker-4" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000045000000
+      severity_number: 9
+      severity_text: "INFO"
+      body { string_value: "request handled in 585 ms" }
+      attributes { key: "http.status_code" value { int_value: 200 } }
+      attributes { key: "thread.name" value { string_value: "worker-5" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000046000000
+      severity_number: 13
+      severity_text: "WARN"
+      body { string_value: "slow upstream response 598 ms" }
+      attributes { key: "http.status_code" value { int_value: 201 } }
+      attributes { key: "thread.name" value { string_value: "worker-6" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000047000000
+      severity_number: 21
+      severity_text: "FATAL"
+      body { string_value: "payment failed for order 611" }
+      attributes { key: "http.status_code" value { int_value: 202 } }
+      attributes { key: "thread.name" value { string_value: "worker-7" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000048000000
+      severity_number: 9
+      severity_text: "INFO"
+      body { string_value: "cache hit for key user:624" }
+      attributes { key: "http.status_code" value { int_value: 203 } }
+      attributes { key: "thread.name" value { string_value: "worker-0" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000049000000
+      severity_number: 17
+      severity_text: "ERROR"
+      body { string_value: "connection timeout to db-637" }
+      attributes { key: "http.status_code" value { int_value: 204 } }
+      attributes { key: "thread.name" value { string_value: "worker-1" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000050000000
+      severity_number: 9
+      severity_text: "INFO"
+      body { string_value: "request handled in 650 ms" }
+      attributes { key: "http.status_code" value { int_value: 200 } }
+      attributes { key: "thread.name" value { string_value: "worker-2" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000051000000
+      severity_number: 13
+      severity_text: "WARN"
+      body { string_value: "slow upstream response 663 ms" }
+      attributes { key: "http.status_code" value { int_value: 201 } }
+      attributes { key: "thread.name" value { string_value: "worker-3" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000052000000
+      severity_number: 21
+      severity_text: "FATAL"
+      body { string_value: "payment failed for order 676" }
+      attributes { key: "http.status_code" value { int_value: 202 } }
+      attributes { key: "thread.name" value { string_value: "worker-4" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000053000000
+      severity_number: 9
+      severity_text: "INFO"
+      body { string_value: "cache hit for key user:689" }
+      attributes { key: "http.status_code" value { int_value: 203 } }
+      attributes { key: "thread.name" value { string_value: "worker-5" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000054000000
+      severity_number: 17
+      severity_text: "ERROR"
+      body { string_value: "connection timeout to db-702" }
+      attributes { key: "http.status_code" value { int_value: 204 } }
+      attributes { key: "thread.name" value { string_value: "worker-6" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000055000000
+      severity_number: 9
+      severity_text: "INFO"
+      body { string_value: "request handled in 715 ms" }
+      attributes { key: "http.status_code" value { int_value: 200 } }
+      attributes { key: "thread.name" value { string_value: "worker-7" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000056000000
+      severity_number: 13
+      severity_text: "WARN"
+      body { string_value: "slow upstream response 728 ms" }
+      attributes { key: "http.status_code" value { int_value: 201 } }
+      attributes { key: "thread.name" value { string_value: "worker-0" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000057000000
+      severity_number: 21
+      severity_text: "FATAL"
+      body { string_value: "payment failed for order 741" }
+      attributes { key: "http.status_code" value { int_value: 202 } }
+      attributes { key: "thread.name" value { string_value: "worker-1" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000058000000
+      severity_number: 9
+      severity_text: "INFO"
+      body { string_value: "cache hit for key user:754" }
+      attributes { key: "http.status_code" value { int_value: 203 } }
+      attributes { key: "thread.name" value { string_value: "worker-2" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000059000000
+      severity_number: 17
+      severity_text: "ERROR"
+      body { string_value: "connection timeout to db-767" }
+      attributes { key: "http.status_code" value { int_value: 204 } }
+      attributes { key: "thread.name" value { string_value: "worker-3" } }
+    }
+  }
+}
+resource_logs {
+  resource { attributes { key: "service.name" value { string_value: "checkout" } }
+             attributes { key: "host.name" value { string_value: "bench-host" } } }
+  scope_logs {
+    log_records {
+      time_unix_nano: 1700000000060000000
+      severity_number: 9
+      severity_text: "INFO"
+      body { string_value: "request handled in 780 ms" }
+      attributes { key: "http.status_code" value { int_value: 200 } }
+      attributes { key: "thread.name" value { string_value: "worker-4" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000061000000
+      severity_number: 13
+      severity_text: "WARN"
+      body { string_value: "slow upstream response 793 ms" }
+      attributes { key: "http.status_code" value { int_value: 201 } }
+      attributes { key: "thread.name" value { string_value: "worker-5" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000062000000
+      severity_number: 21
+      severity_text: "FATAL"
+      body { string_value: "payment failed for order 806" }
+      attributes { key: "http.status_code" value { int_value: 202 } }
+      attributes { key: "thread.name" value { string_value: "worker-6" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000063000000
+      severity_number: 9
+      severity_text: "INFO"
+      body { string_value: "cache hit for key user:819" }
+      attributes { key: "http.status_code" value { int_value: 203 } }
+      attributes { key: "thread.name" value { string_value: "worker-7" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000064000000
+      severity_number: 17
+      severity_text: "ERROR"
+      body { string_value: "connection timeout to db-832" }
+      attributes { key: "http.status_code" value { int_value: 204 } }
+      attributes { key: "thread.name" value { string_value: "worker-0" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000065000000
+      severity_number: 9
+      severity_text: "INFO"
+      body { string_value: "request handled in 845 ms" }
+      attributes { key: "http.status_code" value { int_value: 200 } }
+      attributes { key: "thread.name" value { string_value: "worker-1" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000066000000
+      severity_number: 13
+      severity_text: "WARN"
+      body { string_value: "slow upstream response 858 ms" }
+      attributes { key: "http.status_code" value { int_value: 201 } }
+      attributes { key: "thread.name" value { string_value: "worker-2" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000067000000
+      severity_number: 21
+      severity_text: "FATAL"
+      body { string_value: "payment failed for order 871" }
+      attributes { key: "http.status_code" value { int_value: 202 } }
+      attributes { key: "thread.name" value { string_value: "worker-3" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000068000000
+      severity_number: 9
+      severity_text: "INFO"
+      body { string_value: "cache hit for key user:884" }
+      attributes { key: "http.status_code" value { int_value: 203 } }
+      attributes { key: "thread.name" value { string_value: "worker-4" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000069000000
+      severity_number: 17
+      severity_text: "ERROR"
+      body { string_value: "connection timeout to db-897" }
+      attributes { key: "http.status_code" value { int_value: 204 } }
+      attributes { key: "thread.name" value { string_value: "worker-5" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000070000000
+      severity_number: 9
+      severity_text: "INFO"
+      body { string_value: "request handled in 910 ms" }
+      attributes { key: "http.status_code" value { int_value: 200 } }
+      attributes { key: "thread.name" value { string_value: "worker-6" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000071000000
+      severity_number: 13
+      severity_text: "WARN"
+      body { string_value: "slow upstream response 923 ms" }
+      attributes { key: "http.status_code" value { int_value: 201 } }
+      attributes { key: "thread.name" value { string_value: "worker-7" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000072000000
+      severity_number: 21
+      severity_text: "FATAL"
+      body { string_value: "payment failed for order 936" }
+      attributes { key: "http.status_code" value { int_value: 202 } }
+      attributes { key: "thread.name" value { string_value: "worker-0" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000073000000
+      severity_number: 9
+      severity_text: "INFO"
+      body { string_value: "cache hit for key user:949" }
+      attributes { key: "http.status_code" value { int_value: 203 } }
+      attributes { key: "thread.name" value { string_value: "worker-1" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000074000000
+      severity_number: 17
+      severity_text: "ERROR"
+      body { string_value: "connection timeout to db-962" }
+      attributes { key: "http.status_code" value { int_value: 204 } }
+      attributes { key: "thread.name" value { string_value: "worker-2" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000075000000
+      severity_number: 9
+      severity_text: "INFO"
+      body { string_value: "request handled in 975 ms" }
+      attributes { key: "http.status_code" value { int_value: 200 } }
+      attributes { key: "thread.name" value { string_value: "worker-3" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000076000000
+      severity_number: 13
+      severity_text: "WARN"
+      body { string_value: "slow upstream response 11 ms" }
+      attributes { key: "http.status_code" value { int_value: 201 } }
+      attributes { key: "thread.name" value { string_value: "worker-4" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000077000000
+      severity_number: 21
+      severity_text: "FATAL"
+      body { string_value: "payment failed for order 24" }
+      attributes { key: "http.status_code" value { int_value: 202 } }
+      attributes { key: "thread.name" value { string_value: "worker-5" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000078000000
+      severity_number: 9
+      severity_text: "INFO"
+      body { string_value: "cache hit for key user:37" }
+      attributes { key: "http.status_code" value { int_value: 203 } }
+      attributes { key: "thread.name" value { string_value: "worker-6" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000079000000
+      severity_number: 17
+      severity_text: "ERROR"
+      body { string_value: "connection timeout to db-50" }
+      attributes { key: "http.status_code" value { int_value: 204 } }
+      attributes { key: "thread.name" value { string_value: "worker-7" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000080000000
+      severity_number: 9
+      severity_text: "INFO"
+      body { string_value: "request handled in 63 ms" }
+      attributes { key: "http.status_code" value { int_value: 200 } }
+      attributes { key: "thread.name" value { string_value: "worker-0" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000081000000
+      severity_number: 13
+      severity_text: "WARN"
+      body { string_value: "slow upstream response 76 ms" }
+      attributes { key: "http.status_code" value { int_value: 201 } }
+      attributes { key: "thread.name" value { string_value: "worker-1" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000082000000
+      severity_number: 21
+      severity_text: "FATAL"
+      body { string_value: "payment failed for order 89" }
+      attributes { key: "http.status_code" value { int_value: 202 } }
+      attributes { key: "thread.name" value { string_value: "worker-2" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000083000000
+      severity_number: 9
+      severity_text: "INFO"
+      body { string_value: "cache hit for key user:102" }
+      attributes { key: "http.status_code" value { int_value: 203 } }
+      attributes { key: "thread.name" value { string_value: "worker-3" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000084000000
+      severity_number: 17
+      severity_text: "ERROR"
+      body { string_value: "connection timeout to db-115" }
+      attributes { key: "http.status_code" value { int_value: 204 } }
+      attributes { key: "thread.name" value { string_value: "worker-4" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000085000000
+      severity_number: 9
+      severity_text: "INFO"
+      body { string_value: "request handled in 128 ms" }
+      attributes { key: "http.status_code" value { int_value: 200 } }
+      attributes { key: "thread.name" value { string_value: "worker-5" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000086000000
+      severity_number: 13
+      severity_text: "WARN"
+      body { string_value: "slow upstream response 141 ms" }
+      attributes { key: "http.status_code" value { int_value: 201 } }
+      attributes { key: "thread.name" value { string_value: "worker-6" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000087000000
+      severity_number: 21
+      severity_text: "FATAL"
+      body { string_value: "payment failed for order 154" }
+      attributes { key: "http.status_code" value { int_value: 202 } }
+      attributes { key: "thread.name" value { string_value: "worker-7" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000088000000
+      severity_number: 9
+      severity_text: "INFO"
+      body { string_value: "cache hit for key user:167" }
+      attributes { key: "http.status_code" value { int_value: 203 } }
+      attributes { key: "thread.name" value { string_value: "worker-0" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000089000000
+      severity_number: 17
+      severity_text: "ERROR"
+      body { string_value: "connection timeout to db-180" }
+      attributes { key: "http.status_code" value { int_value: 204 } }
+      attributes { key: "thread.name" value { string_value: "worker-1" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000090000000
+      severity_number: 9
+      severity_text: "INFO"
+      body { string_value: "request handled in 193 ms" }
+      attributes { key: "http.status_code" value { int_value: 200 } }
+      attributes { key: "thread.name" value { string_value: "worker-2" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000091000000
+      severity_number: 13
+      severity_text: "WARN"
+      body { string_value: "slow upstream response 206 ms" }
+      attributes { key: "http.status_code" value { int_value: 201 } }
+      attributes { key: "thread.name" value { string_value: "worker-3" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000092000000
+      severity_number: 21
+      severity_text: "FATAL"
+      body { string_value: "payment failed for order 219" }
+      attributes { key: "http.status_code" value { int_value: 202 } }
+      attributes { key: "thread.name" value { string_value: "worker-4" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000093000000
+      severity_number: 9
+      severity_text: "INFO"
+      body { string_value: "cache hit for key user:232" }
+      attributes { key: "http.status_code" value { int_value: 203 } }
+      attributes { key: "thread.name" value { string_value: "worker-5" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000094000000
+      severity_number: 17
+      severity_text: "ERROR"
+      body { string_value: "connection timeout to db-245" }
+      attributes { key: "http.status_code" value { int_value: 204 } }
+      attributes { key: "thread.name" value { string_value: "worker-6" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000095000000
+      severity_number: 9
+      severity_text: "INFO"
+      body { string_value: "request handled in 258 ms" }
+      attributes { key: "http.status_code" value { int_value: 200 } }
+      attributes { key: "thread.name" value { string_value: "worker-7" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000096000000
+      severity_number: 13
+      severity_text: "WARN"
+      body { string_value: "slow upstream response 271 ms" }
+      attributes { key: "http.status_code" value { int_value: 201 } }
+      attributes { key: "thread.name" value { string_value: "worker-0" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000097000000
+      severity_number: 21
+      severity_text: "FATAL"
+      body { string_value: "payment failed for order 284" }
+      attributes { key: "http.status_code" value { int_value: 202 } }
+      attributes { key: "thread.name" value { string_value: "worker-1" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000098000000
+      severity_number: 9
+      severity_text: "INFO"
+      body { string_value: "cache hit for key user:297" }
+      attributes { key: "http.status_code" value { int_value: 203 } }
+      attributes { key: "thread.name" value { string_value: "worker-2" } }
+    }
+    log_records {
+      time_unix_nano: 1700000000099000000
+      severity_number: 17
+      severity_text: "ERROR"
+      body { string_value: "connection timeout to db-310" }
+      attributes { key: "http.status_code" value { int_value: 204 } }
+      attributes { key: "thread.name" value { string_value: "worker-3" } }
+    }
+  }
+}

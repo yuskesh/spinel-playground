@@ -1,0 +1,815 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+#
+# spinel-fiber-core -- the CORE form of the stackless Fiber (decision 0035,
+# stage 2): rewrites a decision-0014 application that declares
+# `fiber_def :name, max: N` into an ordinary CORE application.
+#
+#   spinel-fiber-core IN.rb -o OUT.rb
+#
+# Exit 0: OUT.rb written. Exit 3: IN.rb declares no fiber_def, nothing
+# written. Exit 1: `FILE:LINE:COL: spinel-fiber: MESSAGE` for each construct
+# it refuses, and nothing written.
+#
+# WHAT IT WRITES, for `fiber_def :reader, max: 2` and `def reader(limit)`:
+#
+#   - in place of the declaration, one `state` per frame field, `max`
+#     elements each, all :i32: `sfb_reader_st` (the state number, 0 when the
+#     slot is not live) and one per parameter, local and temporary of the
+#     body (`sfb_reader_limit`, `sfb_reader_i`, ...);
+#   - in place of `def reader`, three helpers: `sfb_reader_start(slot,
+#     args..., frames...)`, `sfb_reader_resume(slot, value, frames...)` and
+#     `sfb_reader_alive(slot, sfb_reader_st)` (1 or 0). The resume helper
+#     is the body cut into states at every Fiber.yield, with its locals read
+#     and written as `sfb_reader_<name>[slot]`, dispatched by a loop bounded
+#     by the number of states;
+#   - every `Reader.start(...)`, `Reader.resume(...)` and `Reader.alive?(...)`
+#     call becomes a call of the helper, and every definition that reaches
+#     one (directly or through receiver-less calls) gets the frame buffers as
+#     parameters, so an entry binds them by name as it binds any state.
+#
+# `enum_def :evens, max: N` with `def evens(y, limit)` is the CORE form of
+# Enumerator.new (decision 0035, owner 2026-11-11): the body suspends at
+# `y << v` and `y.yield v` on its first parameter, the yielder, and the
+# frame gains `has` and `buf`, one buffered value. The generated module has
+# start(slot, args...), next?(slot) (steps until a value is buffered or the
+# body ends; true or false), next(slot) and peek(slot) (the buffered value,
+# after stepping if none is; next consumes it), and alive?(slot). A slot
+# restarts with start once its body has ended. next or peek with nothing
+# left is BOUNDS, where Ruby raises StopIteration.
+#
+# A misuse is BOUNDS, through a checked access one slot-range past the end:
+# `resume` of a slot that is not live, `start` of a live one, or a slot
+# outside 0...max (decision 0035, owner 2026-11-11).
+#
+# REFUSED, beyond the WASM rewrite's own limits:
+#   - a loop that contains Fiber.yield but can complete an iteration without
+#     suspending (the per-step bound of 0035 stage 2);
+#   - calls to other yielding methods from a body, Fiber.new, Fiber#resume and
+#     Fiber.yield outside a fiber_def body;
+#   - a body with optional, rest, keyword or block parameters;
+#   - a block in the body whose parameter shares a name with a frame field.
+#
+# `pool_def :node, max: N` is decision 0041 stage 3's slot pool (owner,
+# 2026-11-14). It has no body. It becomes three :i32 states: spl_node_live
+# (N elements, 1 while the slot is allocated), spl_node_free (N elements, a
+# stack of freed slots) and spl_node_top (2 elements: the freed slots on that
+# stack, and the slots handed out at least once); zeroed states are an empty
+# pool. The module Node has alloc (the most recently freed slot, otherwise
+# the lowest slot never handed out, otherwise CAPACITY through
+# core_fail(:capacity)), free(slot) and live?(slot). free of a slot that is
+# not allocated (a double free, or a slot never handed out), and free or
+# live? of a slot outside 0...N, are BOUNDS. A stale slot number that was
+# freed and handed out again reads its new occupant: that is not detected
+# (option 2 of 0041 stage 3). A pool has one owning context, and a
+# fiber_def or enum_def body may not use one.
+
+load File.expand_path("spinel-fiber-rewrite", __dir__)
+
+# The resume helper's state machine: Lowerer's cuts, with frame fields for
+# locals, integer flags, and no closures.
+class CoreLowerer < Lowerer
+  attr_reader :fields
+
+  def initialize(rw, kind_name, outer_names)
+    super(rw, :fiber, outer_names)
+    @kname = kind_name
+    @fields = outer_names.map(&:to_s)
+    @cur = new_block # block 0 stays empty: state 0 means "not live"
+  end
+
+  def frame(name) = "sfb_#{@kname}_#{name}"
+  def st = "#{frame('st')}[slot]"
+  def r = "sfb_r"
+  def v = "sfb_v"
+  def val = "sfb_val"
+  def go = "sfb_go"
+  def arg = "sfb_arg"
+  def nil_value = "0"
+
+  def lv(name)
+    n = name.to_s
+    @fields << n unless @fields.include?(n)
+    "#{frame(n)}[slot]"
+  end
+
+  def block_count = @blocks.size
+
+  # if/elsif dispatch on the state number, inside a loop of at most one turn
+  # per state: under the per-step rule a step visits each state at most once.
+  def resume_body
+    out = []
+    out << "sfb_r = 0"
+    out << "sfb_val = 0"
+    out << "sfb_go = 1"
+    out << "sfb_k = 0"
+    out << "while sfb_k < #{@blocks.size}"
+    out << "  if sfb_go == 1"
+    out << "    sfb_s = #{st}"
+    first = true
+    @blocks.each_with_index do |lines, i|
+      next if lines.empty?
+      out << "    #{first ? 'if' : 'elsif'} sfb_s == #{i}"
+      first = false
+      lines.each { |l| l.each_line(chomp: true) { |x| out << "      #{x}" } }
+    end
+    out << "    end" unless first
+    out << "  end"
+    out << "  sfb_k += 1"
+    out << "end"
+    out << "sfb_r"
+    out
+  end
+
+  private
+
+  def temp(stem)
+    t = "t#{stem}#{@rw.next_id}"
+    lv(t)
+  end
+
+  def hoist(name)
+    lv(name)
+  end
+
+  def yield_out(value_text, next_b)
+    emit("#{r} = (#{value_text})")
+    emit("#{st} = #{next_b}")
+    emit("#{go} = 0")
+    @cur = new_block
+  end
+
+  def finish(value_text)
+    emit("#{r} = (#{value_text})")
+    emit("#{st} = 0")
+    emit("#{go} = 0")
+    @cur = new_block
+  end
+
+  def emit_call(name, _argtexts, _target, _value, recv: nil)
+    raise Refusal.new(@rw.current_body, "a fiber_def body calling the yielding method `#{name}` is not supported under CORE yet (decision 0035 stage 2)")
+  end
+
+  # Body locals read and written as frame elements.
+  def text(n, extra = [])
+    subst = []
+    @rw.each_node(n) do |x|
+      case x
+      when Prism::LocalVariableReadNode, Prism::LocalVariableTargetNode
+        subst << [x.location.start_offset, x.location.end_offset, lv(x.name)] if @fields.include?(x.name.to_s)
+      when Prism::LocalVariableWriteNode, Prism::LocalVariableOperatorWriteNode,
+           Prism::LocalVariableOrWriteNode, Prism::LocalVariableAndWriteNode
+        subst << [x.name_loc.start_offset, x.name_loc.end_offset, lv(x.name)] if @fields.include?(x.name.to_s)
+      end
+    end
+    @rw.render(n, extra + subst)
+  end
+
+  def lower_while(s)
+    check_step(s, statements_of(s.statements))
+    super
+  end
+
+  def lower_loop(call, lp)
+    check_step(call, statements_of(call.block.body))
+    super
+  end
+
+  # The per-step rule: every path through an iteration suspends, or leaves
+  # the loop.
+  def check_step(loop_node, body)
+    return unless @rw.suspends?(loop_node)
+    return if path(body) == :suspends
+    raise Refusal.new(loop_node, "under CORE a loop that suspends must suspend on every path through an iteration " \
+                                 "(the per-step bound of decision 0035 stage 2)")
+  end
+
+  # :suspends (every path suspends or leaves the loop), :escapes (a path
+  # reaches `next` first) or :falls (a path completes the iteration).
+  def path(stmts)
+    stmts.each do |s|
+      r = path_of(s)
+      return r unless r == :falls
+    end
+    :falls
+  end
+
+  def path_of(s)
+    case s
+    when Prism::BreakNode, Prism::ReturnNode then :suspends
+    when Prism::NextNode then :escapes
+    when Prism::IfNode, Prism::UnlessNode
+      return :suspends if @rw.suspends?(s.predicate)
+      alt = s.respond_to?(:subsequent) ? s.subsequent : s.consequent
+      a = path(statements_of(s.statements))
+      b = case alt
+          when nil then :falls
+          when Prism::ElseNode then path(statements_of(alt.statements))
+          else path_of(alt)
+          end
+      join(a, b)
+    when Prism::CaseNode, Prism::CaseMatchNode
+      return :suspends if s.predicate && @rw.suspends?(s.predicate)
+      els = s.respond_to?(:else_clause) ? s.else_clause : s.consequent
+      rs = s.conditions.map { |c| path(statements_of(c.statements)) }
+      rs << (els ? path(statements_of(els.statements)) : :falls)
+      rs.reduce { |x, y| join(x, y) }
+    when Prism::WhileNode, Prism::UntilNode
+      @rw.suspends?(s.predicate) ? :suspends : :falls
+    when Prism::BeginNode, Prism::ParenthesesNode
+      path(statements_of(s.is_a?(Prism::BeginNode) ? s : s.body))
+    when Prism::CallNode
+      return :falls if loop_form(s)
+      @rw.suspends?(s) ? :suspends : :falls
+    else
+      @rw.suspends?(s) ? :suspends : :falls
+    end
+  end
+
+  def join(a, b)
+    return :escapes if a == :escapes || b == :escapes
+    a == :suspends && b == :suspends ? :suspends : :falls
+  end
+end
+
+class CoreRewriter < Rewriter
+  # CORE buffers are not Arrays; each over a variable stays refused here.
+  def node_type(_n) = nil
+  def each_hint(_recv) = "CORE lowers `each` only on an Array or Range literal"
+  # CORE's yielding bodies are the fiber_def methods, called without a receiver.
+  def yielding_call?(n) = n.is_a?(Prism::CallNode) && n.receiver.nil? && @yielding[n.name] ? true : false
+
+  attr_reader :current_body
+
+  def run
+    unless @result.errors.empty?
+      e = @result.errors.first
+      warn "#{@path}:#{e.location.start_line}:#{e.location.start_column + 1}: spinel-fiber: parse error: #{e.message}"
+      return 1
+    end
+    prog = @result.value
+    @kinds = {}
+    @pools = {}
+    prog.statements.body.each do |s|
+      next unless s.is_a?(Prism::CallNode) && s.receiver.nil? && %i[fiber_def enum_def pool_def].include?(s.name)
+      kind = fiber_decl(s)
+      next unless kind
+      if @kinds.key?(kind[:name]) || @pools.key?(kind[:name])
+        report(s, "#{s.name} :#{kind[:name]} is declared twice (fiber_def, enum_def and pool_def share one set of names)")
+      elsif s.name == :pool_def
+        @pools[kind[:name]] = kind.merge(frames: %w[live free top].map { |x| "spl_#{kind[:name]}_#{x}" })
+      else
+        @kinds[kind[:name]] = kind
+      end
+    end
+    @yielders = []
+    return 3 if @kinds.empty? && @pools.empty? && @errors.empty?
+    @top_defs = {}
+    prog.statements.body.each { |s| @top_defs[s.name] = s if s.is_a?(Prism::DefNode) && s.receiver.nil? }
+    @kinds.each_value do |k|
+      d = @top_defs[k[:name]]
+      d ? k[:def] = d : report(k[:decl], "#{k[:decl].name} :#{k[:name]} names no top-level def #{k[:name]}")
+      if d && k[:enum] && (d.parameters.nil? || d.parameters.requireds.empty?)
+        report(d, "an enum_def body takes the yielder as its first parameter, as `def #{d.name}(y, ...)`")
+      end
+    end
+    check_core_global(prog)
+    return 1 unless @errors.empty?
+    @yielding = {}
+    @kinds.each_value { |k| @yielding[k[:name]] = true if k[:def] }
+    @inner_edits = []
+    @edits = []
+    @parent_of = {}
+    stack = [prog]
+    until stack.empty?
+      x = stack.pop
+      x.compact_child_nodes.each { |ch| @parent_of[ch.object_id] = x; stack << ch }
+    end
+    @kinds.each_value do |k|
+      next unless k[:def]
+      begin
+        lower_kind(k)
+      rescue Refusal => e
+        report(e.node, e.message)
+      end
+    end
+    return 1 unless @errors.empty?
+    plan_calls(prog)
+    return 1 unless @errors.empty?
+    @out = apply_core_edits
+    0
+  end
+
+  def module_name(name) = name.to_s.split("_").map(&:capitalize).join
+
+  def fiber_decl(s)
+    a = args_of(s)
+    name = a[0].is_a?(Prism::SymbolNode) ? a[0].unescaped.to_sym : nil
+    kw = a[1].is_a?(Prism::KeywordHashNode) ? a[1].elements : []
+    maxel = kw.find { |e| e.key.is_a?(Prism::SymbolNode) && e.key.unescaped == "max" }
+    max = maxel&.value.is_a?(Prism::IntegerNode) ? maxel.value.value : nil
+    unless name && max && a.size == 2 && kw.size == 1 && max >= 1
+      report(s, "#{s.name} takes a symbol and max: with a positive integer literal, as `#{s.name} :reader, max: 2`")
+      return nil
+    end
+    { name: name, max: max, decl: s, mod: module_name(name), enum: s.name == :enum_def, pool: s.name == :pool_def }
+  end
+
+  # A buffer made on the data stack, as the call spells it: Core::Buffer or
+  # Core::Table (decision 0045), or the refused Array.new; nil otherwise.
+  def scratch_spelling(n)
+    r = n.receiver
+    return "Array.new" if n.name == :new && r.is_a?(Prism::ConstantReadNode) && r.name == :Array
+    return nil unless r.is_a?(Prism::ConstantPathNode) && %i[Buffer Table].include?(path_name(r))
+    p = r.parent
+    return nil unless (p.is_a?(Prism::ConstantReadNode) && p.name == :Core) ||
+                      (p.is_a?(Prism::ConstantPathNode) && p.parent.nil? && path_name(p) == :Core)
+    "Core::#{path_name(r)}"
+  end
+
+  # The last name of a constant path: #name from prism 0.20, the child's
+  # before it (0.19, Debian's Ruby 3.3.8), as fiber_const? reads it.
+  def path_name(n)
+    return n.name if n.respond_to?(:name)
+    c = n.child
+    c.respond_to?(:name) ? c.name : nil
+  end
+
+  def check_core_global(prog)
+    check_pools(prog)
+    mods = @kinds.values.to_h { |k| [k[:mod].to_sym, k] }
+    bodies = @kinds.values.filter_map { |k| k[:def] }
+    each_node(prog) do |n|
+      next unless n.is_a?(Prism::CallNode)
+      if (k = @kinds.values.find { |kd| kd[:def] && inside?(n, kd[:def]) }) &&
+         (spelled = scratch_spelling(n))
+        # decision 0041 stage 2: the data stack frees a buffer when its method
+        # returns, and a body that suspends returns at every suspension
+        report(n, "#{spelled} in a #{k[:decl].name} body is refused: a buffer on the data stack is freed when its method returns, and the body returns at every suspension (decision 0041 stage 2)")
+      elsif fiber_new?(n) || (fiber_const?(n.receiver) && n.name != :yield)
+        report(n, "under CORE a fiber is declared with fiber_def and driven through its module; Fiber.#{n.name} is refused (decision 0035 stage 2)")
+      elsif fiber_yield?(n) && bodies.none? { |d| inside?(n, d) }
+        report(n, "under CORE Fiber.yield may appear only in a fiber_def body (decision 0035 stage 2)")
+      elsif fiber_yield?(n) && @kinds.values.any? { |k| k[:enum] && k[:def] && inside?(n, k[:def]) }
+        report(n, "an enum_def body suspends with its yielder (`y << v` or `y.yield v`), not Fiber.yield (decision 0035)")
+      elsif fiber_yield?(n) && args_of(n).size > 1
+        report(n, "Fiber.yield with several values is not supported")
+      elsif n.receiver.nil? && @kinds.key?(n.name)
+        report(n, "the fiber_def body `#{n.name}` is started through #{@kinds[n.name][:mod]}.start, not called")
+      elsif n.receiver.is_a?(Prism::ConstantReadNode) && (k = mods[n.receiver.name]) && bodies.any? { |d| inside?(n, d) }
+        report(n, "a fiber_def body may not drive a fiber under CORE (decision 0035 stage 2)")
+      elsif n.receiver.is_a?(Prism::ConstantReadNode) && (k = mods[n.receiver.name]) && !(k[:enum] && body_arity(k).negative?)
+        api = k[:enum] ? { start: 1 + body_arity(k), next?: 1, next: 1, peek: 1, alive?: 1 } : { start: 1 + body_arity(k), resume: 2, alive?: 1 }
+        want = api[n.name]
+        if want.nil?
+          names = api.keys.map(&:to_s)
+          report(n, "#{k[:mod]} has #{names[0..-2].join(', ')} and #{names[-1]}, not #{n.name}")
+        elsif args_of(n).size != want || n.block
+          report(n, "#{k[:mod]}.#{n.name} takes #{want} argument(s)")
+        end
+      elsif %i[resume alive? transfer].include?(n.name) && n.receiver && !n.receiver.is_a?(Prism::ConstantReadNode)
+        report(n, "under CORE a fiber is resumed through its module (`Reader.resume(slot, value)`), not as an object")
+      end
+    end
+  end
+
+  POOL_API = { alloc: 0, free: 1, live?: 1 }.freeze
+
+  # Every call through a pool's module: a known method with its argument
+  # count, outside the fiber_def and enum_def bodies (their helpers take only
+  # their frames).
+  def check_pools(prog)
+    pmods = @pools.values.to_h { |k| [k[:mod].to_sym, k] }
+    return if pmods.empty?
+    bodies = @kinds.values.filter_map { |k| @top_defs[k[:name]] }
+    each_node(prog) do |n|
+      next unless n.is_a?(Prism::CallNode) && n.receiver.is_a?(Prism::ConstantReadNode) && (k = pmods[n.receiver.name])
+      want = POOL_API[n.name]
+      if want.nil?
+        report(n, "#{k[:mod]} has alloc, free and live?, not #{n.name} (decision 0041 stage 3)")
+      elsif args_of(n).size != want || n.block
+        report(n, "#{k[:mod]}.#{n.name} takes #{want} argument(s)")
+      elsif bodies.any? { |d| inside?(n, d) }
+        report(n, "a fiber_def or enum_def body may not use the pool #{k[:mod]} under CORE (decision 0041 stage 3)")
+      end
+    end
+  end
+
+  # an enum_def body's first parameter is the yielder, which start does not take
+  def body_arity(k) = (k[:def]&.parameters ? k[:def].parameters.requireds.size : 0) - (k[:enum] ? 1 : 0)
+
+  def inside?(n, d) = d.location.start_offset <= n.location.start_offset && n.location.end_offset <= d.location.end_offset
+
+  def lower_kind(k)
+    d = k[:def]
+    @current_body = d
+    ps = d.parameters
+    if ps && !(ps.optionals.empty? && ps.rest.nil? && ps.posts.empty? && ps.keywords.empty? && ps.keyword_rest.nil? && ps.block.nil? &&
+               ps.requireds.all? { |q| q.is_a?(Prism::RequiredParameterNode) })
+      raise Refusal.new(d, "a fiber_def body takes only required positional parameters under CORE")
+    end
+    params = ps ? ps.requireds.map(&:name) : []
+    walk_own(d.body) do |n|
+      raise Refusal.new(n, "a #{k[:decl].name} body may not use the block keyword yield") if n.is_a?(Prism::YieldNode)
+    end
+    check_reserved(d, k)
+    locals = d.locals
+    if k[:enum]
+      y = params.shift
+      raise Refusal.new(d, "an enum_def body takes the yielder as its first parameter, as `def #{d.name}(y, ...)`") unless y
+      check_yielder(d, y)
+      locals -= [y]
+      @yielders = [y]
+    end
+    lw = CoreLowerer.new(self, k[:name], locals)
+    begin
+      lw.lower_body(d.body)
+    ensure
+      @yielders = []
+    end
+    fields = (["st"] + lw.fields + (k[:enum] ? %w[has buf] : [])).uniq
+    check_block_params(d.body, fields)
+    check_merged_locals(d.body, fields, lw.lowered_blocks)
+    names = fields.map { |f| lw.frame(f) }
+    k[:frames] = names
+    k[:params] = params
+    k[:fields] = fields
+    k[:resume_body] = lw.resume_body
+    k[:states] = lw.block_count
+    k[:lw] = lw
+  end
+
+  # Frame fields are named after the body's locals; these names belong to
+  # the frame itself (the state number, the enumerator's buffer, and the
+  # lowering's temporaries).
+  def check_reserved(d, k)
+    reserved = k[:enum] ? %w[st has buf] : %w[st]
+    d.locals.each do |l|
+      next unless reserved.include?(l.to_s) || l.to_s.match?(/\At[a-z]\d+\z/)
+      raise Refusal.new(d, "the local `#{l}` has a name the #{k[:decl].name} frame reserves (#{reserved.join(', ')}, or t, a letter and digits); rename it")
+    end
+  end
+
+  # The yielder may only receive `<<` or `yield` with at most one value, as a
+  # statement of its own; it is not a frame field and is never assigned.
+  def check_yielder(d, y)
+    each_node(d.body) do |n|
+      if (n.is_a?(Prism::LocalVariableWriteNode) || n.is_a?(Prism::LocalVariableTargetNode) ||
+          n.is_a?(Prism::LocalVariableOperatorWriteNode)) && n.name == y
+        raise Refusal.new(n, "the yielder `#{y}` may not be assigned")
+      end
+      next unless n.is_a?(Prism::LocalVariableReadNode) && n.name == y
+      call = @parent_of[n.object_id]
+      ok = call.is_a?(Prism::CallNode) && call.receiver.equal?(n) && %i[<< yield].include?(call.name) && args_of(call).size <= 1 && !call.block
+      raise Refusal.new(n, "the yielder `#{y}` may only receive `<<` or `yield` with one value") unless ok
+      unless statement_context?(call, d)
+        raise Refusal.new(call, "under CORE `#{y} #{call.name == :<< ? '<<' : '.yield'} v` must be a statement of its own; its value is not available")
+      end
+    end
+  end
+
+  # A node whose value nothing uses: every node from it up to the body is a
+  # statement list, a branch, a loop, or a block of a call.
+  STATEMENT_CONTEXT = [Prism::StatementsNode, Prism::IfNode, Prism::UnlessNode, Prism::ElseNode, Prism::CaseNode,
+                       Prism::CaseMatchNode, Prism::WhenNode, Prism::InNode, Prism::WhileNode, Prism::UntilNode,
+                       Prism::BlockNode].freeze
+
+  def statement_context?(n, d)
+    child = n
+    x = @parent_of[n.object_id]
+    until x.nil? || x.equal?(d)
+      ok = STATEMENT_CONTEXT.any? { |k| x.is_a?(k) } || (x.is_a?(Prism::CallNode) && x.block.equal?(child))
+      return false unless ok
+      # a branch's condition is a value
+      return false if (x.is_a?(Prism::IfNode) || x.is_a?(Prism::UnlessNode) || x.is_a?(Prism::WhileNode) || x.is_a?(Prism::UntilNode)) && x.predicate.equal?(child)
+      child = x
+      x = @parent_of[x.object_id]
+    end
+    true
+  end
+
+  def check_block_params(body, fields)
+    each_node(body) do |n|
+      next unless n.is_a?(Prism::BlockNode) && n.parameters
+      each_node(n.parameters) do |x|
+        next unless x.respond_to?(:name) && x.name && fields.include?(x.name.to_s)
+        raise Refusal.new(x, "the block parameter `#{x.name}` has the name of a frame field of the fiber_def body; rename it")
+      end
+    end
+  end
+
+  def helpers(k)
+    f = k[:frames]
+    st = f[0]
+    max = k[:max]
+    out = []
+    out << "def sfb_#{k[:name]}_start(slot#{k[:params].map { |p| ", #{p}" }.join}, #{f.join(', ')})"
+    out << "  sfb_off = 0"
+    out << "  if #{st}[slot] != 0"
+    out << "    sfb_off = #{max}"
+    out << "  end"
+    out << "  #{st}[slot + sfb_off] = 1   # BOUNDS when the slot is live"
+    (k[:fields] - ["st"]).each do |fl|
+      init = k[:params].map(&:to_s).include?(fl) ? fl : "0"
+      out << "  sfb_#{k[:name]}_#{fl}[slot] = #{init}"
+    end
+    out << "  0"
+    out << "end"
+    out << ""
+    out << "def sfb_#{k[:name]}_resume(slot, sfb_arg, #{f.join(', ')})"
+    out << "  sfb_off = 0"
+    out << "  if #{st}[slot] == 0"
+    out << "    sfb_off = #{max}"
+    out << "  end"
+    out << "  #{st}[slot + sfb_off] = #{st}[slot]   # BOUNDS when the slot is not live"
+    k[:resume_body].each { |l| out << "  #{l}" }
+    out << "end"
+    out << ""
+    if k[:enum]
+      has = "sfb_#{k[:name]}_has"
+      buf = "sfb_#{k[:name]}_buf"
+      fl = f.join(", ")
+      out << "# a value is buffered, or the body has ended (decision 0035, enum_def)"
+      out << "def sfb_#{k[:name]}_fill(slot, #{fl})"
+      out << "  sfb_h = 0"
+      out << "  if #{has}[slot] != 0"
+      out << "    sfb_h = 1"
+      out << "  elsif #{st}[slot] != 0"
+      out << "    sfb_x = sfb_#{k[:name]}_resume(slot, 0, #{fl})"
+      out << "    if #{st}[slot] != 0"
+      out << "      #{buf}[slot] = sfb_x"
+      out << "      #{has}[slot] = 1"
+      out << "      sfb_h = 1"
+      out << "    end"
+      out << "  end"
+      out << "  sfb_h"
+      out << "end"
+      out << ""
+      { "next" => 0, "peek" => 1 }.each do |m, keep|
+        out << "def sfb_#{k[:name]}_#{m}(slot, #{fl})"
+        out << "  sfb_off = 0"
+        out << "  if sfb_#{k[:name]}_fill(slot, #{fl}) == 0"
+        out << "    sfb_off = #{max}"
+        out << "  end"
+        out << "  #{has}[slot + sfb_off] = #{keep}   # BOUNDS when nothing is left"
+        out << "  #{buf}[slot]"
+        out << "end"
+        out << ""
+      end
+    end
+    out << "def sfb_#{k[:name]}_alive(slot, #{st})"
+    out << "  sfb_a = 0"
+    out << "  if #{st}[slot] != 0"
+    out << "    sfb_a = 1"
+    out << "  end"
+    out << "  sfb_a"
+    out << "end"
+    out.join("\n")
+  end
+
+  # Calls through the generated modules, and the frame parameters every
+  # definition that reaches one needs.
+  def plan_calls(prog)
+    mods = (@kinds.values + @pools.values).to_h { |k| [k[:mod].to_sym, k] }
+    needs = Hash.new { |h, key| h[key] = [] }
+    @top_defs.each do |name, d|
+      next if @kinds.key?(name)
+      each_node(d) do |n|
+        next unless n.is_a?(Prism::CallNode) && n.receiver.is_a?(Prism::ConstantReadNode) && (k = mods[n.receiver.name])
+        needs[name] |= %i[alive? live?].include?(n.name) ? [k[:frames][0]] : k[:frames]
+      end
+    end
+    loop do
+      changed = false
+      @top_defs.each do |name, d|
+        next if @kinds.key?(name)
+        each_node(d) do |n|
+          next unless n.is_a?(Prism::CallNode) && n.receiver.nil? && needs.key?(n.name) && n.name != name
+          add = needs[n.name] - needs[name]
+          next if add.empty?
+          needs[name] |= add
+          changed = true
+        end
+      end
+      break unless changed
+    end
+    check_contexts(prog, needs)
+    return unless @errors.empty?
+    # The states each definition gains: what it reaches, less the parameters
+    # it already has.
+    @mods = mods
+    @gain = {}
+    @top_defs.each do |name, d|
+      next if @kinds.key?(name) || !needs.key?(name)
+      have = d.parameters ? d.parameters.requireds.map { |q| q.name.to_s } : []
+      add = needs[name] - have
+      @gain[name] = add unless add.empty?
+    end
+    # A fiber_def or enum_def body is not rendered here (its helpers are
+    # written from its lowering), so it may not call a definition that gains
+    # states.
+    @kinds.each_value do |k|
+      next unless k[:def]
+      each_node(k[:def]) do |n|
+        next unless n.is_a?(Prism::CallNode) && n.receiver.nil? && @gain.key?(n.name)
+        report(n, "a #{k[:decl].name} body may not call `#{n.name}`, which uses a pool or a fiber module, under CORE (decision 0041 stage 3)")
+      end
+    end
+    return unless @errors.empty?
+    # Every other definition is written anew from its tree (core_render): a
+    # call's arguments are rendered first, then the call with its own
+    # states, so which call gains which states follows the tree, not an
+    # offset in the source.
+    @top_defs.each do |name, d|
+      next if @kinds.key?(name)
+      text = core_render(d)
+      @edits << [d.location.start_offset, d.location.end_offset, text] unless text == d.location.slice
+    end
+    @kinds.each_value do |k|
+      decls = k[:frames].map { |f| "state :#{f}, :i32, #{k[:max]}" }
+      @edits << [k[:decl].location.start_offset, k[:decl].location.end_offset,
+                 "# #{k[:decl].name} :#{k[:name]}, max: #{k[:max]} -- #{k[:states] - 1} states (decision 0035)\n#{decls.join("\n")}"]
+      @edits << [k[:def].location.start_offset, k[:def].location.end_offset, helpers(k)]
+    end
+    @pools.each_value do |k|
+      decls = k[:frames].zip([k[:max], k[:max], 2]).map { |f, n| "state :#{f}, :i32, #{n}" }
+      @edits << [k[:decl].location.start_offset, k[:decl].location.end_offset,
+                 "# pool_def :#{k[:name]}, max: #{k[:max]} (decision 0041 stage 3)\n#{decls.join("\n")}\n\n#{pool_helpers(k)}"]
+    end
+  end
+
+  def pool_call(n, k, a)
+    live, free, top = k[:frames]
+    case n.name
+    when :alloc then "spl_#{k[:name]}_alloc(#{live}, #{free}, #{top})"
+    when :free then "spl_#{k[:name]}_release(#{a[0]}, #{live}, #{free}, #{top})"
+    else "(spl_#{k[:name]}_used(#{a[0]}, #{live}) != 0)"
+    end
+  end
+
+  # The pool's three helpers. A misuse is BOUNDS through a checked access max
+  # past the slot, as the fiber helpers' are; exhaustion is CAPACITY.
+  def pool_helpers(k)
+    live, free, top = k[:frames]
+    max = k[:max]
+    p = "spl_#{k[:name]}"
+    <<~RUBY.chomp
+      def #{p}_alloc(#{live}, #{free}, #{top})
+        spl_s = 0
+        spl_room = 1
+        if #{top}[0] > 0
+          #{top}[0] = #{top}[0] - 1
+          spl_s = #{free}[#{top}[0]]
+        elsif #{top}[1] < #{max}
+          spl_s = #{top}[1]
+          #{top}[1] = #{top}[1] + 1
+        else
+          spl_room = 0
+        end
+        if spl_room == 0
+          core_fail(:capacity)
+        else
+          #{live}[spl_s] = 1
+          spl_s
+        end
+      end
+
+      def #{p}_release(slot, #{live}, #{free}, #{top})
+        spl_off = 0
+        if #{live}[slot] == 0
+          spl_off = #{max}
+        end
+        #{live}[slot + spl_off] = 0   # BOUNDS when the slot is not allocated
+        #{free}[#{top}[0]] = slot
+        #{top}[0] = #{top}[0] + 1
+        0
+      end
+
+      def #{p}_used(slot, #{live})
+        #{live}[slot]
+      end
+    RUBY
+  end
+
+  # The frames' static size, one line per kind: every field is an i32 `state`
+  # of max elements, so a kind's frames take fields x max x 4 bytes.
+  def frame_report
+    @kinds.values.map do |k|
+      "#{k[:decl].name} :#{k[:name]}: #{k[:max]} frame(s) x #{k[:frames].size} i32 field(s) (#{k[:frames].map { |f| f.delete_prefix("sfb_#{k[:name]}_") }.join(', ')}), " \
+        "#{k[:states] - 1} states, #{k[:max] * k[:frames].size * 4} bytes of state"
+    end +
+      @pools.values.map { |k| "pool_def :#{k[:name]}: #{k[:max]} slot(s), #{(2 * k[:max] + 2) * 4} bytes of state" }
+  end
+
+  # One owning context: every entry that reaches a kind's module, directly or
+  # through receiver-less calls, is triggered in the same context (0014 §4).
+  def check_contexts(prog, needs)
+    ctx = {}
+    prog.statements.body.each do |s|
+      next unless s.is_a?(Prism::CallNode) && s.receiver.nil? && %i[every_us every_ms].include?(s.name)
+      a = args_of(s)
+      next unless a[1].is_a?(Prism::SymbolNode)
+      kw = a.find { |x| x.is_a?(Prism::KeywordHashNode) }&.elements || []
+      c = kw.find { |e| e.key.is_a?(Prism::SymbolNode) && e.key.unescaped == "context" }
+      ctx[a[1].unescaped.to_sym] = c&.value.is_a?(Prism::SymbolNode) ? c.value.unescaped : "thread"
+    end
+    (@kinds.values + @pools.values).each do |k|
+      by = ctx.select { |entry, _| needs.key?(entry) && needs[entry].include?(k[:frames][0]) }
+      next if by.values.uniq.size <= 1
+      named = by.group_by { |_, c| c }.map { |c, es| "#{c} (#{es.map(&:first).join(', ')})" }.join(" and ")
+      if k[:pool]
+        report(k[:decl], "#{k[:mod]} is used from #{named}; a pool has one owning context (decision 0041 stage 3)")
+      else
+        report(k[:decl], "#{k[:mod]} is driven from #{named}; a fiber kind has one owning context (decision 0035 stage 2)")
+      end
+    end
+  end
+
+  # A node's source with every call under it that the rewrite changes
+  # rendered: a module call becomes its helper's call, and a receiver-less
+  # call of a definition that gains states gets them as further arguments.
+  # A definition that gains states gets them as parameters.
+  def core_render(node)
+    s0 = node.location.start_offset
+    out = @src.b[s0...node.location.end_offset]
+    pieces = []
+    targets(node).each { |n| pieces << [n.location.start_offset, n.location.end_offset, render_call(n)] }
+    if node.is_a?(Prism::DefNode) && (add = @gain[node.name])
+      pieces << if node.parameters
+                  at = node.parameters.location.end_offset
+                  [at, at, ", #{add.join(', ')}"]
+                elsif node.lparen_loc
+                  at = node.lparen_loc.end_offset
+                  [at, at, add.join(", ")]
+                else
+                  at = node.name_loc.end_offset
+                  [at, at, "(#{add.join(', ')})"]
+                end
+    end
+    pieces.sort_by { |s, e, _| [-s, -e] }.each { |s, e, x| out[(s - s0)...(e - s0)] = x.b }
+    out.force_encoding(Encoding::UTF_8)
+  end
+
+  # The calls under a node that the rewrite changes, outermost only: each
+  # renders what is under it.
+  def targets(node)
+    found = []
+    node.compact_child_nodes.each do |ch|
+      if target?(ch) then found << ch
+      else found.concat(targets(ch))
+      end
+    end
+    found
+  end
+
+  def target?(n)
+    return false unless n.is_a?(Prism::CallNode)
+    (n.receiver.is_a?(Prism::ConstantReadNode) && @mods.key?(n.receiver.name)) ||
+      (n.receiver.nil? && @gain.key?(n.name))
+  end
+
+  def render_call(n)
+    a = args_of(n).map { |x| target?(x) ? render_call(x) : core_render(x) }
+    if n.receiver.nil?
+      blk = n.block ? " #{core_render(n.block)}" : ""
+      return "#{n.name}(#{(a + @gain[n.name]).join(', ')})#{blk}"
+    end
+    k = @mods[n.receiver.name]
+    return pool_call(n, k, a) if k[:pool]
+    case n.name
+    when :start then "sfb_#{k[:name]}_start(#{(a + k[:frames]).join(', ')})"
+    when :resume then "sfb_#{k[:name]}_resume(#{(a + k[:frames]).join(', ')})"
+    when :next? then "(sfb_#{k[:name]}_fill(#{(a + k[:frames]).join(', ')}) != 0)"
+    when :next, :peek then "sfb_#{k[:name]}_#{n.name}(#{(a + k[:frames]).join(', ')})"
+    else "(sfb_#{k[:name]}_alive(#{a[0]}, #{k[:frames][0]}) != 0)"
+    end
+  end
+
+  def apply_core_edits
+    out = @src.b
+    @edits.sort_by { |s0, e0, _| [-s0, -e0] }.each { |s0, e0, t| out[s0...e0] = t.b }
+    out.force_encoding(Encoding::UTF_8)
+  end
+end
+
+if $PROGRAM_NAME == __FILE__
+  usage = "usage: spinel-fiber-core IN.rb -o OUT.rb"
+  inp = nil
+  outp = nil
+  args = ARGV.dup
+  until args.empty?
+    a = args.shift
+    if a == "-o" then outp = args.shift
+    elsif inp.nil? then inp = a
+    else abort usage
+    end
+  end
+  abort usage unless inp && outp
+  rw = CoreRewriter.new(inp, File.read(inp))
+  rc = rw.run
+  if rc.zero?
+    File.write(outp, rw.out)
+    rw.frame_report.each { |l| puts l }
+  end
+  exit rc
+end

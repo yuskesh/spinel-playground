@@ -1,0 +1,39 @@
+# E079: the HOST leg of the four-way oracle.
+#
+# E077 added an arm64 row to the ABI matrix (results/E077/arm64-none.yaml) but
+# never RAN a freestanding object natively -- it only compared signatures.  The
+# gradient makes running it worth doing: the host leg is the one where the
+# answer can be cross-checked against an independent model (model.py) and
+# against central differences, so it has to be a real executable.
+#
+# The one difference from E077's arm64-none.yaml is the data layout: this file
+# carries exactly the string clang emits for this triple, because
+# spinel-gradfs links the kernel module against a shim compiled by that clang
+# and refuses a mismatch (llvm-link would only warn, and a wrong pointer size
+# in a linked module is silent).
+#
+# It is NOT a deployment profile: nothing ships a freestanding kernel to
+# macOS.  `platform: none` and `libc: none` are the honest values -- the test
+# driver supplies spinel_trap and nothing else.
+target:
+  triple: arm64-apple-macosx14.0.0
+  data_layout: "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32"
+  cflags: [-O2]
+abi:
+  boundary: c-abi
+  int_width: i64-internal
+  overflow: trap
+  trap_hook: spinel_trap
+runtime:
+  libc: none
+  libm: none
+  compiler_rt: allow
+platform:
+  type: none
+  # Two spellings of ONE symbol.  Mach-O prefixes C identifiers with an
+  # underscore and tools/freestanding/undef-check.py compares the raw strings
+  # `llvm-nm -u` prints, so on this (host-only, non-deployment) profile the
+  # allowance has to name both.  Teaching the checker about object-file name
+  # mangling would change a shipping gate for the sake of a test rig, so the
+  # profile carries the cost instead.  See E079 Honest boundary.
+  externs: [spinel_trap, _spinel_trap]

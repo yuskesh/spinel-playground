@@ -1,0 +1,16 @@
+/*
+ * tools/app/zephyr/v4.4.2/boards/frdm_imxrt1186_cm33_amp_no_console.overlay --
+ * the companion without a console (decision 0027): applied by the build when
+ * the companion's application declares no uart: channel, so that LPUART1 is
+ * the M7's.
+ */
+/ {
+	chosen {
+		/delete-property/ zephyr,console;
+		/delete-property/ zephyr,shell-uart;
+	};
+};
+
+&lpuart1 {
+	status = "disabled";
+};

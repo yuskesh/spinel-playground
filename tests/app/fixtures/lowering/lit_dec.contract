@@ -1,0 +1,7 @@
+core-contract 2
+root app.rb
+entry lit_dec
+context thread
+result none
+param out buffer u8 inout count const 48
+param w64 buffer i64 inout count const 2

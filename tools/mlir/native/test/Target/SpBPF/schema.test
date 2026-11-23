@@ -1,0 +1,25 @@
+# Three-layer schema unit tests in SchemaTest.cpp; no gtest, as its header explains the user
+# decision.
+# RUN: spinel-spbpf-schema-test %S/schema-roundtrip.json | FileCheck %s
+# CHECK: ok   fixture parses
+# Types: nested structs are named record references, not anonymous copies.
+# CHECK: ok   core: a nested struct is a record_ref, not an anonymous copy
+# CHECK: ok   core: char[16] is an array type
+# CHECK: ok   core: record_ref size resolves through the schema
+# Ring buffers remain in schema without requiring key/value on every map.
+# CHECK: ok   core: a ringbuf map has no key/value and names its record
+# Telemetry carries AST rather than prose.
+# CHECK: ok   telemetry: drop predicate survives as an AST
+# CHECK: ok   telemetry: semconv key and stability survive
+# CHECK: ok   telemetry: what cannot be expressed goes to runtime_extension, not silently dropped
+# logs body / metrics value / closed metric kinds (sum, exponential_histogram)
+# CHECK: ok   telemetry: sum keeps its declared monotonic
+# CHECK: ok   telemetry: a logs body source survives
+# CHECK: ok   telemetry: exponential_histogram keeps scale / zero_threshold / bucket_rule
+# Core preserves extensions without interpreting them.
+# CHECK: ok   extensions: spinel.ebpf is preserved verbatim (core does not read it)
+# CHECK: ok   decode(encode(x)) == x
+# CHECK: ok   encode is idempotent (canonical)
+# CHECK: ok   extension payload survives a parse/serialize round trip
+# CHECK: ok   accepts coverage.programs = omitted (a partial schema)
+# CHECK: schema-unittest: 81/81 checks passed

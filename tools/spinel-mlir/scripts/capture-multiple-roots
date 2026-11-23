@@ -1,0 +1,100 @@
+#!/usr/bin/env ruby
+require_relative 'compare-root-facts'
+require 'fileutils'
+require 'digest'
+old,compiler,tool,output,inherit=ARGV
+abort 'usage: capture-multiple-roots E008-capture compiler tool new-output' unless output
+abort 'output exists' if File.exist?(output)
+FileUtils.mkdir_p(output)
+sha=lambda{|path|Digest::SHA256.file(path).hexdigest}
+abort 'missing executable producer/tool/timeout' unless [compiler,tool,'/usr/bin/timeout'].all?{|p|File.file?(p) && File.executable?(p)}
+tool_hash=sha.call(tool)
+FileUtils.mkdir_p(File.join(output,'tools'))
+pinned_tool=File.join(output,'tools/spinel-mlir')
+FileUtils.copy_file(tool,pinned_tool);File.chmod(0755,pinned_tool)
+abort 'tool changed during copy' unless sha.call(tool)==tool_hash && sha.call(pinned_tool)==tool_hash && File.executable?(pinned_tool)
+tool_source=tool;tool=pinned_tool
+manifest=JSON.parse(File.read(File.join(old,'inputs.json')))
+cases=manifest.fetch('cases').select{|c|c.fetch('requests').length>1}
+abort 'expected14 multiple-root inputs' unless cases.length==14
+baseline=File.readlines(File.join(old,'arms.jsonl')).map{|line|JSON.parse(line)}
+cases.each do |c|
+  source=File.join(old,'source',c.fetch('source'))
+  abort 'source missing/changed' unless File.file?(source) && sha.call(source)==c.fetch('source_sha256')
+  c.fetch('requests').each_with_index do |_,index|
+    row=baseline.find{|r|r.fetch('id')==c.fetch('id') && r.fetch('arm')==index} or abort 'baseline ledger missing'
+    next unless row.fetch('supply_success')
+    path=File.join(old,'arms',c.fetch('id'),index.to_s,'facts.mlir')
+    abort 'baseline facts missing/changed' unless File.file?(path) && sha.call(path)==row.fetch('sha256')
+  end
+end
+library=JSON.parse(File.read(File.expand_path('../docs/experiments/results/E003/inputs-and-library.json',__dir__))).fetch('ruby_lib')
+library.each{|path,hash|abort 'library missing/changed' unless File.file?(File.join(old,'source',path)) && sha.call(File.join(old,'source',path))==hash}
+inherited_row=nil
+if inherit
+  inherited=File.readlines(File.join(inherit,'arms.jsonl')).map{|line|JSON.parse(line)}
+  abort 'unexpected inheritance set' unless inherited.length==1
+  inherited_row=inherited.first
+  abort 'unexpected inherited arm' unless inherited_row.values_at('id','order','rc','verify_rc')==[cases.first.fetch('id'),'forward',0,127]
+  path=File.join(inherit,cases.first.fetch('id'),'forward/facts.mlir')
+  abort 'inherited facts changed' unless File.file?(path) && sha.call(path)==inherited_row.fetch('sha256')
+end
+File.write(File.join(output,'preflight.json'),JSON.pretty_generate({producer_sha256:sha.call(compiler),tool_source:tool_source,tool_source_before_after_sha256:tool_hash,pinned_tool_sha256:sha.call(tool),source_baseline_library_hashes_verified:true,inherit:inherit})+"\n")
+File.write(File.join(output,'inputs.json'),JSON.pretty_generate(cases)+"\n")
+ledger=File.open(File.join(output,'arms.jsonl'),'w')
+cases.each do |c|
+  expected=%w[internal_frontend_testdata_pos_sub_int examples_tccount_tccount].include?(c.fetch('id')) ? 1 : 0
+  {forward:c.fetch('requests'),reverse:c.fetch('requests').reverse}.each do |order,requests|
+    dir=File.join(output,c.fetch('id'),order.to_s);FileUtils.mkdir_p(dir)
+    target=File.join(dir,'facts.mlir')
+    args=[compiler,'-I',File.join(old,'source/ruby/lib'),"--emit-mlir=#{target}"]+requests.map{|r|"--analysis-root=#{r.fetch('request')}"}+[File.join(old,'source',c.fetch('source'))]
+    reuse=inherited_row && c.fetch('id')==inherited_row.fetch('id') && order==:forward
+    if reuse
+      source=File.join(inherit,c.fetch('id'),'forward')
+      %w[facts.mlir stdout stderr].each{|f|FileUtils.copy_file(File.join(source,f),File.join(dir,f))}
+      rc=inherited_row.fetch('rc');signal=inherited_row['signal']
+    else
+      system('/usr/bin/timeout','--kill-after=5s','60s',*args,chdir:File.join(old,'source'),out:File.join(dir,'stdout'),err:File.join(dir,'stderr'))
+      rc=$?.exitstatus;signal=$?.termsig
+    end
+    bytes=File.file?(target)?File.size(target):0
+    row={id:c.fetch('id'),order:order,requests:requests,rc:rc,signal:signal,artifact_bytes:bytes,stdout_bytes:File.size(File.join(dir,'stdout')),expected_rc:expected,execution:reuse ? 'inherited' : 'new'}
+    row[:inherited_from]={directory:inherit,sha256:inherited_row.fetch('sha256'),previous_verify_rc:127} if reuse
+    if signal || rc!=expected || row[:stdout_bytes]!=0 || (expected==0 && bytes==0) || (expected==1 && (bytes!=0 || !File.read(File.join(dir,'stderr')).include?('MLIR missing original Integer span')))
+      ledger.puts(JSON.generate(row.merge(unexpected:true)));ledger.flush;abort "STOP producer #{c['id']} #{order}"
+    end
+    if expected==0
+      row[:sha256]=Digest::SHA256.file(target).hexdigest
+      system(tool,'--verify-only',target,out:File.join(dir,'verify.stdout'),err:File.join(dir,'verify.stderr'))
+      row[:verify_rc]=$?.exitstatus
+      ledger.puts(JSON.generate(row));ledger.flush
+      abort 'STOP facts verifier' unless row[:verify_rc]==0
+      facts=RootFacts.new(target)
+      names=facts.header.fetch('spinel_facts.analysis_roots').map{|r|r.fetch('method')}
+      abort 'STOP requested order/count' unless names==requests.map{|r|r.fetch('method')}
+    else
+      ledger.puts(JSON.generate(row));ledger.flush
+    end
+    puts "#{c['id']} #{order} rc#{row[:rc]} bytes#{bytes}"
+  end
+end
+ledger.close
+# Compare all saved arms only after capture; never rerun to erase a difference.
+comparisons=File.open(File.join(output,'comparisons.jsonl'),'w');differences=0
+cases.each do |c|
+  next if %w[internal_frontend_testdata_pos_sub_int examples_tccount_tccount].include?(c.fetch('id'))
+  forward=RootFacts.new(File.join(output,c.fetch('id'),'forward/facts.mlir'))
+  reverse=RootFacts.new(File.join(output,c.fetch('id'),'reverse/facts.mlir'))
+  c.fetch('requests').each_with_index do |r,index|
+    single=RootFacts.new(File.join(old,'arms',c.fetch('id'),index.to_s,'facts.mlir'))
+    {single:single,reverse:reverse}.each do |kind,baseline|
+      result=compare_root_facts(baseline,forward,r.fetch('method')).merge(id:c.fetch('id'),baseline:kind)
+      differences+=result[:differences].length
+      comparisons.puts(JSON.generate(result));comparisons.flush
+    end
+  end
+end
+comparisons.close
+File.write(File.join(output,'summary.json'),JSON.pretty_generate({inputs:14,arms:28,success_arms:24,known_missing_arms:4,differences:differences})+"\n")
+abort "STOP observed body differences=#{differences}" unless differences==0
+puts 'GREEN multiple root capture/order/single body comparison'

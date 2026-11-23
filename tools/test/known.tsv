@@ -1,0 +1,17 @@
+# tools/test/known.tsv -- failures a selected test is known to have, and why.
+#
+# A known failure is still a failure: tools/test/affected.rb prints it under
+# the test it belongs to, so a run that shows it is read against this row and
+# not mistaken for one the change caused, and a run that does not show it
+# says the row can go. A row is added only with the reason and the revision
+# where the failure was shown to exist without the change.
+#
+# COLUMNS
+#   id      the test's id in tools/test/tests.tsv
+#   check   the lane and check that fails, as the test prints it
+#   since   a revision where it already failed
+#   reason  what fails, and whose it is
+#
+#id	check	since	reason
+app-channel	channel: 4. the byte helpers: fill did not build for thumbv8m	da335c3	tests/app/fixtures/channel/app.rb declares `# spinel: int64`, and tools/core/int64-allow.tsv does not list it, so a 32-bit target refuses it since decision 0019's 2026-10-21 revision (the packed app.rb:1); the fixture belongs to the held oracle suite and is left as it is (the coordinator, 2026-10-21)
+raster-string-borrow	FAIL snapshot in GPU frame	aa83dcb9	upstream Spinel f8ff01939 stores a String variable as a mutable handle, so GpuRaster#frame passes @wad (an `in` u8 buffer) as sp_str_dup(sp_strbuf_read_pub(iv_wad)) and copies the whole WAD on every GPU frame; the screen and zone handles are still borrowed. Accepted for the 2026-11-14 synchronisation (the bpf-mlir coordinator); a borrow route for an `in` buffer from a handle is an open follow-up on the fork (a bpf-mlir implementer)

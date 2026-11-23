@@ -1,0 +1,104 @@
+core-contract 1
+root src/packed.rb
+entry dc_sp_segloop
+result i64
+param state buffer i64 inout count n_state
+param n_state scalar u64
+param ceilingclip buffer i16 inout count n_ceilingclip
+param n_ceilingclip scalar u64
+param floorclip buffer i16 inout count n_floorclip
+param n_floorclip scalar u64
+param pl_top buffer u16 inout count n_pl_top
+param n_pl_top scalar u64
+param pl_bottom buffer u16 inout count n_pl_bottom
+param n_pl_bottom scalar u64
+param openings buffer i16 inout count n_openings
+param n_openings scalar u64
+param xtoviewangle buffer i32 in count n_xtoviewangle
+param n_xtoviewangle scalar u64
+param finetangent buffer i32 in count n_finetangent
+param n_finetangent scalar u64
+param finesine buffer i32 in count n_finesine
+param n_finesine scalar u64
+param scalelight buffer u8 in count n_scalelight
+param n_scalelight scalar u64
+param resscale buffer u8 in count n_resscale
+param n_resscale scalar u64
+param tex_widthmask buffer u8 in count n_tex_widthmask
+param n_tex_widthmask scalar u64
+param tex_atlas_base buffer u32 in count n_tex_atlas_base
+param n_tex_atlas_base scalar u64
+param plw buffer u16 in count n_plw
+param n_plw scalar u64
+param viewheight buffer u8 in count n_viewheight
+param n_viewheight scalar u64
+param jobmode buffer u8 in count n_jobmode
+param n_jobmode scalar u64
+param scr buffer u8 inout count n_scr
+param n_scr scalar u64
+param cmap buffer u8 in count n_cmap
+param n_cmap scalar u64
+param atlas buffer u8 in count n_atlas
+param n_atlas scalar u64
+param wad buffer u8 in count n_wad
+param n_wad scalar u64
+param zonewin buffer u8 in count n_zonewin
+param n_zonewin scalar u64
+param centery buffer u8 in count n_centery
+param n_centery scalar u64
+param sw buffer u16 in count n_sw
+param n_sw scalar u64
+param viewwindowx buffer u8 in count n_viewwindowx
+param n_viewwindowx scalar u64
+param viewwindowy buffer u8 in count n_viewwindowy
+param n_viewwindowy scalar u64
+param wall buffer i32 inout count n_wall
+param n_wall scalar u64
+param sc_kind buffer u8 inout count n_sc_kind
+param n_sc_kind scalar u64
+param sc_idx buffer u16 inout count n_sc_idx
+param n_sc_idx scalar u64
+param cap_wall buffer u16 in count n_cap_wall
+param n_cap_wall scalar u64
+param cap_sched buffer u16 in count n_cap_sched
+param n_cap_sched scalar u64
+param i_rw_x scalar i64
+param i_rw_stopx scalar i64
+param i_topfrac scalar i64
+param i_bottomfrac scalar i64
+param i_topstep scalar i64
+param i_bottomstep scalar i64
+param i_pixhigh scalar i64
+param i_pixlow scalar i64
+param i_pixhighstep scalar i64
+param i_pixlowstep scalar i64
+param i_rw_scale scalar i64
+param i_rw_scalestep scalar i64
+param i_markceiling scalar i64
+param i_markfloor scalar i64
+param i_ceilingplane scalar i64
+param i_floorplane scalar i64
+param i_segtextured scalar i64
+param i_rw_centerangle scalar i64
+param i_rw_distance scalar i64
+param i_rw_offset scalar i64
+param i_walllights scalar i64
+param i_midtexture scalar i64
+param i_toptexture scalar i64
+param i_bottomtexture scalar i64
+param i_maskedtexture scalar i64
+param i_rw_midtexturemid scalar i64
+param i_rw_toptexturemid scalar i64
+param i_rw_bottomtexturemid scalar i64
+param i_maskedtexturecol scalar i64
+param i_dc_x scalar i64
+param i_dc_yl scalar i64
+param i_dc_yh scalar i64
+param i_dc_iscale scalar i64
+param i_dc_texturemid scalar i64
+param i_dc_colormap scalar i64
+param i_dc_srcofs scalar i64
+param i_dc_srcres scalar i64
+param i_dc_srcbase scalar i64
+param i_nwall scalar i64
+param i_nsched scalar i64

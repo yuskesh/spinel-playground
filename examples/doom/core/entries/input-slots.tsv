@@ -1,0 +1,13 @@
+# examples/doom/core/entries/input-slots.tsv — the input entry's index table.
+#
+# Position i of the `xi` buffer holds the core_state slot of the field named on
+# row i. The X_ constants in examples/doom/core/src/inputport.rb are these
+# positions; Full fills the table from the layout's slots.tsv.
+#
+#position	constant	field
+0	X_TURNHELD	ticcmd_builder_turnheld
+1	X_BUTTONS	ticcmd_builder_buttons
+2	X_FORWARDMOVE	ticcmd_builder_forwardmove
+3	X_SIDEMOVE	ticcmd_builder_sidemove
+4	X_ANGLETURN	ticcmd_builder_angleturn
+5	X_DEMO_N	demo_writer_n

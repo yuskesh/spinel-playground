@@ -1,0 +1,53 @@
+# tests/subset/coverage.tsv -- each entry of SubsetTables.cpp and the evidence for its
+# refusal (decision 0026, step 2). tools/core/subset-coverage.rb checks the map
+# against the table; tests/subset/reasons.sh runs the fixtures. Only an
+# assertion of the entry's own reason text counts: the E040 reject table
+# passes on any non-zero exit, so it is not evidence for any entry.
+#
+#table	entry	evidence	note
+node	StringNode	fixture tests/subset/fixtures/node-StringNode.rb
+node	InterpolatedStringNode	fixture tests/subset/fixtures/node-InterpolatedStringNode.rb
+node	XStringNode	fixture tests/subset/fixtures/node-XStringNode.rb
+node	ArrayNode	fixture tests/subset/fixtures/node-ArrayNode.rb
+node	HashNode	fixture tests/subset/fixtures/node-HashNode.rb
+node	KeywordHashNode	fixture tests/subset/fixtures/node-KeywordHashNode.rb
+node	SymbolNode	fixture tests/subset/fixtures/node-SymbolNode.rb
+node	InterpolatedSymbolNode	fixture tests/subset/fixtures/node-InterpolatedSymbolNode.rb
+node	RangeNode	fixture tests/subset/fixtures/node-RangeNode.rb
+node	RegularExpressionNode	fixture tests/subset/fixtures/node-RegularExpressionNode.rb
+node	BlockNode	fixture tests/subset/fixtures/node-BlockNode.rb
+node	LambdaNode	fixture tests/subset/fixtures/node-LambdaNode.rb
+node	BlockArgumentNode	fixture tests/subset/fixtures/node-BlockArgumentNode.rb
+node	ClassNode	unverified-inherited	Prism refuses a class in a method body ("unexpected class definition in method body", prism diagnostic.c:141) before typedump answers, and the walk sees only the method's subtree
+node	ModuleNode	unverified-inherited	Prism refuses a module in a method body ("unexpected module definition in method body", prism diagnostic.c:280), as for ClassNode
+node	DefNode	fixture tests/subset/fixtures/node-DefNode.rb
+node	IndexNode	unverified-inherited	Prism has no IndexNode kind (prism config.yml); `a[i]` is a CallNode named `[]`, the call entry, and this key is inherited from the parser the table was written for
+node	InstanceVariableReadNode	fixture tests/subset/fixtures/node-InstanceVariableReadNode.rb
+node	InstanceVariableWriteNode	fixture tests/subset/fixtures/node-InstanceVariableWriteNode.rb
+node	GlobalVariableReadNode	fixture tests/subset/fixtures/node-GlobalVariableReadNode.rb
+node	GlobalVariableWriteNode	fixture tests/subset/fixtures/node-GlobalVariableWriteNode.rb
+node	ConstantReadNode	fixture tests/subset/fixtures/node-ConstantReadNode.rb	also tests/freestanding/e084/run_reject.sh (n1_sqrt)
+node	ConstantWriteNode	unverified-inherited	Prism refuses a constant assignment in a method body ("dynamic constant assignment", prism diagnostic.c:383); a top-level one is outside the walked method
+node	ConstantPathNode	fixture tests/subset/fixtures/node-ConstantPathNode.rb
+node	BeginNode	fixture tests/subset/fixtures/node-BeginNode.rb
+node	RescueNode	unverified-inherited	Prism places a RescueNode only under BeginNode#rescue_clause or another RescueNode#subsequent (prism config.yml), and the walk meets the BeginNode first
+node	EnsureNode	unverified-inherited	Prism places an EnsureNode only under BeginNode#ensure_clause (prism config.yml), and the walk meets the BeginNode first
+node	YieldNode	fixture tests/subset/fixtures/node-YieldNode.rb
+node	ForNode	fixture tests/subset/fixtures/node-ForNode.rb
+node	CaseNode	fixture tests/subset/fixtures/node-CaseNode.rb
+node	SelfNode	fixture tests/subset/fixtures/node-SelfNode.rb
+node	NilNode	fixture tests/subset/fixtures/node-NilNode.rb
+node	RationalNode	fixture tests/subset/fixtures/node-RationalNode.rb
+node	ImaginaryNode	fixture tests/subset/fixtures/node-ImaginaryNode.rb
+node	SplatNode	fixture tests/subset/fixtures/node-SplatNode.rb
+node	MultiTargetNode	fixture tests/subset/fixtures/node-MultiTargetNode.rb
+call	**	fixture tests/subset/fixtures/call-pow.rb
+call	[]	fixture tests/subset/fixtures/call-index.rb	also tests/freestanding/e084/run_reject.sh (n2_array_new) and tests/core/run.sh (reject_array.rb)
+call	[]=	fixture tests/subset/fixtures/call-index-set.rb
+call	to_s	fixture tests/subset/fixtures/call-to_s.rb
+call	new	fixture tests/subset/fixtures/call-new.rb
+call	each	fixture tests/subset/fixtures/call-each.rb
+call	map	fixture tests/subset/fixtures/call-map.rb
+call	times	fixture tests/subset/fixtures/call-times.rb
+call	push	fixture tests/subset/fixtures/call-push.rb
+call	<<	fixture tests/subset/fixtures/call-shl.rb

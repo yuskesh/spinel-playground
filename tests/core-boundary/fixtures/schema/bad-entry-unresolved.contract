@@ -1,0 +1,6 @@
+# The smallest complete contract: one scalar in, one scalar out.
+core-contract 1
+root fixtures/schema/src/scalar.rb
+entry not_defined_here
+result i64
+param v scalar i64

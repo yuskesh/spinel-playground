@@ -1,0 +1,7 @@
+core-contract 1
+root src/packed.rb
+entry dc_sp_lindex
+result i64
+param resscale buffer u8 in count n_resscale
+param n_resscale scalar u64
+param scale scalar i64

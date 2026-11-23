@@ -1,0 +1,246 @@
+{
+  "format": "spinel-core-report",
+  "version": 1,
+  "entry": "gd_work",
+  "target": "normalized-target",
+  "profile": "hosted-stage2",
+  "inputs": {
+    "contract": {
+      "file": "work.contract",
+      "sha256": "7244cca39d6f043656035789f487649945a6d606983349ad4def665352734937"
+    },
+    "source": {
+      "file": "golden/work.rb",
+      "revision": null,
+      "sha256": "13e6927c7a5529bb4d7ce209be1e34fe68b0ef6b49b3030b558129124aa5f62b"
+    }
+  },
+  "object": {
+    "file": "normalized.o",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "tools": {
+    "kernel": {
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "reader": {
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "clang": {
+      "version": "normalized",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  },
+  "properties": {
+    "recursion": {
+      "mode": "enforce",
+      "evaluated": false
+    },
+    "allocation": {
+      "mode": "enforce",
+      "evaluated": false
+    },
+    "loop_bound": {
+      "mode": "observe",
+      "evaluated": true,
+      "verdict": "pass",
+      "evidence": [
+        {
+          "kind": "static_proof",
+          "subject": "work gd_work",
+          "value": {
+            "kind": "iterations",
+            "expression": "max(0, h) + max(0, h) * max(0, w) + ceil_div(max(0, hi - lo), 2)"
+          },
+          "artifact": {
+            "file": "golden/work.rb",
+            "revision": null,
+            "sha256": "13e6927c7a5529bb4d7ce209be1e34fe68b0ef6b49b3030b558129124aa5f62b"
+          }
+        }
+      ],
+      "work_bound": {
+        "expression": "max(0, h) + max(0, h) * max(0, w) + ceil_div(max(0, hi - lo), 2)",
+        "limit": null,
+        "terms": [
+          {
+            "loop": "gd_work#0",
+            "context": [],
+            "iterations": "max(0, h)",
+            "reason": null,
+            "detail": null
+          },
+          {
+            "loop": "gd_fill#0",
+            "context": [
+              "loop:gd_work#0",
+              "call:gd_fill@17:4"
+            ],
+            "iterations": "max(0, h) * max(0, w)",
+            "reason": null,
+            "detail": null
+          },
+          {
+            "loop": "gd_work#1",
+            "context": [],
+            "iterations": "ceil_div(max(0, hi - lo), 2)",
+            "reason": null,
+            "detail": null
+          }
+        ]
+      },
+      "loops": [
+        {
+          "id": "gd_work#0",
+          "method": "gd_work",
+          "ordinal": 0,
+          "digest": "2f97302e7cc690ab2d6ee762e143fb962ffdf2e56fd8f893a345c016a7018b65",
+          "digest_version": 1,
+          "label": null,
+          "header": "while (call < (lvar y) (lvar h))",
+          "location": "golden/work.rb:15:2",
+          "parent": null,
+          "verdict": "pass",
+          "reason": null,
+          "detail": null,
+          "conjunct": null,
+          "evidence": [
+            {
+              "kind": "static_proof",
+              "subject": "loop gd_work#0",
+              "value": {
+                "kind": "iterations",
+                "expression": "max(0, h)"
+              },
+              "artifact": {
+                "file": "golden/work.rb",
+                "revision": null,
+                "sha256": "13e6927c7a5529bb4d7ce209be1e34fe68b0ef6b49b3030b558129124aa5f62b"
+              }
+            }
+          ]
+        },
+        {
+          "id": "gd_work#1",
+          "method": "gd_work",
+          "ordinal": 1,
+          "digest": "93fd4f2cc6eb754fb2c5840455ff1d1b5eabb31dbb2240dc62c66c2aeb0d4c18",
+          "digest_version": 1,
+          "label": null,
+          "header": "while (and (call < (lvar lo) (lvar k)) (call > (lvar k) 0))",
+          "location": "golden/work.rb:21:2",
+          "parent": null,
+          "verdict": "pass",
+          "reason": null,
+          "detail": null,
+          "conjunct": {
+            "index": 0,
+            "rendering": "(call < (lvar lo) (lvar k))"
+          },
+          "evidence": [
+            {
+              "kind": "static_proof",
+              "subject": "loop gd_work#1",
+              "value": {
+                "kind": "iterations",
+                "expression": "ceil_div(max(0, hi - lo), 2)"
+              },
+              "artifact": {
+                "file": "golden/work.rb",
+                "revision": null,
+                "sha256": "13e6927c7a5529bb4d7ce209be1e34fe68b0ef6b49b3030b558129124aa5f62b"
+              }
+            }
+          ]
+        },
+        {
+          "id": "gd_fill#0",
+          "method": "gd_fill",
+          "ordinal": 0,
+          "digest": "02ac07954bcebd2ba7c2e4f814a972681de4c386107b1997aa9137d5b974f0d4",
+          "digest_version": 1,
+          "label": null,
+          "header": "while (call < (lvar x) (lvar width))",
+          "location": "golden/work.rb:6:2",
+          "parent": null,
+          "verdict": "pass",
+          "reason": null,
+          "detail": null,
+          "conjunct": null,
+          "evidence": [
+            {
+              "kind": "static_proof",
+              "subject": "loop gd_fill#0",
+              "value": {
+                "kind": "iterations",
+                "expression": "max(0, width)"
+              },
+              "artifact": {
+                "file": "golden/work.rb",
+                "revision": null,
+                "sha256": "13e6927c7a5529bb4d7ce209be1e34fe68b0ef6b49b3030b558129124aa5f62b"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "stack_budget": {
+      "mode": "observe",
+      "evaluated": true,
+      "verdict": "unknown",
+      "reason": "profile 'hosted-stage2' declares no provisioned_stack and no interrupt_reserve, so the inequality has no right-hand side",
+      "kernel_stack": 0,
+      "call_overhead": {
+        "bytes": 0,
+        "target": "normalized-target",
+        "evidence": "normalized"
+      },
+      "evidence": [
+        {
+          "kind": "measurement",
+          "subject": "frame sizes",
+          "method": "warn-stack-size=0 on a side compile of the IR the object was generated from, with that object's codegen line",
+          "artifact": {
+            "file": "golden/work.rb",
+            "revision": null,
+            "sha256": "13e6927c7a5529bb4d7ce209be1e34fe68b0ef6b49b3030b558129124aa5f62b"
+          }
+        },
+        {
+          "kind": "static_proof",
+          "subject": "worst path",
+          "frame_total": 0,
+          "call_edges": 0,
+          "artifact": {
+            "file": "golden/work.rb",
+            "revision": null,
+            "sha256": "13e6927c7a5529bb4d7ce209be1e34fe68b0ef6b49b3030b558129124aa5f62b"
+          }
+        },
+        {
+          "kind": "declaration",
+          "subject": "per-call stack overhead",
+          "detail": "normalized"
+        }
+      ],
+      "worst_path": [
+        "normalized"
+      ],
+      "frames": [
+        {
+          "function": "normalized",
+          "bytes": 0
+        }
+      ]
+    },
+    "extern_effects": {
+      "mode": "enforce",
+      "evaluated": false
+    },
+    "undefined_symbols": {
+      "mode": "enforce",
+      "evaluated": false
+    }
+  }
+}

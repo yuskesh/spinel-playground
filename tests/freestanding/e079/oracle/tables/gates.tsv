@@ -1,0 +1,5 @@
+leg	what	lines	sha256_16	differing_lines	verdict
+native	freestanding object + Enzyme adjoint, arm64, C driver	465	fae55f159c4d3f0e	0	IDENTICAL
+wasm32	kern.wasm on node v24 (V8), JS driver	465	fae55f159c4d3f0e	0	IDENTICAL
+m33	QEMU mps2/an521/cpu0 + Zephyr, soft float, C driver	465	fae55f159c4d3f0e	0	IDENTICAL
+rv32	QEMU qemu_riscv32 + Zephyr, soft float, C driver	465	fae55f159c4d3f0e	0	IDENTICAL

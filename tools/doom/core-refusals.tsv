@@ -1,0 +1,44 @@
+# tools/doom/core-refusals.tsv — the original's "not implemented" raises, and what reaches each.
+#
+# The original (examples/doom/lib/doom) is a partial DOOM: where it meets
+# something it does not implement it raises LevelError and the program stops.
+# The port transmits each such raise as core_fail(:capacity) at the same call,
+# because CORE has no other failure (the owner's decision of 2026-09-17; its
+# reason is written at each port site). This table names every such raise in
+# the Game files -- tests/doom-core/refusals.rb refuses a raise with no row and a
+# row with no raise -- and what stands behind the claim that the port stops
+# where the original stops:
+#
+#   scenario:NAME   tests/doom-core/scenarios.rb's NAME, a `stops` scenario whose
+#                   `stop_in` is the row's port definition: both stop at the
+#                   same tic, in that definition
+#   claim:TOKEN     no shipped content reaches it; the ledger row's claim, checked
+#                   by tests/doom-core/content-scan.rb
+#   full:NAME       Full refuses before calling the entry (Session#before_step!),
+#                   shown by scenario NAME (`full_refuses`); the same scenario run
+#                   with --no-full-guard shows the port's backstop refusal
+#   setup           it raises while Full loads the level, before any entry runs;
+#                   the port has no copy
+#   unchecked:WHY   nothing in the suites stands behind it; WHY says what was
+#                   measured once, by hand, and is a LIMIT, not a claim. THESE
+#                   ROWS ARE THE SOFT PART OF THIS TABLE: no suite re-measures
+#                   them, and a change to the library or the IWAD can make one
+#                   false without anything failing.
+#
+#file	message	port	evidence
+enemy.rb	unimplemented mobj action	dc_st_kp_dispatch_action	unchecked:no type placed in doom1.wad reaches an action dispatch_action lacks (measured 2026-09-17 over the state graphs of the placed types)
+enemy.rb	A_BossDeath reached	dc_st_a_boss_death	scenario:baron-death
+pspr.rb	unimplemented weapon action	dc_st_kp_dispatch_psp_action	unchecked:only the plasma gun, the BFG and the super shotgun (weapons 5, 6, 8) reach an action dispatch_psp_action lacks, and doom1.wad places no pickup for any of them (measured 2026-09-17)
+inter.rb	P_SpecialThing: unknown gettable sprite	dc_st_unknown_gettable	claim:absent-in-content:doom1:gettable-unlisted
+game.rb	unknown thing type	-	setup
+game.rb	G_DoReborn (ga_loadlevel) is not implemented	dc_st_kp_g_ticker	full:reborn
+specials.rb	sector special 10 (door close in 30) not implemented	-	setup
+specials.rb	sector special 14 (door raise in 5 min) not implemented	-	setup
+specials.rb	E1M8 exit sector (special 11) reached	dc_st_kp_player_in_special_sector	scenario:exit-11
+specials.rb	unknown sector special	dc_st_kp_player_in_special_sector	unchecked:every nonzero sector special in doom1.wad is one player_in_special_sector handles (4, 5, 7, 9, 11, 16) or one spawn_specials clears at load (measured 2026-09-17)
+specials.rb	EV_DoPlat: type	dc_st_ev_do_plat	unchecked:every call passes a literal plat type the original implements (read 2026-09-17)
+specials.rb	EV_DoFloor: type	dc_st_ev_do_floor	unchecked:every call passes a literal floor type the original implements (read 2026-09-17)
+specials.rb	T_MoveCeiling not implemented	dc_st_t_move_ceiling	claim:unreached-by-construction:thinker=TH_CEILING
+specials.rb	P_CrossSpecialLine: line	dc_st_kp_cross_special_line	scenario:walk-36
+specials.rb	P_UseSpecialLine: line	dc_st_use_special_line	scenario:use-9
+specials.rb	P_ShootSpecialLine: line	dc_st_shoot_special_line	scenario:shoot-46

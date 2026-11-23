@@ -1,0 +1,290 @@
+#!/usr/bin/env bash
+# spinel-llvm -- external LLVM driver for Spinel (vendor/spinel stays unmodified).
+#
+#   spinel-llvm app.rb -o app [--mode thinlto|clang-O2|ir]
+#
+# Runs `bin/spinel app.rb -c` into a temp dir, scrapes the same comment markers
+# from the generated C that src/main.c scrapes (src/main.c:469-481), then
+# compiles + links with the LLVM release's clang instead of the system cc:
+#
+#   thinlto   -O2 -flto=thin  + tools/llvm/build/libspinel_rt{,_mt}_lto.a
+#   clang-O2  -O2 (no LTO)    + vendor/spinel/lib/libspinel_rt{,_mt}.a
+#   ir        -O2 -S -emit-llvm, stops at the .ll (no link)
+#
+# The link line replicates src/main.c:465-614; see README.md for the mapping and
+# the list of upstream flags deliberately not replicated. (bash 3.2 compatible)
+set -euo pipefail
+
+# spinel-extended: the LLVM is the official release docs/building.md selects
+# through LLVM_PREFIX (LLVM= still overrides); there is no Homebrew default.
+LLVM=${LLVM:-${LLVM_PREFIX:-}}
+[ -n "$LLVM" ] || { echo "$(basename "$0"): set LLVM_PREFIX (or LLVM) to the LLVM release" >&2; exit 1; }
+CLANG="$LLVM/bin/clang"
+
+HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+REPO=$(cd -- "$HERE/../.." && pwd)
+SPINEL_DIR=${SPINEL_DIR:-$REPO/vendor/spinel}
+SPINEL_BIN=${SPINEL_BIN:-$SPINEL_DIR/bin/spinel}
+LIB_DIR="$SPINEL_DIR/lib"
+BC_DIR=${BC_DIR:-$HERE/build}
+
+PROG=$(basename "$0")
+die()  { echo "$PROG: $*" >&2; exit 1; }
+stage_fail() {
+  local rc=$2
+  [ "$rc" -ne 0 ] 2>/dev/null || rc=1   # never exit 0 on a reported failure
+  echo "$PROG: stage '$1' failed (exit $rc)" >&2
+  exit "$rc"
+}
+
+usage() {
+  cat >&2 <<'EOF'
+usage: spinel-llvm <input.rb> [-o OUT] [--mode thinlto|clang-O2|ir]
+                   [-O LEVEL] [--int-overflow raise|wrap|promote]
+                   [--link <obj|archive|-lfoo>]...
+                   [--keep-c] [-v] [-- <extra clang args>]
+
+modes:
+  thinlto   (default) clang -O2 -flto=thin + runtime bitcode archive
+  clang-O2            clang -O2, upstream lib/libspinel_rt*.a, no LTO
+  ir                  clang -O2 -S -emit-llvm; writes OUT (default <base>.ll)
+
+env: LLVM_PREFIX=<prefix>   (or LLVM=<prefix>; required)
+     SPINEL_DIR=<path>      (default <repo>/vendor/spinel)
+     BC_DIR=<path>          (default tools/llvm/build; holds the bitcode archives)
+EOF
+  exit 2
+}
+
+# ---- argument parsing --------------------------------------------------------
+SOURCE=""
+OUTPUT=""
+MODE=thinlto
+OPT_LEVEL=2
+INT_OVERFLOW=raise          # src/main.c:207 -- the default is "raise"
+KEEP_C=0
+VERBOSE=0
+EXTRA=()
+LINK_EXTRA=()               # src/main.c:238 (--link, up to 64 entries upstream)
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -h|--help) usage ;;
+    --link) [ $# -ge 2 ] || die "--link needs an argument"; LINK_EXTRA+=("$2"); shift 2 ;;
+    --link=*) LINK_EXTRA+=("${1#--link=}"); shift ;;
+    -o) [ $# -ge 2 ] || die "-o needs an argument"; OUTPUT=$2; shift 2 ;;
+    -o*) OUTPUT=${1#-o}; shift ;;
+    --mode) [ $# -ge 2 ] || die "--mode needs an argument"; MODE=$2; shift 2 ;;
+    --mode=*) MODE=${1#--mode=}; shift ;;
+    -O) [ $# -ge 2 ] || die "-O needs an argument"; OPT_LEVEL=$2; shift 2 ;;
+    -O*) OPT_LEVEL=${1#-O}; shift ;;
+    --int-overflow) [ $# -ge 2 ] || die "--int-overflow needs an argument"; INT_OVERFLOW=$2; shift 2 ;;
+    --int-overflow=*) INT_OVERFLOW=${1#--int-overflow=}; shift ;;
+    --keep-c) KEEP_C=1; shift ;;
+    -v|--verbose) VERBOSE=1; shift ;;
+    --) shift; EXTRA+=("$@"); break ;;
+    -*) die "unknown option '$1' (see --help; upstream-only flags are listed in README.md)" ;;
+    *) [ -z "$SOURCE" ] || die "more than one input file ('$SOURCE', '$1')"; SOURCE=$1; shift ;;
+  esac
+done
+
+[ -n "$SOURCE" ] || usage
+[ -f "$SOURCE" ] || die "$SOURCE: No such file"
+[ -x "$CLANG" ] || die "clang not found at $CLANG (set LLVM=<prefix>)"
+[ -x "$SPINEL_BIN" ] || die "spinel not found at $SPINEL_BIN (run 'make' in vendor/spinel)"
+
+case "$MODE" in
+  thinlto|clang-O2|ir) ;;
+  *) die "--mode expects thinlto|clang-O2|ir, got '$MODE'" ;;
+esac
+
+if [ ${#LINK_EXTRA[@]} -gt 0 ]; then
+  [ "$MODE" != ir ] || die "--link is meaningless with --mode ir (nothing is linked)"
+  for l in "${LINK_EXTRA[@]}"; do
+    case "$l" in -l*) ;; *) [ -f "$l" ] || die "--link: $l: No such file" ;; esac
+  done
+fi
+
+# src/main.c:332-336: --int-overflow maps to exactly one -D, default raise.
+case "$INT_OVERFLOW" in
+  raise)   OV_DEFINE=-DSP_INT_OVERFLOW_MODE_RAISE ;;
+  wrap)    OV_DEFINE=-DSP_INT_OVERFLOW_MODE_WRAP ;;
+  promote) OV_DEFINE=-DSP_INT_OVERFLOW_MODE_PROMOTE ;;
+  *) die "--int-overflow expects raise|wrap|promote, got '$INT_OVERFLOW'" ;;
+esac
+
+# src/main.c:342-353: default output name is the source basename minus ".rb".
+base=$(basename -- "$SOURCE"); base=${base%.rb}
+if [ -z "$OUTPUT" ]; then
+  if [ "$MODE" = ir ]; then OUTPUT="$base.ll"; else OUTPUT="$base"; fi
+fi
+
+TMPDIR_SP=$(mktemp -d "${TMPDIR:-/tmp}/spinel-llvm.XXXXXX") || die "mktemp failed"
+cleanup() { [ "$KEEP_C" -eq 1 ] || rm -rf "$TMPDIR_SP"; }
+trap cleanup EXIT
+CFILE="$TMPDIR_SP/$base.c"
+
+run() {
+  [ "$VERBOSE" -eq 0 ] || { printf '+'; printf ' %q' "$@"; printf '\n'; } >&2
+  "$@"
+}
+
+# ---- stage 1: spinel -c ------------------------------------------------------
+sp_args=("$SOURCE" -c -o "$CFILE")
+[ "$INT_OVERFLOW" = raise ] || sp_args+=(--int-overflow "$INT_OVERFLOW")
+sp_log="$TMPDIR_SP/spinel.log"
+# `$?` after `if ! cmd` is the negation's status, not the command's -- capture it
+# from a bare run instead.
+set +e
+run "$SPINEL_BIN" "${sp_args[@]}" >/dev/null 2>"$sp_log"
+sp_rc=$?
+set -e
+if [ "$sp_rc" -ne 0 ]; then
+  cat "$sp_log" >&2
+  stage_fail "spinel -c" "$sp_rc"
+fi
+# `spinel -c` announces "Wrote <path>" on stderr (src/main.c:463); the path is a
+# temp file nobody can use, so drop that one line and pass warnings through.
+LC_ALL=C grep -v "^Wrote $CFILE\$" "$sp_log" >&2 || true
+[ -f "$CFILE" ] || die "spinel -c produced no C file at $CFILE"
+
+# ---- stage 2: scrape the markers (src/main.c:137-158, 470-481) ---------------
+# scrape_ffi_markers takes each line starting with the prefix and strips the
+# trailing run of ' ', '/' and '*' -- i.e. the closing " */".
+scrape() {
+  LC_ALL=C sed -n "s|^$1\\(.*\\)|\\1|p" "$CFILE" \
+    | sed -E 's/[ */]+$//' \
+    | tr '\n' ' '
+}
+FFI_CFLAGS=$(scrape '/\* SPINEL_CFLAGS: ')
+FFI_LINKS=$(scrape '/\* SPINEL_LINK: ')
+NATIVE_OBJS=$(scrape '/\* SPINEL_LINK_OBJ: ')
+
+USES_THREADS=0
+if LC_ALL=C grep -qF '/* SPINEL_USES_THREADS */' "$CFILE"; then USES_THREADS=1; fi
+
+if [ "$MODE" = thinlto ]; then
+  RT_LIB=$BC_DIR/libspinel_rt_lto.a
+  [ "$USES_THREADS" -eq 0 ] || RT_LIB=$BC_DIR/libspinel_rt_mt_lto.a
+  [ -f "$RT_LIB" ] || die "$RT_LIB missing -- run tools/llvm/build_rt_bc.sh first"
+else
+  RT_LIB=$LIB_DIR/libspinel_rt.a
+  [ "$USES_THREADS" -eq 0 ] || RT_LIB=$LIB_DIR/libspinel_rt_mt.a
+  [ -f "$RT_LIB" ] || die "$RT_LIB missing -- run 'make' in $SPINEL_DIR"
+fi
+
+# ---- stage 3: compile/link (src/main.c:465-614) ------------------------------
+cmd=("$CLANG" "-O$OPT_LEVEL")
+# Upstream passes -Wno-all (src/main.c:502); we always drive clang, so the
+# stronger clang-only -Wno-everything keeps generated code fully quiet.
+cmd+=(-Wno-everything -ffunction-sections -fdata-sections)
+# src/main.c:1008,1016 (pin 573aa44c): a wrong pointer type in generated code is
+# a miscompile, so upstream fails the build on it; and the error list is not
+# capped. -Werror=<w> re-enables <w> after -Wno-everything.
+cmd+=(-Werror=incompatible-pointer-types -Werror=int-conversion -ferror-limit=0)
+cmd+=(-I"$LIB_DIR" -I"$LIB_DIR/regexp")
+[ "$MODE" != thinlto ] || cmd+=(-flto=thin)
+# src/main.c:508: the generated TU gets the same threading define as the mt
+# archive it links, so its SP_TLS globals get the matching storage class.
+if [ "$USES_THREADS" -eq 1 ]; then cmd+=(-DSP_THREADS -ftls-model=initial-exec); fi
+# The overflow define sits late on upstream's line (src/main.c:574); position is
+# irrelevant for a -D, so we keep it with the other compile flags.
+cmd+=("$OV_DEFINE")
+# shellcheck disable=SC2206  # word splitting is the point: markers are flag lists
+[ -z "$FFI_CFLAGS" ] || cmd+=($FFI_CFLAGS)
+
+if [ "$MODE" = ir ]; then
+  cmd+=(-S -emit-llvm "$CFILE" -o "$OUTPUT")
+  [ ${#EXTRA[@]} -eq 0 ] || cmd+=("${EXTRA[@]}")
+  run ${cmd[@]+"${cmd[@]}"} || stage_fail "clang -emit-llvm" $?
+  echo "$PROG: wrote $OUTPUT (mode=ir)"
+  exit 0
+fi
+
+cmd+=("$CFILE")
+
+# src/main.c:511-515: --link objects/archives sit between the generated TU and
+# the runtime archive (they reference sp_ runtime symbols and ld resolves left
+# to right); --link -l flags go after -lm, where DSOs belong.
+if [ ${#LINK_EXTRA[@]} -gt 0 ]; then
+  for l in "${LINK_EXTRA[@]}"; do
+    case "$l" in
+      -l*) ;;
+      *)
+        # src/main.c:1082-1106 (#4032): a threaded program takes the package's
+        # threaded variant <stem>_mt.<o|a> when it exists.
+        if [ "$USES_THREADS" -eq 1 ]; then
+          case "$l" in
+            *_mt.o|*_mt.a) ;;
+            *.o|*.a) mtv="${l%.*}_mt.${l##*.}"; [ ! -f "$mtv" ] || l=$mtv ;;
+          esac
+        fi
+        cmd+=("$l") ;;
+    esac
+  done
+fi
+
+# SPINEL_LINK_OBJ paths are root-relative to the dir holding lib/ and packages/,
+# with a "<base>/../" dev-tree fallback and an "_mt.o" preference for threaded
+# programs (src/main.c:516-561).
+if [ -n "$NATIVE_OBJS" ]; then
+  for t in $NATIVE_OBJS; do
+    # src/main.c:525-535: a --link input with the same basename already covers
+    # this native_obj; both on the line is a multiple-definition error.
+    # src/main.c:1122-1134: compare with the _mt variant marker removed on both
+    # sides (sp_x.o here and sp_x_mt.o there are the same package object).
+    tb=${t##*/}; tb=${tb/_mt./.}
+    dup=0
+    for l in ${LINK_EXTRA[@]+"${LINK_EXTRA[@]}"}; do
+      lb=${l##*/}; lb=${lb/_mt./.}
+      [ "$lb" = "$tb" ] && { dup=1; break; }
+    done
+    [ "$dup" -eq 0 ] || continue
+    placed=""
+    cands=("$t")
+    if [ "$USES_THREADS" -eq 1 ] && [ "${t%.o}" != "$t" ]; then cands=("${t%.o}_mt.o" "$t"); fi
+    for c in ${cands[@]+"${cands[@]}"}; do
+      for p in "$SPINEL_DIR/$c" "$SPINEL_DIR/../$c"; do
+        if [ -f "$p" ]; then placed=$p; break 2; fi
+      done
+    done
+    [ -n "$placed" ] || die "SPINEL_LINK_OBJ: cannot find '$t' under $SPINEL_DIR"
+    cmd+=("$placed")
+  done
+fi
+
+cmd+=("$RT_LIB")
+cmd+=(-lm)                                   # after the archive (src/main.c:1169)
+# src/main.c:1176-1181: String#crypt is libc crypt(3), in libcrypt off macOS.
+[ "$(uname -s)" = Darwin ] || cmd+=(-lcrypt)
+# src/main.c:571-572: --link -l flags after -lm, before -lpthread.
+if [ ${#LINK_EXTRA[@]} -gt 0 ]; then
+  for l in "${LINK_EXTRA[@]}"; do
+    case "$l" in -l*) cmd+=("$l") ;; esac
+  done
+fi
+[ "$USES_THREADS" -eq 0 ] || cmd+=(-lpthread)
+# src/main.c:586-603: an ffi_lib -lfoo whose lib<foo>.a/.so arrived as an
+# explicit --link input is already satisfied; emitting -lfoo too would send ld
+# searching the system paths for a library that only exists in a build cache.
+if [ -n "$FFI_LINKS" ]; then
+  for t in $FFI_LINKS; do
+    covered=0
+    case "$t" in
+      -l*)
+        for l in ${LINK_EXTRA[@]+"${LINK_EXTRA[@]}"}; do
+          lb=${l##*/}
+          if [ "$lb" = "lib${t#-l}.a" ] || [ "$lb" = "lib${t#-l}.so" ]; then covered=1; break; fi
+        done ;;
+    esac
+    [ "$covered" -eq 1 ] || cmd+=("$t")
+  done
+fi
+# src/main.c:604-608: ld64 spells it -dead_strip, GNU ld --gc-sections.
+if [ "$(uname -s)" = Darwin ]; then cmd+=(-Wl,-dead_strip); else cmd+=(-Wl,--gc-sections); fi
+[ ${#EXTRA[@]} -eq 0 ] || cmd+=("${EXTRA[@]}")
+cmd+=(-o "$OUTPUT")
+
+run ${cmd[@]+"${cmd[@]}"} || stage_fail "clang link ($MODE)" $?
+[ -f "$OUTPUT" ] || die "link reported success but $OUTPUT is missing"
+exit 0

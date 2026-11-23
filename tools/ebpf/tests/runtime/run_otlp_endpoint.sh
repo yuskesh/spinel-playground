@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+#
+# run_otlp_endpoint.sh — E290: OTLP endpoint URL の path 抽出 + scheme 別 default port。
+#
+# per-signal endpoint (OTEL_EXPORTER_OTLP_<SIGNAL>_ENDPOINT) を verbatim で使うため、
+# otlp_http_endpoint_path が path を保持し、https:// が 443 を既定にすることを検証する。
+# ネットワーク不要のピュア parse test。
+#
+# 使い方: sh tests/runtime/run_otlp_endpoint.sh
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+cd "$REPO_ROOT"
+
+CC="${CC:-clang}"
+OTLP="$REPO_ROOT/src/runtime/otlp"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+"$CC" -O2 -Wall -Wextra -Werror -I "$OTLP" \
+  tests/runtime/otlp_endpoint_test.c "$OTLP/otlp_http.c" \
+  -lz -o "$TMP/endpoint_test"
+
+"$TMP/endpoint_test"

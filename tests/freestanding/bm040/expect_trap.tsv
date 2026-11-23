@@ -1,0 +1,7 @@
+case	code	why
+add(2147483647,1)	1	the sum overflows the 32-bit body before the :i32 return sees it
+mulnarrow(46341,46341)	1	the product overflows the 32-bit body before the :i32 return sees it
+qdiv(1,0)	2	a zero divisor
+abi4(-2147483648,1,0,0)	1	one below INT32_MIN overflows the 32-bit body before the :i32 return
+u8clamp(200,56)	3	256 does not fit the :u8 return
+i8neg(-128)	3	128 does not fit the :i8 return

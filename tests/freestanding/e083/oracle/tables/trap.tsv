@@ -1,0 +1,26 @@
+id	leg	case	ret	wrote_nothing	verdict
+lr0	native	lr=0.0	-1	yes	PASS
+lr1	native	lr=-0.1	-1	yes	PASS
+lr2	native	lr=2.0	-1	yes	PASS
+lr3	native	lr=NaN	-1	yes	PASS
+lr4	native	lr=0.1	40	no (accepted, 40 more steps)	PASS
+lr0	wasm32	lr=0.0	-1	yes	PASS
+lr1	wasm32	lr=-0.1	-1	yes	PASS
+lr2	wasm32	lr=2.0	-1	yes	PASS
+lr3	wasm32	lr=NaN	-1	yes	PASS
+lr4	wasm32	lr=0.1	40	no (accepted, 40 more steps)	PASS
+lr0	m33	lr=0.0	-1	yes	PASS
+lr1	m33	lr=-0.1	-1	yes	PASS
+lr2	m33	lr=2.0	-1	yes	PASS
+lr3	m33	lr=NaN	-1	yes	PASS
+lr4	m33	lr=0.1	40	no (accepted, 40 more steps)	PASS
+lr0	rv32	lr=0.0	-1	yes	PASS
+lr1	rv32	lr=-0.1	-1	yes	PASS
+lr2	rv32	lr=2.0	-1	yes	PASS
+lr3	rv32	lr=NaN	-1	yes	PASS
+lr4	rv32	lr=0.1	40	no (accepted, 40 more steps)	PASS
+len_trap1	native	extra=1	exit=3	trap4=1 unreached=0	PASS
+len_trapneg	native	extra=-6	exit=3	trap4=1 unreached=0	PASS
+len_trap1	wasm32	extra=1	exit=3	trap4=1 unreached=0	PASS
+len_trap-6	wasm32	extra=-6	exit=3	trap4=1 unreached=0	PASS
+len_trap1	m33	extra=1	panic	trap4=1 halt=1 unreached=0	PASS

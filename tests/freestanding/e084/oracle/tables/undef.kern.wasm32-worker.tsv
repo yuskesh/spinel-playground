@@ -1,0 +1,4 @@
+verdict	object	symbol	reason
+ALLOW	kern.wasm32-worker.o	spinel_grad_sq_hinge_loss	platform extern declared by the profile
+ALLOW	kern.wasm32-worker.o	spinel_hvp_sq_hinge_loss	platform extern declared by the profile
+ALLOW	kern.wasm32-worker.o	spinel_trap	platform extern declared by the profile

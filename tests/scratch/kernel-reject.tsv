@@ -1,0 +1,37 @@
+# Decision 0041 stage 2: tests/scratch/kernel/reject/*.rb, each the entry
+# tick(out) under a version 2 contract with `scratch 256`, except missing
+# (no scratch row) and v1 (a version 1 contract, no data stack: its
+# Core::Buffer, given to the analysis as Array.new, is refused as before
+# stage 2). Decision 0045: arraynew and nofill spell Array.new, and bare a
+# Core::Buffer without parentheses (array-spelling); element (.i32 in this
+# 64-bit body) and float (.f64) are array-element; table is array-table.
+# after's push follows a default fill on its line, at the column written.
+# reserved defines Core::Buffer as a constant, and rebind assigns Core itself
+# (array-reserved). The kernel refuses each with the code at the
+# position, file:line:col.
+#file	code	position
+alias.rb	array-alias	3:2
+expr.rb	array-position	2:11
+fill.rb	array-fill	3:6
+inblock.rb	array-position	2:20
+inif.rb	array-position	3:8
+inwhile.rb	array-position	4:8
+literal.rb	heap-operation	2:6
+nofill.rb	array-spelling	2:6
+missing.rb	scratch-missing	2:6
+push.rb	array-method	3:2
+rebound.rb	array-rebound	3:2
+ret.rb	array-escape	1:0
+shovel.rb	array-method	3:2
+store.rb	array-escape	3:2
+ivar.rb	runtime-state	3:2
+gvar.rb	runtime-state	3:2
+v1.rb	unresolved-call	2:6
+arraynew.rb	array-spelling	2:6
+bare.rb	array-spelling	2:6
+element.rb	array-element	2:6
+float.rb	array-element	2:6
+table.rb	array-table	2:6
+after.rb	array-method	2:27
+reserved.rb	array-reserved	2:2
+rebind.rb	array-reserved	1:0

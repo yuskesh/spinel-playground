@@ -1,0 +1,15 @@
+core-contract 1
+root src/packed.rb
+entry dc_sp_segside
+result i64
+param vertex_x buffer i32 in count n_vertex_x
+param n_vertex_x scalar u64
+param vertex_y buffer i32 in count n_vertex_y
+param n_vertex_y scalar u64
+param seg_v1 buffer u16 in count n_seg_v1
+param n_seg_v1 scalar u64
+param seg_v2 buffer u16 in count n_seg_v2
+param n_seg_v2 scalar u64
+param x scalar i64
+param y scalar i64
+param seg scalar i64

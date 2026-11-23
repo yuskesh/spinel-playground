@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# cc-lto-shim -- a CC drop-in that routes vendor/spinel's test harness through
+# the ThinLTO path without touching a single tracked file.
+#
+#   make test CC=<repo>/tools/llvm/cc-lto-shim NO_CCACHE=1
+#
+# The harness never calls `bin/spinel`'s link path: RUN_ONE_TEST (Makefile:795-853)
+# does `spinel -c` and then assembles its own $(CC) line, always against the plain
+# archive `lib/libspinel_rt.a` (even for threaded tests). So the only interception
+# point needed is $(CC).
+#
+# Rule: pass everything through to Homebrew clang unchanged, EXCEPT when the
+# argument list mentions lib/libspinel_rt*.a (= a test link) or is a PCH build
+# (-x c-header). Those get -flto=thin, and the runtime archive is swapped for the
+# matching bitcode archive. Anything else -- notably the `$(CC) -c $(COPT) ...`
+# rules that (re)build vendor/spinel/build/*.o -- is left alone, so a stale-object
+# rebuild can never turn lib/libspinel_rt.a itself into bitcode.
+#
+# NO_CCACHE=1 is required: common.mk:20-24 auto-wraps CC with sccache/ccache,
+# and sccache cannot hash a shell script compiler.
+#
+# Status: suite-validated -- E002 ran all 2887 tests through this shim
+# (2885 PASS / 2 FAIL, both = one upstream LLVM AArch64 copy-prop bug,
+# not LTO-induced; 2887/0/0 with that pass disabled). See README.md.
+set -euo pipefail
+
+# spinel-extended: the LLVM is the official release docs/building.md selects
+# through LLVM_PREFIX (LLVM= still overrides); there is no Homebrew default.
+LLVM=${LLVM:-${LLVM_PREFIX:-}}
+[ -n "$LLVM" ] || { echo "$(basename "$0"): set LLVM_PREFIX (or LLVM) to the LLVM release" >&2; exit 1; }
+CLANG="$LLVM/bin/clang"
+HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+BC_DIR=${BC_DIR:-$HERE/build}
+
+args=()
+want_lto=0
+for a in "$@"; do
+  case "$a" in
+    *lib/libspinel_rt_mt.a) args+=("$BC_DIR/libspinel_rt_mt_lto.a"); want_lto=1 ;;
+    *lib/libspinel_rt.a)    args+=("$BC_DIR/libspinel_rt_lto.a");    want_lto=1 ;;
+    c-header)               args+=("$a"); want_lto=1 ;;
+    *)                      args+=("$a") ;;
+  esac
+done
+
+if [ "$want_lto" -eq 1 ]; then
+  exec "$CLANG" -flto=thin ${args[@]+"${args[@]}"}
+fi
+exec "$CLANG" ${args[@]+"${args[@]}"}

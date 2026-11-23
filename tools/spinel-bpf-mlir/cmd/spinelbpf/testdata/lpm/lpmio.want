@@ -1,0 +1,27 @@
+m1=4294967295 m2=2 m3=1 m4=0
+A0=4294967295
+list=0.0.0.0/0 0;10.0.0.0/8 1;10.1.0.0/16 2;10.1.2.3/32 4294967295
+rm=true rm2=false
+m1b=2
+match 11 err=SpinelBPF::NotFound
+has11=false has10=true
+put R -1 err=SpinelBPF::ValueRange
+put R 2^32 err=SpinelBPF::ValueRange
+n1=-2147483648 n2=2147483647 n3=-1
+A1=-1
+nlist=10.0.0.0/24 -2147483648;10.0.0.128/25 2147483647;10.0.0.7/32 -1
+put N 2^31 err=SpinelBPF::ValueRange
+put N -2^31-1 err=SpinelBPF::ValueRange
+put F3 err=SpinelBPF::Other enospc=true
+F2=20
+F3=3
+put IPv6 err=SpinelBPF::Other
+host bits err=SpinelBPF::Other hint=true
+put /33 err=SpinelBPF::Other
+match bad addr err=SpinelBPF::Other
+lpm_put on A err=SpinelBPF::MapMismatch
+map_put on R err=SpinelBPF::MapMismatch
+hash_put on R err=SpinelBPF::MapMismatch
+lpm_list on H err=SpinelBPF::MapMismatch
+plen=8 0 32
+done

@@ -1,0 +1,13 @@
+# tools/app/adapters/clock/class.tsv -- the Clock class: the system timer (decision 0014 §3)
+# key	value
+module	Clock
+source	node arm,armv8m-systick arm,armv7m-systick
+controller	self
+table	none
+header	zephyr/kernel.h
+fn	uptime_us() -> i64
+fn	cycles() -> i64
+fn	cycles32() -> i32
+safe_state	none
+index_guard	off
+config_constant	CYCLES_PER_SECOND CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC

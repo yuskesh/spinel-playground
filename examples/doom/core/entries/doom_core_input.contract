@@ -1,0 +1,25 @@
+core-contract 1
+root src/packed.rb
+entry doom_core_input
+result i32
+param state buffer i64 inout count n_state
+param n_state scalar u64
+param xi buffer i64 in count n_xi
+param n_xi scalar u64
+param cmd buffer i16 inout count n_cmd
+param n_cmd scalar u64
+param down buffer u8 inout count n_down
+param n_down scalar u64
+param script_code buffer u8 in count n_script_code
+param n_script_code scalar u64
+param script_from buffer u8 in count n_script_from
+param n_script_from scalar u64
+param script_to buffer u8 in count n_script_to
+param n_script_to scalar u64
+param demo_buf buffer u8 inout count n_demo_buf
+param n_demo_buf scalar u64
+param demo_max buffer u16 in count n_demo_max
+param n_demo_max scalar u64
+param scripted scalar i32
+param tic scalar i32
+param recording scalar i32

@@ -1,0 +1,11 @@
+# tests/compare-lowering/skips.tsv -- the skips the route suites declare on a
+# Debian host with no board attached, by name (tools/core/compare-lowering,
+# scan_route_log). A route log line that says a lane could not run, or
+# skipped part of itself, fails the comparison unless a row here names its
+# route and lane and its reason starts with the text given. Gated oracle
+# sections are named by tests/ORACLES.tsv instead.
+#
+#route	lane	reason (the start of the text the log gives)
+core-boundary	intrinsics-board	the board part: RT1186_HOST is not set
+freestanding	e040-frdm	FRDM_HOST is not set
+freestanding	bm040-frdm	FRDM_HOST is not set

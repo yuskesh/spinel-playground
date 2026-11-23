@@ -1,0 +1,4 @@
+#!/usr/bin/env ruby
+require 'json';require 'digest'
+root=File.expand_path('..',__dir__);source=ARGV.fetch(0);p=JSON.parse(File.read(root+'/patches/m4/prerequisites.json'));abort 'M4 prerequisite version' unless p.fetch('version')==1&&p.fetch('pin')=='086d514d3e2f10f8349fdedbdc2dd01dbd6c0f9c';abort 'M4 prerequisite order' unless p.fetch('order')==%w[M1-emit-mlir.patch M2-analysis-root.patch M3-source-map.patch]
+p.fetch('patches').each{|name,sha|abort 'M4 prerequisite patch '+name unless Digest::SHA256.file(root+'/patches/'+name).hexdigest==sha};p.fetch('m3_source_files').each{|name,sha|abort 'M4 prerequisite source '+name unless File.file?(source+'/'+name)&&Digest::SHA256.file(source+'/'+name).hexdigest==sha};puts 'M4 prerequisites exact'

@@ -1,0 +1,1 @@
+// RUN: ruby %src/semantic-boundaries.rb %build %src

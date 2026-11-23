@@ -1,0 +1,30 @@
+# Declared frame divergences for DEMO1, in tests/doom/compare.rb's format:
+#
+#   stream	gametic	field	reference-value	candidate-value	reason
+#
+# One file per demo because a gametic is not unique across demos.
+#
+# Values measured 2026-09-11 on macOS arm64 -- the toolchain decision 0006
+# selects -- with the reference built by Clang 23.1.1 at doomgeneric
+# dcb7a8db and the port on pin cad0ad14 with the same --cc.  Extracted from
+# the macOS side's saved logs (build/mac-review-361721b/DEMO1.log, their
+# exec 31602); not regenerated from a failing run here, and nothing in this
+# repository can write this file.
+#
+# The reasons cite the predecessor's records at f8ad13c6 and name the field
+# read.  They do not copy values from those records: the values here are the
+# 2026-09 measurement.  The mechanism itself has NOT been re-confirmed -- the
+# byte-window instrument those records used has not been re-run, and a frame
+# hash cannot see which byte differed.
+#
+# Known fragility, recorded rather than worked around: the bytes these tics
+# depend on are pointers and allocation history, so they are not a function of
+# the WAD and are not guaranteed stable across reference builds.  They are not:
+# a Debian-built reference disagrees with this one at DEMO1 4486 and DEMO2 631.
+# If a value here stops matching, that is the gate working -- a changed
+# discrepancy is for investigation, and the first thing to check is whether the
+# reference build changed.
+frames	2046	viewhash	8e96612d1397ea6d	488866bd5ae8f325	E053 zone_nondeterminism.txt records the reference reading the low byte of the size of the free block after texturecomposite (size=264), at pixel (288,110), which the port's Wad#zone_window zeroes; not a function of the WAD. Mechanism not re-confirmed in 2026-09.
+frames	4486	viewhash	1193860fb33418bb	b6f9676ae438dff3	E053 zone_nondeterminism.txt records the reference reading the low byte of next in the header after lump TROOM0, at pixel (149,108), which the port's Wad#zone_window zeroes; not a function of the WAD. Mechanism not re-confirmed in 2026-09.
+frames200	2046	fullhash	f6b7f894f456ca23	e696cb319abf841b	E053 zone_nondeterminism.txt records the reference reading the low byte of the size of the free block after texturecomposite (size=264), at pixel (288,110), which the port's Wad#zone_window zeroes; not a function of the WAD. Mechanism not re-confirmed in 2026-09.
+frames200	4486	fullhash	264bbca0a733d7e9	424136dd420ff9c1	E053 zone_nondeterminism.txt records the reference reading the low byte of next in the header after lump TROOM0, at pixel (149,108), which the port's Wad#zone_window zeroes; not a function of the WAD. Mechanism not re-confirmed in 2026-09.

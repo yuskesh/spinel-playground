@@ -1,0 +1,5 @@
+key	value	evidence
+ram_bytes	327680	https://github.com/zephyrproject-rtos/zephyr/blob/dccb09599635bdff17633fa7e9dab014b91dce90/boards/nxp/frdm_mcxn947/frdm_mcxn947_mcxn947_cpu0.dtsi#L52 (zephyr,sram = &sram0, DT_SIZE_K(320) of the 512 KB SRAM; platform-facts frdm_sram_bytes)
+max_thread_stack	327680	the board states no bound below its SRAM; the image fit check of 0014 section 6 step 10 is the finer gate
+single_core	true	https://github.com/zephyrproject-rtos/zephyr/blob/dccb09599635bdff17633fa7e9dab014b91dce90/soc/nxp/mcx/mcxn/Kconfig#L61 (cpu1 runs only with CONFIG_SECOND_CORE_MCUX, unset in the cpu0 defconfig; platform-facts frdm_CONFIG_SECOND_CORE_MCUX)
+security	secure,no-tfm	https://github.com/zephyrproject-rtos/zephyr/blob/dccb09599635bdff17633fa7e9dab014b91dce90/boards/nxp/frdm_mcxn947/frdm_mcxn947_mcxn947_cpu0_defconfig#L17 (CONFIG_TRUSTED_EXECUTION_SECURE=y, CONFIG_ARM_MPU=y; platform-facts frdm_CONFIG_*)

@@ -1,0 +1,7 @@
+core-contract 1
+root src/at_index.rb
+entry at_index
+result i64
+param src buffer i32 in count n_src
+param n_src scalar u64
+param i scalar i64

@@ -1,0 +1,34 @@
+# tests/compare-lowering/counts.tsv -- the counts baseline of tools/core/compare-lowering:
+# calls per route and wrapped tool. A run checks the routes it ran against
+# it, and a count that differs fails by route and tool.
+#
+# Made by the A-vs-A of decision 0026 step 5 (frozen c7affd5 against a copy
+# of itself, the tree at c7affd5 with this harness, 2026-10-23), run as
+# --route core-boundary and then the other eleven routes, both with
+# --counts none: 944 calls, every one compared, no lane that could not run.
+# The four tools step 4 compared add up to 695, as in its runs at 8c38624.
+# Change this file only with the run that changes a count, and say why.
+#
+#route	tool	calls
+app-cross	spinel-core-kernel	47
+app-cross	spinel-core-stack	8
+app-lowering	spinel-core-kernel	21
+core-boundary	spinel-core-adapter	36
+core-boundary	spinel-core-boundary	118
+core-boundary	spinel-core-check	6
+core-boundary	spinel-core-kernel	252
+core-boundary	spinel-core-package	16
+doom-borrowed-calls	spinel-core-kernel	17
+doom-control-flow	spinel-core-kernel	51
+doom-entries	spinel-core-kernel	6
+freestanding	spinel-fs-emit	210
+freestanding	spinel-fs-grad	32
+lowering	spinel-core-kernel	2
+lowering	spinel-fs-emit	16
+native-core-arith	spinel-core-check	28
+native-core-arith	spinel-core-emit	21
+native-core-driver	spinel-core-check	25
+native-core-driver	spinel-core-emit	7
+native-core-ledger	spinel-core-check	12
+native-core-ledger	spinel-core-emit	2
+native-core-run	spinel-core-emit	11

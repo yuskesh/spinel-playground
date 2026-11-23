@@ -1,0 +1,37 @@
+#!/usr/bin/env ruby
+require 'fileutils'
+require 'json'
+require 'digest'
+tool,input,output=ARGV
+abort 'usage: check-facts-mutations accepted-tool actual-facts new-output' unless output
+abort 'output exists' if File.exist?(output)
+FileUtils.mkdir_p(output)
+base=File.binread(input)
+phase=base.lines
+i=phase.index { |line| line.include?('"spinel_facts.evidence"') }
+abort 'no actual evidence to mutate' unless i
+abort 'unexpected evidence phase' unless phase[i].include?('phase = "analyzed"')
+phase[i]=phase[i].sub('phase = "analyzed"','phase = "pristine"')
+literal=base.lines
+j=literal.index { |line| line.include?('kind = "IntegerNode"') }
+abort 'no actual literal to mutate' unless j
+original=literal[j]
+literal[j]=literal[j].sub(/, literal_text = "(?:\\[0-9A-F]{2}|[^"\\])*"/,'')
+abort 'no literal_text removed' if literal[j]==original
+cases=[['M-phase',phase.join,'metadata requires analyzed phase'],
+       ['M-literal',literal.join,'source-backed pristine IntegerNode requires literal_text']]
+File.open(File.join(output,'mutations.jsonl'),'w') do |log|
+  cases.each do |name,bytes,diagnostic|
+    path=File.join(output,"#{name}.mlir")
+    File.binwrite(path,bytes)
+    system(tool,'--verify-only',path,out:File.join(output,"#{name}.stdout"),err:File.join(output,"#{name}.stderr"))
+    status=$?
+    stderr=File.binread(File.join(output,"#{name}.stderr"))
+    row={name:name,rc:status.exitstatus,signal:status.termsig,
+      input_sha256:Digest::SHA256.hexdigest(bytes),expected_diagnostic:diagnostic,
+      named_observation:stderr.include?(diagnostic)}
+    log.puts(JSON.generate(row)); log.flush
+    abort "STOP #{name} unexpected observation" unless row[:rc]==1 && row[:signal].nil? && row[:named_observation]
+  end
+end
+puts 'GREEN: actual evidence M-phase and actual pristine Integer M-literal rejected by distinct named diagnostics'

@@ -1,0 +1,16 @@
+# Decision 0041 stage 2: tests/scratch/reject/*.rb, applications that
+# spinel-core-app admit refuses. Each refusal is one line naming the file
+# and the code (declaration, and spinel-fiber for the fiber rewrite). A
+# refusal in a fiber application names the rewritten file, fiberarg's too.
+# Decision 0045: arraynew spells its scratch array Array.new.
+#file	code
+context.rb	declaration
+keyword.rb	declaration
+small.rb	declaration
+twice.rb	declaration
+missing.rb	scratch-missing
+extern.rb	array-escape
+fiberbody.rb	spinel-fiber
+fiberarg.rb	array-escape
+capstatic.rb	scratch-capacity
+arraynew.rb	array-spelling

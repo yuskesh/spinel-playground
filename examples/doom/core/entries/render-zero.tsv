@@ -1,0 +1,40 @@
+# examples/doom/core/entries/render-zero.tsv — the cells Jobs#reset zeroes.
+#
+# The render entry's `zero_slots` buffer holds, at position i, the core_state
+# slot of the field named on row i (fields.tsv's `derived:render-zero.tsv`); Full
+# fills it from the layout's slots.tsv. dc_rv_jobs_reset zeroes each one at the
+# start of a frame. A row per position, in order: the counters Jobs#reset
+# writes, as tests/doom-core/render-diff.rb lists them.
+#
+#position	field
+0	jobs_nwall
+1	jobs_nspan
+2	jobs_nmasked
+3	jobs_nsched
+4	jobs_nzone
+5	jobs_wall_phase0_n
+6	jobs_masked_phase2_n
+7	jobs_max_k
+8	jobs_overlaps
+9	jobs_span_max_kx
+10	jobs_span_overlaps
+11	jobs_masked_max_kx
+12	jobs_fuzz_max_kx
+13	jobs_fuzz_n
+14	jobs_masked_ovpairs
+15	jobs_masked_ovpx
+16	jobs_masked_cover_px
+17	jobs_fuzz_conflicts
+18	jobs_fuzz_raw
+19	jobs_fuzz_badrange
+20	jobs_wall_all_max_k
+21	jobs_wall_all_overlaps
+22	jobs_cover_dbl
+23	jobs_cover_bad
+24	jobs_cover_oob
+25	jobs_cover_px
+26	jobs_masked_runs
+27	jobs_masked_run_maxk
+28	jobs_fuzz_run_raw
+29	jobs_masked_dispatches
+30	jobs_fuzz_chain_max

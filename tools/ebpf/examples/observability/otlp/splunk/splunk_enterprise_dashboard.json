@@ -1,0 +1,191 @@
+{
+  "_comment_about_this_file": "spinel-ebpf L2-L8 xlayer 用 Splunk Enterprise/Cloud Dashboard Studio 定義。OTLP -> OpenTelemetry Collector -> splunk_hec exporter -> Splunk index に取り込んだ前提の SPL ダッシュボード。JSON は python json.load で valid。SPL のフィールド名は HEC 取込時の癖に依存するため README とパネルの description を参照。",
+  "_comment_field_naming": "OTLP 属性はドット付き (http.route, net.tcp.state_changes 等)。Splunk では単一引用符で参照する: 'http.route'。実 index/sourcetype は環境依存 (ここでは index=otel, sourcetype=otel:span を例示)。duration は span の実行時間フィールド (Collector/exporter により span_duration 等になる場合あり)。",
+  "title": "spinel-ebpf L2-L8 xlayer correlation (SPL)",
+  "description": "1 span に L3/L4 + L7 + L8 が同居するので、join 無しで tenant / route / status / TCP state を横断表示する (E274/E275)",
+  "inputs": {
+    "input_time": {
+      "type": "input.timerange",
+      "title": "Time range",
+      "options": {
+        "token": "global_time",
+        "defaultValue": "-60m@m,now"
+      }
+    },
+    "input_tenant": {
+      "type": "input.text",
+      "title": "tenant (L8)",
+      "options": {
+        "token": "tenant",
+        "defaultValue": "*"
+      }
+    },
+    "input_route": {
+      "type": "input.text",
+      "title": "http.route (L7)",
+      "options": {
+        "token": "route",
+        "defaultValue": "*"
+      }
+    }
+  },
+  "dataSources": {
+    "ds_latency_by_route": {
+      "type": "ds.search",
+      "options": {
+        "query": "index=otel sourcetype=otel:span 'tenant'=\"$tenant$\" 'http.route'=\"$route$\" | timechart perc95(duration) AS p95 by 'http.route'",
+        "queryParameters": {
+          "earliest": "$global_time.earliest$",
+          "latest": "$global_time.latest$"
+        }
+      },
+      "name": "route 別 p95 latency (L7)"
+    },
+    "ds_count_by_status": {
+      "type": "ds.search",
+      "options": {
+        "query": "index=otel sourcetype=otel:span 'tenant'=\"$tenant$\" | timechart count by 'http.response.status_code'",
+        "queryParameters": {
+          "earliest": "$global_time.earliest$",
+          "latest": "$global_time.latest$"
+        }
+      },
+      "name": "status 別リクエスト数 (L7)"
+    },
+    "ds_xlayer_table": {
+      "type": "ds.search",
+      "options": {
+        "query": "index=otel sourcetype=otel:span 'http.route'=\"$route$\" | stats latest('net.tcp.state_changes') AS state_changes latest('net.tcp.established') AS established avg(duration) AS avg_duration count AS requests by 'tenant' 'http.route' 'http.request.method' | sort - state_changes",
+        "queryParameters": {
+          "earliest": "$global_time.earliest$",
+          "latest": "$global_time.latest$"
+        }
+      },
+      "name": "tenant x route の TCP state_changes / established 表 (L4 x L7 x L8)"
+    },
+    "ds_access_class": {
+      "type": "ds.search",
+      "options": {
+        "query": "| mstats sum(_value) AS count WHERE metric_name=\"access_class\" AND index=otel_metrics BY proto tcp_state | sort - count",
+        "queryParameters": {
+          "earliest": "$global_time.earliest$",
+          "latest": "$global_time.latest$"
+        }
+      },
+      "name": "アクセス集中の分類 (proto x tcp_state 別 rate、L3/L4、E276)"
+    },
+    "ds_access_action": {
+      "type": "ds.search",
+      "options": {
+        "query": "| mstats sum(_value) AS count WHERE metric_name=\"access_class\" AND index=otel_metrics BY action proto | sort - count",
+        "queryParameters": {
+          "earliest": "$global_time.earliest$",
+          "latest": "$global_time.latest$"
+        }
+      },
+      "name": "enforce の pass 対 drop (action x proto 別 rate、L3/L4、E277)"
+    }
+  },
+  "visualizations": {
+    "viz_latency": {
+      "type": "splunk.line",
+      "title": "route 別 p95 latency (HTTP server span duration)",
+      "description": "L7: 'http.route' で分割した p95 latency",
+      "dataSources": {
+        "primary": "ds_latency_by_route"
+      },
+      "options": {
+        "yAxisTitleText": "seconds"
+      }
+    },
+    "viz_status": {
+      "type": "splunk.column",
+      "title": "status 別リクエスト数",
+      "description": "L7: 'http.response.status_code' で分割したリクエスト数",
+      "dataSources": {
+        "primary": "ds_count_by_status"
+      },
+      "options": {}
+    },
+    "viz_xlayer": {
+      "type": "splunk.table",
+      "title": "横断相関: tenant x route x TCP state (L4 x L7 x L8)",
+      "description": "L8 (tenant) x L7 (http.route/method) x L4 (net.tcp.state_changes/established) を 1 表に。join 無し。",
+      "dataSources": {
+        "primary": "ds_xlayer_table"
+      },
+      "options": {
+        "count": 20
+      }
+    },
+    "viz_access_class": {
+      "type": "splunk.column",
+      "title": "アクセス集中の分類 (proto x tcp_state 別 rate)",
+      "description": "L3/L4: access_class を 'proto' (icmp/udp/tcp/other) x 'tcp_state' (syn/established) で分割。SYN サージと確立済セッションを一目で弁別 (E276)。metric_index は環境依存 (例: otel_metrics)。",
+      "dataSources": {
+        "primary": "ds_access_class"
+      },
+      "options": {}
+    },
+    "viz_access_action": {
+      "type": "splunk.column",
+      "title": "enforce の pass 対 drop (action x proto 別 rate)",
+      "description": "L3/L4: access_class を 'action' (pass/drop) x 'proto' で分割。XDP がその場で落とした量 (drop=icmp) と通した量 (pass=tcp/udp/other) を弁別 = 観測と enforce を 1 バイナリで (E277)。drop が急増したら攻撃/誤設定のサイン。metric_index は環境依存。",
+      "dataSources": {
+        "primary": "ds_access_action"
+      },
+      "options": {}
+    }
+  },
+  "layout": {
+    "type": "grid",
+    "options": {
+      "width": 1200,
+      "height": 900
+    },
+    "structure": [
+      {
+        "item": "viz_latency",
+        "type": "block",
+        "position": { "x": 0, "y": 0, "w": 600, "h": 300 }
+      },
+      {
+        "item": "viz_status",
+        "type": "block",
+        "position": { "x": 600, "y": 0, "w": 600, "h": 300 }
+      },
+      {
+        "item": "viz_xlayer",
+        "type": "block",
+        "position": { "x": 0, "y": 300, "w": 1200, "h": 400 }
+      },
+      {
+        "item": "viz_access_class",
+        "type": "block",
+        "position": { "x": 0, "y": 700, "w": 600, "h": 300 }
+      },
+      {
+        "item": "viz_access_action",
+        "type": "block",
+        "position": { "x": 600, "y": 700, "w": 600, "h": 300 }
+      }
+    ],
+    "globalInputs": [
+      "input_time",
+      "input_tenant",
+      "input_route"
+    ]
+  },
+  "defaults": {
+    "dataSources": {
+      "ds.search": {
+        "options": {
+          "queryParameters": {
+            "earliest": "$global_time.earliest$",
+            "latest": "$global_time.latest$"
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,33 @@
+#!/bin/sh
+# tools/oracle/gate -- may this oracle section run?
+#
+#   tools/oracle/gate <path> <section>
+#
+# An oracle is a check against another implementation's behaviour (AGENTS.md):
+# CRuby, a reference C build, doomgeneric, a JAX or IREE reference, a replay of
+# a recorded run under CRuby, a byte comparison with another implementation's
+# recorded output. It runs only on the owner's instruction, and that
+# instruction is ALLOW_ORACLE=1 in the environment.
+#
+# Exits 0 when ALLOW_ORACLE=1 and tests/ORACLES.tsv lists <path> <section> as a
+# gated section. Otherwise prints
+#
+#   NOT RUN (oracle): <path> <section>: <what it compares with>
+#
+# and exits 1; the caller skips the section and does not count its checks.
+# A section the list does not name is refused the same way, with ALLOW_ORACLE
+# or without: a gate that ran whatever it was asked about would make the list
+# optional. <path> is the calling file, relative to the repository root, so
+# tests/oracle/check.sh can match each call with its row.
+set -u
+[ $# -eq 2 ] || { echo "usage: tools/oracle/gate <path> <section>" >&2; exit 2; }
+LIST=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)/tests/ORACLES.tsv
+[ -f "$LIST" ] || { echo "NOT RUN (oracle): $1 $2: no list at $LIST"; exit 1; }
+row=$(awk -F'\t' -v p="$1" -v s="$2" '!/^#/ && $1 == p && $2 == s && ($3 == "owner" || $3 == "definition" || $3 == "confirm") { print $4; exit }' "$LIST")
+if [ -z "$row" ]; then
+  echo "NOT RUN (oracle): $1 $2: not a gated section in tests/ORACLES.tsv"
+  exit 1
+fi
+[ "${ALLOW_ORACLE:-}" = 1 ] && exit 0
+echo "NOT RUN (oracle): $1 $2: $row"
+exit 1

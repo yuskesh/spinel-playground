@@ -1,0 +1,6 @@
+step	what	verdict	detail
+1 device	phase-0 verdicts on 64 samples	OK	confusion (tn fp fn tp) = 0 37 0 27
+2 edge	40 SGD steps on the Enzyme gradient (wasm32)	OK	loss 3ff7ec9ac5be909f -> 3fd1a1e52d2975be
+3 ship	the edge weights, as bits, inside a device image	BIT-IDENTICAL	3ff196f849c70690 3fe453bfb2e97da1 bfe65257443d3b85 3f77d755c2e5ce3c bfd0950b95fb7c14
+4 apply	64 verdicts from the SHIPPED weights vs the device's own	IDENTICAL	confusion = 36 1 1 26
+5 improve	false positives on the device	BETTER	37 -> 1 (correct 27 -> 62 of 64)

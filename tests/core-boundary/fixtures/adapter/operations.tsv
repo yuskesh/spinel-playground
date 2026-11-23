@@ -1,0 +1,115 @@
+# Full-adapter operations for decision 0007 task 4.
+#
+# Columns, tab-separated:
+#   id      unique; names the case in output
+#   op      allocate | bind | store | load | store_words | load_words | invoke | release
+#   setup   a named situation the harness builds before the operation, or `-`.
+#           The situations, spelled out here because a name alone is not a
+#           claim: `u8-4` is four u8 elements left as allocated; `u8-4-filled`
+#           is four holding 1,2,3,4; `u8-0` is a zero-count allocation;
+#           `i32-2-negative` holds -1 at element zero; `i64-2` is two i64
+#           elements; `i64-2-min` holds INT64_MIN at element zero; `u32-2` is
+#           two u32 elements; `released` is an allocation already released;
+#           `sum-*` are the invoke situations named by what differs.
+#           For decision 0018: `i8-2`, `u16-2` and `i16-2` are two elements
+#           of that type, and `*-holding-5-6` holds 5 and 6; a `store` row
+#           with two argument pairs (`;`) makes both stores, the first one
+#           answering. `sum-i16-*` and `store-i8-*` invoke those contracts.
+#   args    the operation's arguments, comma separated
+#   status  ok | argument | arithmetic | bounds | capacity, or `id` / `zero` /
+#           `value` for the operations whose answer is not a status
+#   expect  what must be observable afterwards, or `-`
+#
+# These are the CLAIMS, written from decision 0007 before the adapter exists.
+#
+# What is NOT here, and why: nothing in this table is a Ruby-level case. The
+# registry, the lock and the operations are C, and that is where their
+# behaviour is decided; the generated Ruby module is a separate lane once it
+# exists. Writing Ruby cases now would be asserting the shape of something
+# unwritten.
+#
+#id	op	setup	args	status	expect
+alloc-u8	allocate	-	u8,4	id	live,count=4,zeroed
+alloc-i32	allocate	-	i32,2	id	live,count=2,zeroed
+alloc-u32	allocate	-	u32,2	id	live,count=2,zeroed
+alloc-i64	allocate	-	i64,2	id	live,count=2,zeroed
+alloc-zero-count	allocate	-	u8,0	id	live,count=0,data=null
+alloc-ids-ascend	allocate	-	u8,1	id	greater-than-previous
+alloc-exhausted	allocate	id-budget-spent	u8,1	zero	no-wrap
+store-ok	store	u8-4	0,200	ok	element0=200
+store-index-past-end	store	u8-4	4,1	argument	untouched
+store-index-negative	store	u8-4	-1,1	argument	untouched
+store-value-too-wide	store	u8-4	0,256	argument	untouched
+store-stale-id	store	released	0,1	argument	-
+store-on-i64	store	i64-2	0,1	argument	untouched
+store-zero-count	store	u8-0	0,1	argument	-
+load-ok	load	u8-4-filled	1	value	2
+load-i32-negative	load	i32-2-negative	0	value	4294967295
+load-index-past-end	load	u8-4	4	argument	-
+load-stale-id	load	released	0	argument	-
+load-id-zero	load	-	0	argument	-
+load-below-start-ceiling	load	id-start-near-int32-max	2147483645	argument	=1
+load-on-i64	load	i64-2	0	argument	-
+words-roundtrip-min	store_words	i64-2	0,0,2147483648	ok	element0=INT64_MIN
+words-roundtrip-max	store_words	i64-2	0,4294967295,2147483647	ok	element0=INT64_MAX
+words-on-u8	store_words	u8-4	0,1,0	argument	untouched
+words-out-equal-indices	load_words	i64-2-min,u32-2	0,0,0	argument	untouched
+words-out-past-end	load_words	i64-2-min,u32-2	0,0,2	argument	untouched
+words-out-wrong-type	load_words	i64-2-min,u8-4	0,0,1	argument	untouched
+words-out-aliases-source	load_words	i64-2-min	0,0,1	argument	untouched
+words-out-ok	load_words	i64-2-min,u32-2	0,0,1	ok	low=0,high=2147483648
+invoke-ok	invoke	sum-u8-7-filled	-	ok	result0=28
+invoke-result-aliases-input	invoke	sum-result-is-input	-	argument	result-unchanged
+invoke-result-wrong-type	invoke	sum-result-u8	-	argument	result-unchanged
+invoke-result-zero-length	invoke	sum-result-empty	-	argument	result-unchanged
+invoke-kernel-bounds	invoke	at-index-past-end	-	bounds	result-unchanged
+invoke-poisons-mutable	store	after-failed-invoke	0,1	argument	-
+invoke-result-not-poisoned	load	after-failed-invoke-result	0	value	99
+release-ok	release	u8-4	-	ok	id-invalid-after
+release-double	release	released	-	argument	-
+release-zero-count	release	u8-0	-	ok	id-invalid-after
+store-value-negative	store	u8-4	0,-1	argument	untouched
+words-low-negative	store_words	i64-2	0,-1,0	argument	untouched
+words-high-above-u32	store_words	i64-2	0,0,4294967296	argument	untouched
+invoke-result-is-input-same-type	invoke	i64-in-i64-result	-	argument	result-unchanged
+invoke-result-is-input-zero-length	invoke	i64-in-zero-length	-	argument	-
+alloc-exhausted-real-ceiling	allocate	id-start-near-int32-max	u8,1	zero	no-overflow
+invoke-result-poisoned	invoke	i64-result-poisoned-by-failed-call	-	argument	-
+adapter-name-collision	invoke	contract-with-colliding-names	-	ok	compiles
+
+invoke-two-inout-same-id	invoke	two-inout-one-id	-	argument	=-1,-1,-1,-1
+invoke-two-inout-separate-ids	invoke	two-inout-two-ids	-	ok	=3,3,3,3
+alloc-i8	allocate	-	i8,3	id	=0
+alloc-u16	allocate	-	u16,3	id	=0
+alloc-i16	allocate	-	i16,3	id	=0
+store-i8-range-ends	store	i8-2	0,-128;1,127	ok	=4294967168,127
+store-i8-outside	store	i8-2-holding-5-6	0,128;1,-129	argument	=1,5,6
+store-u16-range-ends	store	u16-2	0,0;1,65535	ok	=0,65535
+store-u16-outside	store	u16-2-holding-5-6	0,65536;1,-1	argument	=1,5,6
+store-i16-range-ends	store	i16-2	0,-32768;1,32767	ok	=4294934528,32767
+store-i16-outside	store	i16-2-holding-5-6	0,32768;1,-32769	argument	=1,5,6
+invoke-i16-sign-extends	invoke	sum-i16-holding-min-max-minus-1	-	ok	=4294967294,4294967295
+invoke-i16-given-u16	invoke	sum-i16-input-is-u16	-	argument	=99
+invoke-i16-given-i8	invoke	sum-i16-input-is-i8	-	argument	=99
+invoke-i8-store-ok	invoke	store-i8-minus-128	-	ok	=4294967168
+invoke-i8-store-outside	invoke	store-i8-128	-	arithmetic	=-1
+# Decision 0021: a read-only buffer bound to a caller-supplied address and
+# count, written from that decision before `bind` existed. `bound-u8-4` is the
+# harness's own aligned, static `{1,2,3,4}`; every bind row violates ONE rule
+# and no other (an aligned, live, in-range address unless the row is about
+# that). The second field of an `id` row is what the bound id reads back.
+bind-ok	bind	bound-u8-4	u8,4	id	=1,2,3,4
+bind-zero-count-null	bind	-	u8,0,NULL	id	=-1
+bind-null-with-count	bind	-	u8,4,NULL	zero	=0
+bind-negative-count	bind	bound-u8-4	u8,-1	zero	=0
+bind-unknown-element	bind	bound-u8-4	9,4	zero	=0
+bind-misaligned	bind	bound-u16-2-plus-1	u16,2	zero	=0
+bind-size-overflow	bind	bound-u32-2	u32,2^62	zero	=0
+bind-end-overflow	bind	-	u8,4,UINT64_MAX-1	zero	=0
+bind-store-refused	store	bound-u8-4	0,9	argument	=1,2,3,4
+bind-words-store-refused	store_words	bound-i64-1	0,9,0	argument	=5
+bind-words-into-bound-refused	load_words	i64-2-min,bound-u32-2	0,0,1	argument	=7,8
+bind-invoke-as-in	invoke	sum-u8-bound	-	ok	=10
+bind-invoke-as-inout-refused	invoke	store-at-bound	-	argument	=1,2,3,4
+bind-invoke-as-result-refused	invoke	sum-i64-bound-result	-	argument	=5
+bind-release-keeps-memory	release	bound-u8-4	-	ok	=-1,1

@@ -1,0 +1,6 @@
+require 'json';require 'fileutils';require 'open3'
+tool,previous,out=ARGV;raise 'fresh output' if File.exist?(out);FileUtils.mkdir_p(out+'/tmp');source=previous+'/small.rb';bad=out+'/refused.rb';File.write(bad,File.read(source)+"\nmodule NoRecord\n  ffi_lib\nend\n");File.write(out+'/not-dir','a');rows=[]
+[['child-failure',[tool,'--emit-mlir='+out+'/refused.mlir','--analysis-root=target:obj_Seed','--emit-typing-probe',bad]],['emit-io',[tool,'--emit-mlir='+out+'/not-dir/x.mlir','--analysis-root=target:obj_Seed','--emit-typing-probe',source]]].each do |name,argv|
+ o,e,st=Open3.capture3({'LC_ALL'=>'C','TMPDIR'=>out+'/tmp'},*argv);File.write(out+'/'+name+'.stdout',o);File.write(out+'/'+name+'.stderr',e);rows<<{name:name,argv:argv,rc:st.exitstatus,signal:st.termsig};File.write(out+'/execution.json',JSON.pretty_generate(rows)+"\n");required=name=='child-failure' ? 'typing probe before analysis failed' : 'MLIR export failed';raise 'control '+name unless st.exitstatus==1&&o.empty?&&e.include?(required)
+end
+raise 'child published success' if File.exist?(out+'/refused.mlir');raise 'temp leaked' unless Dir[out+'/tmp/*'].empty?;File.write(out+'/summary.json',JSON.pretty_generate({all_expected:true,controls:2,remaining_tmp:0,child_artifact:false})+"\n");puts 'PASS child/emit failure controls'

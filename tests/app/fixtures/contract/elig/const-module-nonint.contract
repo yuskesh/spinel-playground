@@ -1,0 +1,13 @@
+core-contract 2
+root const-module-nonint.rb
+entry run
+context thread
+result none
+param reading buffer i32 inout count const 1 cross
+param frame buffer u8 inout count const 16
+param small buffer u8 inout count const 4
+param shared buffer u8 inout count const 16 cross
+extern Adc.latest symbol spc_board_adc_latest arg ch u32 returns i32 isr_ok guard ch < 1 else bounds bound iterations 1 evidence e/adc.json
+extern Telemetry.put symbol spc_channel_telemetry_put arg data buffer u8 in arg n u32 returns i32 isr_ok guard n >= 1 else argument guard n <= 16 else bounds guard n <= len(data) else bounds bound iterations 16 evidence e/put.json
+extern Telemetry.get symbol spc_channel_telemetry_get arg data buffer u8 inout returns i32 isr_ok static len(data) >= 16 else channel-buffer bound iterations 16 evidence e/get.json
+extern Log.write symbol spc_log_write arg data buffer u8 in arg n u32 bound iterations 64 evidence e/log.json

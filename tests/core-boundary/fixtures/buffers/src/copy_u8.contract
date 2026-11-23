@@ -1,0 +1,8 @@
+core-contract 1
+root src/copy_u8.rb
+entry copy_u8
+result i64
+param dst buffer u8 inout count n_dst
+param n_dst scalar u64
+param src buffer u8 in count n_src
+param n_src scalar u64

@@ -1,0 +1,51 @@
+# E083: the shipped cortex-m33-zephyr.yaml plus ONE callable platform extern
+# with BUFFER parameters -- the Enzyme adjoint spinel-gradfs synthesises for
+# `sq_hinge_loss` (E079).  This is E081's handover item 1 made concrete: the adjoint
+# is not a top-level Ruby method, so the only way a freestanding kernel can
+# call it is as a declared platform extern; and its signature carries pointers,
+# which is exactly what E081's D-8 deferred ("v1 has register-width types only").
+#
+# The buffer spelling is E077's kernel-side spelling, verbatim: a two-element
+# entry [<elem>_buf, <dir>] followed by `len`, one `len` per run of buffers.
+# The declaration below IS the C signature spinel-gradfs emits for the shim:
+#
+#   double spinel_grad_sq_hinge_loss(const double *data, int32_t nd,
+#                                    const double *w, double *d_w, int32_t nw);
+#
+# `symbol:` is explicit: the platform namespace default (spinel_zephyr_*) would
+# name a wrapper, and this symbol is not a wrapper -- it is the adjoint itself,
+# linked into the image next to the kernel (layer 3's business, as always: west
+# links a second object instead of compiling a C file).
+#
+# NOT a shipped profile.  Same standing as E081's *-e081.yaml and E077's
+# arm64-none.yaml: an experiment record, kept runnable.
+
+target:
+  triple: thumbv8m.main-none-eabi
+  cpu: cortex-m33
+  data_layout: "e-m:e-p:32:32-Fi8-i64:64-v128:64:128-a:0:32-n32-S64"
+  cflags:
+    - -mcpu=cortex-m33+nodsp
+    - -mfloat-abi=soft
+    - -fshort-enums
+    - -Os
+
+abi:
+  boundary: c-abi
+  int_width: i32-internal
+  overflow: trap
+  trap_hook: spinel_trap
+
+runtime:
+  libc: none
+  libm: none
+  compiler_rt: allow
+
+platform:
+  type: zephyr
+  externs:
+    - spinel_trap
+    - name: grad_loss
+      symbol: spinel_grad_sq_hinge_loss
+      params: [[f64_buf, in], len, [f64_buf, in], [f64_buf, out], len]
+      returns: f64

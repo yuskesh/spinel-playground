@@ -1,0 +1,6 @@
+core-contract 1
+root src/sum_i64.rb
+entry sum_i64
+result i64
+param src buffer i64 in count n_src
+param n_src scalar u64

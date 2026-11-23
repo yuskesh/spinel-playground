@@ -1,0 +1,86 @@
+# tools/doom/core-builtin-effects.tsv — what a builtin call does to its receiver,
+# for the audit's setup walk.
+#
+# The setup walk records every field Full's setup writes before the first tick,
+# and a stored field it does not list keeps its allocation fill. A call with no
+# tree definition runs no tree code, but that is not evidence it writes nothing:
+# `@a.fill(7)` rewrites @a. So every builtin the walk reaches must be listed
+# here, by name and receiver type, as one of:
+#
+#   pure       reads its receiver and arguments; changes neither
+#   mutates    changes its receiver, which the walk then attributes to the
+#              field that receiver is (or refuses, as a gap, when it cannot say)
+#   control    no receiver to change (`raise`, `loop`); a block's body is walked
+#              as the enclosing definition's own code
+#
+# A call whose name and receiver type match no row is a GAP, named, and the
+# emitter will not use a walk that has one. This is not tools/doom/core-builtins.tsv:
+# that says whether CORE may call a builtin; this says what the call changes.
+# `*` as the receiver matches any receiver type.
+#
+#name	receiver	effect	why
+[]	*	pure	Element or slice read.
+[]=	*	mutates	Element store.
+setbyte	*	mutates	Byte store.
+<<	int	pure	Shift.
+<<	int_array	mutates	Append.
+<<	str_array	mutates	Append.
+<<	poly_array	mutates	Append.
+<<	obj_array	mutates	Append.
+<<	string	mutates	Append.
+fill	*	mutates	Overwrites elements.
+push	*	mutates	Append.
+append	*	mutates	Append.
+concat	*	mutates	Append.
+insert	*	mutates	Insert.
+unshift	*	mutates	Prepend.
+prepend	*	mutates	Prepend.
+pop	*	mutates	Removes the last element.
+shift	*	mutates	Removes the first element.
+clear	*	mutates	Empties the receiver.
+replace	*	mutates	Replaces the contents.
+delete	*	mutates	Removes elements.
+delete_at	*	mutates	Removes an element.
+slice!	*	mutates	Removes a slice.
+map!	*	mutates	Rewrites elements.
+sort!	*	mutates	Reorders elements.
+reverse!	*	mutates	Reorders elements.
+compact!	*	mutates	Removes elements.
+force_encoding	*	mutates	Changes the receiver's encoding in place.
++	*	pure	Arithmetic, or a new array or string.
+-	*	pure	Arithmetic, or a new array.
+*	*	pure	Arithmetic, or a new array or string.
+/	*	pure	Arithmetic.
+%	*	pure	Arithmetic.
+-@	*	pure	Negation.
+~	*	pure	Complement.
+&	*	pure	Bitwise and, or a new array.
+|	*	pure	Bitwise or, or a new array.
+^	*	pure	Bitwise xor.
+>>	*	pure	Shift.
+<	*	pure	Comparison.
+<=	*	pure	Comparison.
+>	*	pure	Comparison.
+>=	*	pure	Comparison.
+==	*	pure	Comparison.
+!=	*	pure	Comparison.
+!	*	pure	Negation.
+abs	*	pure	A new number.
+odd?	*	pure	A predicate.
+to_i	*	pure	A new number.
+to_s	*	pure	A new string.
+inspect	*	pure	A new string.
+bytesize	*	pure	A length.
+length	*	pure	A length.
+empty?	*	pure	A predicate.
+include?	*	pure	A predicate.
+key?	*	pure	A predicate.
+index	*	pure	A search.
+getbyte	*	pure	A byte read.
+byteslice	*	pure	A new string.
+split	*	pure	New strings.
+pack	*	pure	A new string.
+read	class	pure	File input, a new string; no tree storage.
+binread	class	pure	File input, a new string; no tree storage.
+raise	implicit	control	Leaves the method; changes nothing it is called on.
+loop	implicit	control	Runs its block, which the walk visits as this definition's code.

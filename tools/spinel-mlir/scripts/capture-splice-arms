@@ -1,0 +1,79 @@
+#!/usr/bin/env ruby
+# E014: run the E008 arm set (one arm per schema program request) with a
+# control producer (M1+M2) and a candidate producer (M1+M2+M3) on one shared
+# source copy, then compare every arm. Exit 0 when the run completed (the
+# predictions are judged from the ledgers), 3 on a contract stop.
+require 'json'
+require 'fileutils'
+require 'digest'
+repo,oracle,control,candidate,tool,output=ARGV
+abort 'usage: capture-splice-arms repo oracle control-spinel candidate-spinel tool new-output' unless output
+abort 'output exists' if File.exist?(output)
+FileUtils.mkdir_p(output)
+sha=->(p){Digest::SHA256.file(p).hexdigest}
+capture=File.join(repo,'docs/experiments/results/E003/capture')
+manifest=JSON.parse(File.read(File.join(capture,'manifest.json')))
+inputs=JSON.parse(File.read(File.join(repo,'docs/experiments/results/E003/inputs-and-library.json')))
+cases=manifest.fetch('cases').select{|x|x.fetch('kind')=='positive'}
+groups=File.read(File.join(repo,'docs/plan/P002_105_inputs.md')).scan(/^\|([A-H])\|`([^`]+)`\|/).to_h{|g,s|[s,g]}
+abort '105 input set mismatch' unless cases.length==105 && cases.map{|c|c.fetch('source')}.sort==groups.keys.sort && groups.keys.sort==inputs.fetch('sources').keys.sort
+ctx={'xdp'=>'XdpMd','fentry'=>'FentryCtx','fexit'=>'FexitCtx','kprobe'=>'KprobeCtx','kretprobe'=>'KretprobeCtx','uretprobe'=>'UretprobeCtx','sched_cls'=>'SkBuff','uprobe'=>'UprobeCtx','tp_btf'=>'TpBtfCtx','raw_tp'=>'RawTpCtx','socket_filter'=>'SocketFilterCtx','cgroup_skb'=>'CgroupSkb','tracepoint'=>'TracepointCtx','ksyscall'=>'KsyscallCtx','netfilter'=>'NfCtx','flow_dissector'=>'FlowCtx','sk_lookup'=>'SkLookupCtx'}
+source_dir=File.join(output,'source')
+inputs.fetch('sources').merge(inputs.fetch('ruby_lib')).each do |relative,expected|
+  original=File.join(oracle,relative)
+  abort "input hash mismatch #{relative}" unless sha.(original)==expected
+  target=File.join(source_dir,relative);FileUtils.mkdir_p(File.dirname(target));FileUtils.copy_file(original,target)
+end
+File.write(File.join(output,'producers.json'),JSON.pretty_generate({control:{path:control,sha256:sha.(control)},candidate:{path:candidate,sha256:sha.(candidate)},tool:{path:tool,sha256:sha.(tool)}})+"\n")
+arms=[]
+cases.each do |c|
+  schemas=Dir.glob(File.join(capture,c.fetch('raw_dir'),'*.schema.json'))
+  abort "schema count #{c['id']}" unless schemas.length==1
+  requests=JSON.parse(File.read(schemas.first)).fetch('core').fetch('programs').filter_map do |p|
+    "#{p['name']}:obj_BPF::#{ctx[p['kind']]}" if p['name'].is_a?(String) && !p['name'].empty? && ctx[p['kind']]
+  end
+  requests=[nil] if requests.empty?
+  requests.each_with_index{|r,i| arms<<{id:c.fetch('id'),source:c.fetch('source'),group:groups.fetch(c.fetch('source')),arm:i,request:r}}
+end
+ledger=File.open(File.join(output,'arms.jsonl'),'w')
+stop=nil
+arms.each do |a|
+  row=a.dup
+  {control:control,candidate:candidate}.each do |side,compiler|
+    dir=File.join(output,side.to_s,a[:id],a[:arm].to_s);FileUtils.mkdir_p(dir)
+    target=File.join(dir,'facts.mlir')
+    args=[compiler,'-I',File.join(source_dir,'ruby/lib'),"--emit-mlir=#{target}"]
+    args<<"--analysis-root=#{a[:request]}" if a[:request]
+    args<<File.join(source_dir,a[:source])
+    system('/usr/bin/timeout','--kill-after=5s','60s',*args,chdir:source_dir,out:File.join(dir,'stdout'),err:File.join(dir,'stderr'))
+    st=$?
+    r={rc:st.exitstatus,signal:st.termsig,stdout_bytes:File.size(File.join(dir,'stdout')),artifact_bytes:File.file?(target) ? File.size(target) : 0}
+    r[:sha256]=sha.(target) if File.file?(target)
+    if r[:artifact_bytes]>0
+      system(tool,'--verify-only',target,out:File.join(dir,'verify.stdout'),err:File.join(dir,'verify.stderr'))
+      r[:verify_rc]=$?.exitstatus
+    end
+    r[:refusal]=File.readlines(File.join(dir,'stderr')).reject{|l|l.start_with?('MLIR source-inventory')}.map(&:chomp)
+    r[:splices]=File.file?(target) ? File.read(target).scan(/"spinel_facts\.splice"\(\) \{[^\n]*/).length : 0
+    row[side]=r
+    stop||="#{a[:id]} arm#{a[:arm]} #{side}" if st.signaled? || ![0,1].include?(st.exitstatus) || r[:stdout_bytes]!=0 || (st.exitstatus==0 && r[:artifact_bytes]==0)
+  end
+  c,d=row[:control],row[:candidate]
+  row[:raw_equal]=c[:rc]==0 && d[:rc]==0 && c[:artifact_bytes]>0 && c[:sha256]==d[:sha256] && FileUtils.compare_file(File.join(output,'control',a[:id],a[:arm].to_s,'facts.mlir'),File.join(output,'candidate',a[:id],a[:arm].to_s,'facts.mlir'))
+  ledger.puts(JSON.generate(row));ledger.flush
+  puts "#{a[:id]} arm#{a[:arm]} control=#{c[:rc]}/#{c[:verify_rc].inspect} candidate=#{d[:rc]}/#{d[:verify_rc].inspect} splices=#{d[:splices]} raw_equal=#{row[:raw_equal]}"
+  break if stop
+end
+ledger.close
+rows=File.readlines(File.join(output,'arms.jsonl')).map{|l|JSON.parse(l)}
+tally=->(side,key){rows.group_by{|r|r[side][key]}.transform_values(&:length)}
+summary={arms:rows.length,expected_arms:arms.length,stop:stop,
+  control:{rc:tally.('control','rc'),verify:tally.('control','verify_rc'),nonempty:rows.count{|r|r['control']['artifact_bytes']>0}},
+  candidate:{rc:tally.('candidate','rc'),verify:tally.('candidate','verify_rc'),nonempty:rows.count{|r|r['candidate']['artifact_bytes']>0},splices:tally.('candidate','splices')},
+  control_success:rows.count{|r|r['control']['rc']==0 && r['control']['verify_rc']==0},
+  raw_equal:rows.count{|r|r['raw_equal']},
+  control_success_not_equal:rows.select{|r|r['control']['rc']==0 && !r['raw_equal']}.map{|r|"#{r['id']}/#{r['arm']}"},
+  control_failed:rows.select{|r|r['control']['rc']!=0}.map{|r|{arm:"#{r['id']}/#{r['arm']}",control:r['control']['refusal'],candidate_rc:r['candidate']['rc'],candidate_verify:r['candidate']['verify_rc'],splices:r['candidate']['splices']}}}
+File.write(File.join(output,'summary.json'),JSON.pretty_generate(summary)+"\n")
+puts JSON.generate(summary)
+exit(stop ? 3 : 0)

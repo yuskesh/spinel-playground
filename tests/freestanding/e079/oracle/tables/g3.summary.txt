@@ -1,0 +1,1 @@
+model.py: PASS  worst_rel(fd)=4.413e-11 worst_rel(analytic)=5.040e-16 worst_rel(sgd)=2.074e-16

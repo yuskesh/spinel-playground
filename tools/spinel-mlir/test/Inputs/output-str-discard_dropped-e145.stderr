@@ -1,0 +1,1 @@
+neg_discard_dropped.rb:9:3: rejected SB025 (DroppedEvent): the result of output_str_or_discard (nil when the ring is full) is dropped — use `r = Drop.output_str(Greet.new(…), :<u8 array member>, ctx.str_arg(n), :<i64 status member>)` then `if r` (read `r.status` inside), or `_ = Drop.output_str(…)` (P020) [path: on_greet]

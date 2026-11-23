@@ -1,0 +1,20 @@
+/* generated from tools/app/templates/channel_core.h.erb: channel
+ * `<%= c.name %>` (decision 0027 stage 2), declared by the contract
+ * <%= k.path_shown %> (sha256 <%= k.digest %>): from <%= k.from %> to <%= k.to %>, depth <%= k.depth %>,
+ * a <%= k.msg_bytes %>-byte message, descriptor <%= idx %> of the region's table
+ * (tools/app/ring/ring_abi.h, version 5). This image is the <%= role %>. */
+#ifndef SPC_CHANNEL_<%= c.name.upcase %>_H
+#define SPC_CHANNEL_<%= c.name.upcase %>_H
+#include <stdint.h>
+
+#define SPC_CHANNEL_<%= c.name.upcase %>_INDEX <%= idx %>u
+#define SPC_CHANNEL_<%= c.name.upcase %>_MSG_BYTES <%= k.msg_bytes %>u
+#define SPC_CHANNEL_<%= c.name.upcase %>_DEPTH <%= k.depth %>u
+#define SPC_CHANNEL_<%= c.name.upcase %>_STRIDE <%= k.stride %>u
+#define SPC_CHANNEL_<%= c.name.upcase %>_OFFSET <%= offset %>u
+<% k.fields.each do |f| %>#define SPC_CHANNEL_<%= c.name.upcase %>_OFF_<%= f.name.upcase %> <%= f.offset %>u
+<% end %>
+<% if role == "producer" %>int32_t spc_channel_<%= c.name %>_put(<%= put_params %>);
+<% else %>int32_t spc_channel_<%= c.name %>_get(<%= get_params %>);
+<% end %>int32_t spc_channel_<%= c.name %>_check(void);
+#endif

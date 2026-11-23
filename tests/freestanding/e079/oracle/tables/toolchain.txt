@@ -1,0 +1,8 @@
+Homebrew clang version 22.1.8
+Homebrew LLD 22.1.8
+vendor/spinel 8e30ae3c
+enzyme db618fa
+zephyr 7fd932b9357
+QEMU emulator version 10.0.0
+node v24.12.0
+Python 3.12.11

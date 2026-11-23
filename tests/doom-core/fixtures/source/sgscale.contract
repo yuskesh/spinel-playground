@@ -1,0 +1,14 @@
+core-contract 1
+root src/packed.rb
+entry dc_sp_sgscale
+result i64
+param state buffer i64 in count n_state
+param n_state scalar u64
+param finesine buffer i32 in count n_finesine
+param n_finesine scalar u64
+param projection buffer u32 in count n_projection
+param n_projection scalar u64
+param i_viewangle scalar i64
+param i_rw_normalangle scalar i64
+param i_rw_distance scalar i64
+param visangle scalar i64

@@ -1,0 +1,124 @@
+{
+  "version": 1,
+  "coverage": {
+    "programs": "omitted",
+    "maps": "complete",
+    "records": "complete",
+    "telemetry": "complete"
+  },
+  "core": {
+    "records": [
+      {
+        "symbol": "R",
+        "id": 0,
+        "size": 24,
+        "min_size": 24,
+        "alignment": 4,
+        "required_through": "",
+        "note": "E283",
+        "fields": [
+          {
+            "name": "n",
+            "offset": 0,
+            "expose": "int",
+            "note": "",
+            "type": {
+              "kind": "int",
+              "bits": 32,
+              "signed": false,
+              "endianness": "little",
+              "alignment": 4
+            }
+          },
+          {
+            "name": "hist",
+            "offset": 4,
+            "expose": "int",
+            "note": "",
+            "type": {
+              "kind": "array",
+              "count": 5,
+              "element": {
+                "kind": "int",
+                "bits": 32,
+                "signed": false,
+                "endianness": "little",
+                "alignment": 4
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "maps": [
+      {
+        "symbol": "aa",
+        "kind": "array",
+        "key": {
+          "kind": "int",
+          "bits": 32,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 4
+        },
+        "value": {
+          "kind": "record_ref",
+          "symbol": "R"
+        },
+        "max_entries": 4,
+        "flags": 0,
+        "record": "",
+        "note": "E283"
+      },
+      {
+        "symbol": "ap",
+        "kind": "array",
+        "key": {
+          "kind": "int",
+          "bits": 32,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 4
+        },
+        "value": {
+          "kind": "record_ref",
+          "symbol": "R"
+        },
+        "max_entries": 1,
+        "flags": 0,
+        "record": "",
+        "note": "E283"
+      },
+      {
+        "symbol": "out",
+        "kind": "array",
+        "key": {
+          "kind": "int",
+          "bits": 32,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 4
+        },
+        "value": {
+          "kind": "int",
+          "bits": 64,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 8
+        },
+        "max_entries": 8,
+        "flags": 0,
+        "record": "",
+        "note": "E283"
+      }
+    ],
+    "programs": []
+  },
+  "telemetry": {
+    "clocks": [],
+    "value_maps": [],
+    "bounds_sets": [],
+    "signals": []
+  },
+  "extensions": {}
+}

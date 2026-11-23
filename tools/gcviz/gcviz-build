@@ -1,0 +1,40 @@
+#!/bin/sh
+# tools/gcviz/gcviz-build PROGRAM.rb OUT -- compiles a Ruby program with the
+# pinned Spinel and links it against the events runtime
+# (vendor/spinel/lib/libspinel_events_rt.a, `make events-runtime`), so that
+# running OUT with SPINEL_GC_EVENTS=FILE records the collector's slot events.
+# The Ruby method gcviz_mark(id) becomes a call into gcviz_mark.c. OUT is
+# linked without PIE so that nm names the scan functions the events record,
+# and the generated C is kept as OUT.c. The program is compiled with
+# -DSP_GC_EVENTS too: the object pools in the runtime headers record the
+# headers they take back.
+# Environment: SPINEL_DIR (default: this repository's vendor/spinel), CC.
+set -eu
+if [ $# -ne 2 ]; then
+  echo "usage: gcviz-build PROGRAM.rb OUT" >&2
+  exit 64
+fi
+src=$1 out=$2
+here=$(cd "$(dirname "$0")" && pwd)
+spinel_dir=${SPINEL_DIR:-$here/../../vendor/spinel}
+spinel_dir=$(cd "$spinel_dir" && pwd)
+rt=$spinel_dir/lib/libspinel_events_rt.a
+cc=${CC:-cc}
+if [ ! -f "$rt" ]; then
+  echo "gcviz-build: $rt is missing; run make events-runtime in $spinel_dir" >&2
+  exit 1
+fi
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/gcviz.XXXXXX")
+trap 'rm -f "$tmp"/*; rmdir "$tmp"' EXIT
+SPINEL_EXTERN_METHODS=gcviz_mark "$spinel_dir/bin/spinel" -c "$src" -o "$tmp/prog.c"
+# the build line names flags only; its source and runtime are replaced here
+flags=$("$spinel_dir/bin/spinel" --print-build "$src" -o "$tmp/unused" | awk '
+  $1 == "cflag" || $1 == "define" { printf "%s ", $2 }
+  $1 == "include" { printf "-I%s ", $2 }')
+libs=$("$spinel_dir/bin/spinel" --print-build "$src" -o "$tmp/unused" | awk '$1 == "lib" { printf "%s ", $2 }')
+# shellcheck disable=SC2086
+"$cc" -O2 -g -w -fno-pie -DSP_GC_EVENTS $flags -c "$tmp/prog.c" -o "$tmp/prog.o"
+"$cc" -O2 -fno-pie -c "$here/gcviz_mark.c" -o "$tmp/mark.o"
+# shellcheck disable=SC2086
+"$cc" -no-pie "$tmp/prog.o" "$tmp/mark.o" "$rt" $libs -o "$out"
+cp "$tmp/prog.c" "$out.c"

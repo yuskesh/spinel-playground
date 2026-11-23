@@ -1,0 +1,6 @@
+core-contract 2
+root app.rb
+entry lit_str
+context thread
+result none
+param out buffer u8 inout count const 16

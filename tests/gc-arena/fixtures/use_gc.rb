@@ -1,0 +1,2 @@
+GC.start
+puts "collected"

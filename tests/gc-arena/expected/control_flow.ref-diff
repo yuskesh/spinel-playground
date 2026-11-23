@@ -1,0 +1,4 @@
+2c2
+< ["rescued inner", "inner ensure", "outer outer", "outer ensure"]
+---
+> ["rescued inner", "outer outer", "outer ensure"]

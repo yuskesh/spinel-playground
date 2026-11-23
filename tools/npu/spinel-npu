@@ -1,0 +1,576 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+# tools/npu/spinel-npu -- a hosted Ruby program with one npu_extern declaration
+# to a Zephyr image for the FRDM-MCXN947 that runs the model on the Neutron NPU
+# (decision 0032).
+#
+#   spinel-npu [--board NAME] app.rb -o OUT [--check-only]
+#
+# --board is frdm-mcxn947 (the default) or stm32mp257f-dk; the second is decision
+# 0034 and takes its own environment, see tools/npu/stm32mp2/lane.rb.
+#
+#   npu_extern :classify, tflite: "model.tflite",
+#              input: [:i8, 1, 32, 32, 3], output: [:i8, 1, 12], partial: true
+#
+# Or it writes the model in Ruby, with npu_def instead of npu_extern; see
+# tools/npu/README.md. Its block runs under CRuby at build time.
+#
+# The program then calls classify(x, y) with two Tensors inside
+# Tensor.device("local-sync", "@npu"). --check-only stops after the model checks.
+#
+# Refused, never worked around: a model with no NeutronGraph, one that would
+# leave operators unrun without partial: true, a declaration that disagrees
+# with the model, a converter or workspace that is not the pinned pair.
+#
+# Environment
+#   NEUTRON_SDK_PYTHON      python of the venv holding eiq-neutron-sdk (the
+#                           converter; not needed for an already converted model)
+#   ZEPHYR_WORKSPACE        the v4.5.0 west workspace, blobs fetched
+#   ZEPHYR_SDK_INSTALL_DIR  the Zephyr SDK
+#   IREE_COMPILE, IREE_SRC  iree-compile and the IREE source tree
+#   IREE_M33_BUILD          the output of tools/npu/build-iree-m33.sh
+require "digest"
+require "fileutils"
+require "open3"
+require "prism"
+require "shellwords"
+require_relative "tflite"
+require_relative "tflite_write"
+require_relative "stm32mp2/lane"
+
+ROOT = File.expand_path("../..", __dir__)
+HOST = File.join(ROOT, "tools/npu/host")
+VENDOR = File.join(ROOT, "vendor/spinel")
+TABLE = File.join(ROOT, "tools/app/zephyr/v4.5.0/npu.tsv")
+BOARD = "frdm_mcxn947/mcxn947/cpu0"
+TARGET = "mcxn94x"
+
+def die(msg, code = 1)
+  warn "spinel-npu: #{msg}"
+  exit code
+end
+
+def run!(*cmd, env: {}, chdir: nil, log: nil)
+  opts = {}
+  opts[:chdir] = chdir if chdir
+  out, st = Open3.capture2e(env, *cmd, **opts)
+  File.write(log, out) if log
+  return out if st.success?
+  warn out.lines.last(30).join
+  die("failed: #{cmd.first(3).join(" ")}#{log ? " (log: #{log})" : ""}")
+end
+
+def env!(name)
+  v = ENV[name]
+  die("#{name} is not set (see the header of tools/npu/spinel-npu)", 2) if v.nil? || v.empty?
+  v
+end
+
+def pins
+  File.readlines(TABLE, chomp: true).reject { |l| l.start_with?("#") || l.empty? }
+      .to_h { |l| l.split("\t", 2) }
+end
+
+# ---- the declaration -------------------------------------------------------
+class Declaration
+  attr_reader :name, :tflite, :input, :output, :partial, :model
+
+  def npu_extern(name, tflite:, input:, output:, partial: false)
+    @name = name.to_s
+    @tflite = tflite
+    @input = input
+    @output = output
+    @partial = partial
+  end
+
+  # The block runs here, under CRuby, when the program is built.
+  def npu_def(name, input:, quant:, &block)
+    raise ArgumentError, "npu_def needs a block of operators" unless block
+    built = TFLiteWrite::Model.new(input, quant)
+    built.declare(&block)
+    @name = name.to_s
+    @input = input
+    @model = built.to_tflite
+    @output = [:i8, *built.shape]
+    @partial = false
+  end
+end
+
+KINDS = %i[npu_extern npu_def].freeze
+
+def walk(node, &visit)
+  visit.call(node)
+  node.compact_child_nodes.each { |c| walk(c, &visit) }
+end
+
+def const_reads(node)
+  names = []
+  walk(node) { |n| names << n.name if n.is_a?(Prism::ConstantReadNode) }
+  names
+end
+
+# The top-level constants the declaration reads, directly or through another.
+def declared_constants(top, decl)
+  writes = top.take_while { |n| !n.equal?(decl) }.grep(Prism::ConstantWriteNode)
+  wanted = const_reads(decl)
+  writes.reverse_each { |w| wanted |= const_reads(w) if wanted.include?(w.name) }
+  writes.select { |w| wanted.include?(w.name) }
+end
+
+def heredoc?(node)
+  found = false
+  walk(node) { |n| found ||= n.respond_to?(:opening) && n.opening.to_s.start_with?("<<") }
+  found
+end
+
+# Statements leave the program by whole lines, so a line must hold only them.
+def refuse_shared_line(app, top, nodes)
+  nodes.each do |n|
+    first, last = n.location.start_line, n.location.end_line
+    other = top.find { |t| !t.equal?(n) && t.location.start_line <= last && t.location.end_line >= first }
+    die("#{app}:#{first}: this statement shares a line with another; put the declaration and its constants on their own lines") if other
+  end
+end
+
+def parse(app)
+  source = File.read(app)
+  result = Prism.parse(source)
+  die("#{app}: #{result.errors.first.message}") unless result.success?
+  top = result.value.statements.body
+  decls = top.select { |n| n.is_a?(Prism::CallNode) && n.receiver.nil? && KINDS.include?(n.name) }
+  die("#{app}: no npu_extern or npu_def declaration") if decls.empty?
+  die("#{app}: #{decls.size} npu_extern or npu_def declarations; this lane takes exactly one") if decls.size > 1
+  node = decls[0]
+  used = declared_constants(top, node)
+  [*used, node].each do |n|
+    die("#{app}:#{n.location.start_line}: npu_def cannot read a heredoc") if heredoc?(n)
+  end
+  decl = Declaration.new
+  begin
+    decl.instance_eval((used + [node]).map { |n| n.slice }.join("\n"))
+  rescue ArgumentError, NameError, SyntaxError, TypeError, TFLiteWrite::Error => e
+    die("#{app}: bad #{node.name}: #{e.message}")
+  end
+  die("#{app}: `#{decl.name}` is not a usable function name") unless decl.name =~ /\A[a-z_][a-z0-9_]*\z/
+  [decl.input, decl.output].each do |s|
+    unless s.is_a?(Array) && s[0] == :i8 && s.size >= 2 && s.size <= 5 && s[1..].all? { |d| d.is_a?(Integer) && d > 0 }
+      die("#{app}: input: and output: are [:i8, dim, ...] with 1 to 4 positive dimensions; got #{s.inspect}. This lane runs int8 only")
+    end
+  end
+  lines = source.lines
+  unless lines.any? { |l| l =~ /^\s*require_relative\s+["']npu\.gen["']/ }
+    die("#{app}: add `require_relative \"npu.gen\"` after the declaration; it defines #{decl.name}")
+  end
+  # A constant only the declaration reads is build-time data: keep it out of the image.
+  others = top.reject { |n| n.equal?(node) || used.any? { |u| u.equal?(n) } }
+  read = others.flat_map { |n| const_reads(n) }.uniq
+  # A kept constant keeps what it reads, and that can keep more.
+  loop do
+    more = read | used.select { |u| read.include?(u.name) }.flat_map { |u| const_reads(u) }
+    break if more.size == read.size
+    read = more
+  end
+  dropped = used.reject { |u| read.include?(u.name) }
+  refuse_shared_line(app, top, [node, *dropped])
+  [node, *dropped].each do |n|
+    (n.location.start_line - 1..n.location.end_line - 1).each { |i| lines[i] = "\n" }
+  end
+  [decl, lines.join]
+end
+
+# ---- the model -------------------------------------------------------------
+def convert(path, out)
+  bytes = File.binread(path)
+  model = begin
+    TFLite::Model.new(bytes)
+  rescue ArgumentError, NoMethodError => e
+    die("#{path}: cannot read it as TFLite (#{e.message})")
+  end
+  return [path, model] unless model.neutron_graphs.empty? && !model.ops.any? { |o| o.custom.to_s.start_with?("Neutron") }
+
+  py = ENV["NEUTRON_SDK_PYTHON"]
+  if py.nil? || py.empty?
+    die("#{path} is not converted and NEUTRON_SDK_PYTHON is not set", 2)
+  end
+  mod = %w[-I -m eiq_neutron_sdk.neutron_converter.converter]
+  version = run!(py, *mod, "--version")[/version\s+([0-9.]+)/, 1]
+  want = pins["converter_version"]
+  die("converter is #{version.inspect} but #{TABLE} pins #{want}; microcode and driver run as a pair") unless version == want
+  conv = File.join(out, "converted.tflite")
+  run!(py, *mod, "--input", path, "--output", conv, "--target", TARGET, log: File.join(out, "converter.log"))
+  [conv, TFLite::Model.new(File.binread(conv))]
+end
+
+# A converted model, the converter's log and the generated arrays land in
+# OUT, so OUT must not be one `git add` away from being tracked.
+def guard_out(out)
+  existing = out
+  existing = File.dirname(existing) until File.exist?(existing)
+  real = File.join(File.realpath(existing), out[existing.size..])
+  root = File.realpath(ROOT)
+  return unless real.chomp("/") == root || real.start_with?("#{root}/")
+  return if system("git", "-C", root, "check-ignore", "-q", "#{real.chomp("/")}/", err: File::NULL)
+  die("#{out} is inside this repository and git does not ignore it. Converted models and the " \
+      "converter's log must not be tracked; use a directory outside it or an ignored one")
+end
+
+def shape_s(t) = "[:i8, #{t.shape.join(", ")}]"
+
+def check_model(decl, model, path)
+  graphs = model.neutron_graphs
+  if graphs.empty?
+    die("#{path}: no NeutronGraph after conversion. Nothing would run on the NPU; a float model or unsupported operators can do this")
+  end
+  die("#{path}: #{graphs.size} NeutronGraphs; this lane takes exactly one") if graphs.size > 1
+  g = graphs[0]
+  if decl.model && model.ops.size > 1
+    die("#{path}: the converter left #{model.ops.size - 1} operators outside the NeutronGraph, and npu_def " \
+        "runs the whole model on the NPU. Change the declared operators or their sizes")
+  end
+  # [inputs..., microcode, weights, kernels] -> [outputs..., scratch, profile, debug]
+  n_in = g.inputs.size - 3
+  n_out = g.outputs.size - 3
+  die("#{path}: the NeutronGraph has #{n_in} inputs and #{n_out} outputs; this lane takes one of each") unless n_in == 1 && n_out == 1
+  input = model.tensors[g.inputs[0]]
+  output = model.tensors[g.outputs[0]]
+  names = %w[NeutronMicrocode NeutronWeights NeutronKernels]
+  blobs = g.inputs[-3..].map { |i| model.tensors[i] }
+  unless blobs.map(&:name) == names
+    die("#{path}: the NeutronGraph's last inputs are #{blobs.map(&:name).inspect}, not #{names.inspect}")
+  end
+  { "input" => [decl.input, input], "output" => [decl.output, output] }.each do |side, (d, t)|
+    die("#{path}: the NeutronGraph #{side} is type #{t.type}, not int8") unless t.type == TFLite::INT8
+    unless d[1..] == t.shape
+      die("#{path}: the declaration says #{side}: #{d.inspect}, the NeutronGraph has #{shape_s(t)}")
+    end
+  end
+  tail = g.outputs[-3..].map { |i| model.tensors[i] }
+  tail_names = %w[NeutronScratch NeutronProfile NeutronDebug]
+  unless tail.map(&:name) == tail_names
+    die("#{path}: the NeutronGraph's last outputs are #{tail.map(&:name).inspect}, not #{tail_names.inspect}")
+  end
+  scratch, profile, debug = tail
+  unless scratch.shape.size == 1 && scratch.shape[0] > 0 && [TFLite::UINT8, TFLite::INT8].include?(scratch.type)
+    die("#{path}: NeutronScratch is type #{scratch.type}, shape #{scratch.shape.inspect}; its size cannot be read as bytes")
+  end
+  unless profile.shape == [0] && debug.shape == [0]
+    die("#{path}: NeutronProfile is #{profile.shape.inspect} and NeutronDebug #{debug.shape.inspect}; " \
+        "this lane gives the NPU no buffer for either, so both must be empty")
+  end
+  others = model.ops.reject { |o| o.custom == "NeutronGraph" }
+  unless others.empty? || decl.partial
+    die("#{path}: #{others.size} operators are outside the NeutronGraph and would not run " \
+        "(builtin codes #{others.map(&:builtin).inspect}). Say partial: true to accept that #{decl.name} " \
+        "returns the NeutronGraph's own output")
+  end
+  { graph: g, input: input, output: output, microcode: blobs[0], weights: blobs[1], kernels: blobs[2],
+    scratch: scratch }
+end
+
+# ---- generated sources -----------------------------------------------------
+def c_array(name, bytes, const: true)
+  "__attribute__((aligned(16))) #{const ? "const " : ""}uint8_t #{name}[#{bytes.bytesize}] = {#{bytes.unpack("C*").join(",")}};\n"
+end
+
+def write_model(out, model, m)
+  File.write(File.join(out, "npu_model.c"), +"#include <stdint.h>\n" +
+    c_array("npu_microcode", model.data(m[:microcode])) +
+    c_array("npu_weights", model.data(m[:weights])) +
+    c_array("npu_kernels", model.data(m[:kernels])))
+end
+
+def mlir(decl)
+  # si8, not i8: the ABI type the shim checks a :i8 result against.
+  ty = ->(s) { "tensor<#{s[1..].join("x")}xsi8>" }
+  bytes = ->(s) { s[1..].inject(:*) }
+  <<~MLIR
+    module @npu {
+      stream.executable private @e {
+        stream.executable.export public @run workgroups() -> (index, index, index) {
+          %c1 = arith.constant 1 : index
+          hal.return %c1, %c1, %c1 : index, index, index
+        }
+        builtin.module {
+          func.func private @sp_npu_run(%in: memref<i8>, %in_off: index, %out: memref<i8>, %out_off: index)
+            attributes { hal.import.static, llvm.bareptr = true }
+          func.func @run(%b0: !stream.binding, %b1: !stream.binding) {
+            %c0 = arith.constant 0 : index
+            %n0 = arith.constant #{bytes[decl.input]} : index
+            %n1 = arith.constant #{bytes[decl.output]} : index
+            %m0 = stream.binding.subspan %b0[%c0] : !stream.binding -> memref<?xi8>{%n0}
+            %m1 = stream.binding.subspan %b1[%c0] : !stream.binding -> memref<?xi8>{%n1}
+            %base0, %off0, %sz0, %st0 = iree_codegen.extract_strided_metadata %m0 : memref<?xi8> -> memref<i8>, index, index, index
+            %base1, %off1, %sz1, %st1 = iree_codegen.extract_strided_metadata %m1 : memref<?xi8> -> memref<i8>, index, index, index
+            func.call @sp_npu_run(%base0, %off0, %base1, %off1) : (memref<i8>, index, memref<i8>, index) -> ()
+            return
+          }
+        }
+      }
+      func.func @#{decl.name}(%a: #{ty[decl.input]}) -> #{ty[decl.output]} {
+        %r = flow.dispatch @e::@run(%a) : (#{ty[decl.input]}) -> #{ty[decl.output]}
+        return %r : #{ty[decl.output]}
+      }
+    }
+  MLIR
+end
+
+IREE_M33 = %w[
+  --iree-stream-partitioning-favor=min-peak-memory
+  --iree-hal-target-device=local
+  --iree-hal-local-target-device-backends=llvm-cpu
+  --iree-llvmcpu-target-triple=armv8m.main-none-eabihf
+  --iree-llvmcpu-target-cpu=cortex-m33
+  --iree-llvmcpu-target-cpu-features=+thumb-mode,+armv8-m.main,+dsp,+fp-armv8d16sp,+vfp2sp,+vfp3d16sp,+vfp4d16sp
+  --iree-llvmcpu-debug-symbols=false
+  --iree-llvmcpu-link-embedded=false
+  --iree-llvmcpu-link-static
+].freeze
+
+def write_table(out, decl)
+  # A declaration digest small enough to stay an immediate Integer on a 32-bit
+  # target; the shim compares it with the one in npu.gen.rb.
+  sig = (Digest::SHA256.hexdigest("#{decl.name}#{decl.input}#{decl.output}")[0, 7].to_i(16) | 1)
+  ranks = [decl.input.size - 1, decl.output.size - 1].join
+  File.write(File.join(out, "sp_tensor_table.h"), <<~C)
+    /* Generated by tools/npu/spinel-npu -- do not edit. */
+    #ifndef SP_TENSOR_TABLE_H_
+    #define SP_TENSOR_TABLE_H_
+    typedef struct {
+      const char *name;
+      const char *fq;
+      int nscalar;
+      int ntensor;
+      int nin;
+      int dest;
+      int ret_scalar;
+      const char *ranks;
+      const char *dtypes;
+      const char *shape;
+      long long sig;
+    } sp_t_entry_t;
+    static const sp_t_entry_t SP_T_TABLE[] = {
+      {"#{decl.name}", "npu.#{decl.name}", 0, 2, 1, 1, 0, "#{ranks}", "33", "", #{sig}LL},
+    };
+    #define SP_T_TABLE_N 1
+    #endif
+  C
+  sig
+end
+
+def write_gen(rb, decl, sig)
+  File.write(File.join(rb, "npu.gen.rb"), <<~RUBY)
+    # Generated by tools/npu/spinel-npu -- do not edit.
+    def #{decl.name}(x, y)
+      rc = SPT.sp_t_invoke("#{decl.name}", #{sig}, 0.0, x.handle, y.handle, 0, 0, y.length)
+      if rc != 0
+        raise TensorError, "#{decl.name}: \#{SPT.sp_t_last_error}"
+      end
+      y
+    end
+  RUBY
+end
+
+# The IREE side both boards share: the module and a device with only our executable.
+def device_glue(vmfb)
+  <<~C
+    static const unsigned char vmfb[] __attribute__((aligned(64))) = {#{vmfb.unpack("C*").join(",")}};
+
+    __attribute__((constructor)) static void npu_register(void)
+    {
+    \tsp_t_register_module("npu", vmfb, sizeof(vmfb));
+    }
+
+    iree_status_t sp_t_static_device(const char *uri, iree_allocator_t a, iree_hal_device_t **out)
+    {
+    \tif (strcmp(uri, "local-sync") != 0) {
+    \t\treturn iree_make_status(IREE_STATUS_NOT_FOUND, "only local-sync exists here");
+    \t}
+    \tiree_hal_sync_device_params_t p;
+    \tiree_hal_sync_device_params_initialize(&p);
+    \tconst iree_hal_executable_library_query_fn_t libs[] = {e_library_query};
+    \tiree_hal_executable_loader_t *l = NULL;
+    \tiree_status_t s = iree_hal_static_library_loader_create(1, libs, iree_hal_executable_import_provider_null(), a, &l);
+    \tiree_string_view_t id = iree_make_cstring_view("local-sync");
+    \tiree_hal_allocator_t *da = NULL;
+
+    \tif (iree_status_is_ok(s)) s = iree_hal_allocator_create_heap(id, a, a, &da);
+    \tif (iree_status_is_ok(s)) s = iree_hal_sync_device_create(id, &p, 1, &l, da, a, out);
+    \tiree_hal_allocator_release(da);
+    \tiree_hal_executable_loader_release(l);
+    \treturn s;
+    }
+  C
+end
+
+def write_glue(out, m, vmfb, tag)
+  File.write(File.join(out, "npu_glue.c"), <<~C)
+    /* Generated by tools/npu/spinel-npu -- do not edit. */
+    #include <zephyr/kernel.h>
+    #include <zephyr/sys/printk.h>
+    #include <string.h>
+    #include "NeutronDriver.h"
+    #include "iree/hal/drivers/local_sync/sync_device.h"
+    #include "iree/hal/local/loaders/static_library_loader.h"
+    #include "iree/runtime/api.h"
+    #include "npu_k.h"
+
+    extern const uint8_t npu_microcode[], npu_weights[], npu_kernels[];
+    int sp_t_register_module(const char *, const void *, int64_t);
+    bool tiny_wait_until(int64_t deadline_ns) { return true; }
+
+    static __aligned(16) uint8_t ctx_mem[2048];
+    static __aligned(16) uint8_t scratch[#{m[:scratch].shape[0]}];
+    static uint8_t empty[16];
+    static NeutronModelHandle handle;
+    /* The driver keeps this pointer past neutronModelPrepare. */
+    static const NeutronModelConfig model = {.microcode = npu_microcode, .weights = npu_weights, .kernels = npu_kernels};
+
+    /* The dispatch has no error path into IREE; a driver error stops the program. */
+    static void npu_die(const char *what, NeutronError e)
+    {
+    \tprintk("spinel-npu: %s failed: %x\\n", what, e);
+    \tk_panic();
+    }
+
+    void sp_npu_run(const int8_t *in, uint32_t in_off, int8_t *out, uint32_t out_off)
+    {
+    \tif (!handle) {
+    \t\tprintk("spinel-npu: build #{tag}\\n");
+    \t\tNeutronError e = neutronInit();
+    \t\tNeutronModelHandle h = (NeutronModelHandle)ctx_mem;
+
+    \t\tif (neutronGetModelContextSize() > sizeof(ctx_mem)) npu_die("context size", 0);
+    \t\tif (e != ENONE) npu_die("neutronInit", e);
+    \t\tif ((e = neutronModelPrepare(&model, &h)) != ENONE) npu_die("neutronModelPrepare", e);
+    \t\thandle = h;
+    \t}
+    \tconst void *i[1] = {in + in_off};
+    \tvoid *o[4] = {out + out_off, scratch, empty, scratch};
+    \tNeutronDataConfig d = {.inputs = i, .outputs = o, .scratch = scratch, .scratchWeights = NULL};
+    \tNeutronError e = neutronRunBlocking(handle, &d);
+
+    \tif (e != ENONE) npu_die("neutronRunBlocking", e);
+    }
+
+    #{device_glue(vmfb)}
+  C
+end
+
+# ---- the workspace and the build -------------------------------------------
+def check_workspace(ws)
+  p = pins
+  describe = run!("git", "-C", File.join(ws, "zephyr"), "describe", "--tags").strip
+  die("#{ws}/zephyr is #{describe}, the table pins #{p["zephyr_describe"]}", 2) unless describe == p["zephyr_describe"]
+  hal = run!("git", "-C", File.join(ws, "modules/hal/nxp"), "rev-parse", "HEAD").strip
+  die("hal_nxp is #{hal}, the table pins #{p["hal_nxp_revision"]}", 2) unless hal == p["hal_nxp_revision"]
+  { "libNeutronDriver.a" => "blob_driver_sha256", "libNeutronFirmware.a" => "blob_firmware_sha256" }.each do |f, key|
+    path = File.join(ws, "modules/hal/nxp/zephyr/blobs/neutron/mcxn", f)
+    die("#{path} is missing: west blobs fetch hal_nxp", 2) unless File.exist?(path)
+    die("#{path} differs from the table", 2) unless Digest::SHA256.file(path).hexdigest == p[key]
+  end
+  sdk = File.read(File.join(env!("ZEPHYR_SDK_INSTALL_DIR"), "sdk_version")).strip
+  die("the Zephyr SDK is #{sdk}, the table pins #{p["zephyr_sdk"]}", 2) unless sdk == p["zephyr_sdk"]
+end
+
+M33 = %w[-mcpu=cortex-m33 -mthumb -mfloat-abi=hard -mfpu=fpv5-sp-d16 -Os -ffunction-sections -fdata-sections -std=gnu2x -w].freeze
+# One flags array for the runtime and the generated code (a define that reaches
+# only one side links and is silently wrong). The GC tables fall back safely
+# when full: minor collections become full ones, or the table grows on the heap.
+# SP_ALLOC_STATS and SP_STR_SHAPE_MAX size diagnostic tables; 1 keeps them out of RAM.
+RT_DEFS = %w[-DSP_NO_SIGNALS -DSP_MAX_WORKERS=1 -D__wasi__ -D_GNU_SOURCE
+             -DSP_ALLOC_STATS=1 -DSP_STR_SHAPE_MAX=1 -DSP_GC_STACK_MAX=256 -DSP_GC_REMEMBERED_MAX=1024
+             -DSP_GC_MARK_STACK_MAX=256 -DSP_GC_PINNED_MAX=256 -DSP_DYN_SYMS_MAX=256].freeze
+RT_INC = ["-I#{VENDOR}/lib", "-I#{VENDOR}/lib/regexp", "-I#{VENDOR}/lib/regexp/shim", "-isystem", "#{HOST}/shim",
+          "-include", "#{HOST}/force.h"].freeze
+IREE_DEFS = %w[-DIREE_PLATFORM_GENERIC=1 -DIREE_FILE_IO_ENABLE=0 -DIREE_DEVICE_SIZE_T=uint32_t -DPRIdsz=PRIu32
+               -DIREE_STATUS_MODE=0 -DIREE_ALLOCATOR_SYSTEM_CTL=iree_allocator_libc_ctl -DSP_T_STATIC_DEVICE].freeze
+
+def build(decl, out, rb, stripped, app)
+  ws = env!("ZEPHYR_WORKSPACE")
+  sdk = env!("ZEPHYR_SDK_INSTALL_DIR")
+  src = env!("IREE_SRC")
+  m33 = env!("IREE_M33_BUILD")
+  gcc = "#{sdk}/gnu/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcc"
+
+  Dir[File.join(File.dirname(app), "*.rb")].each { |f| FileUtils.cp(f, rb) }
+  File.write(File.join(rb, File.basename(app)), stripped)
+  FileUtils.cp_r(File.join(ROOT, "tools/tensor/spinel"), rb)
+
+  mk = File.read(File.join(VENDOR, "Makefile"))
+  members = mk[/^RT_MEMBERS\s*=\s*(.+)$/, 1].to_s.split
+  regexp = mk[/^RE_SRC\s*=\s*(.+)$/, 1].to_s.split
+  die("no RT_MEMBERS or RE_SRC in the vendor Makefile") if members.empty? || regexp.empty?
+  rt = File.join(out, "rt")
+  FileUtils.mkdir_p(rt)
+  (members.map { |m| "lib/#{m}.c" } + regexp).each do |s|
+    obj = File.join(rt, "#{File.basename(s, ".c")}.o")
+    next if File.exist?(obj)
+    run!(gcc, *M33, *RT_DEFS, *RT_INC, "-c", File.join(VENDOR, s), "-o", obj)
+  end
+
+  spinel = File.join(VENDOR, "bin/spinel")
+  die("no #{spinel}: build vendor/spinel first", 2) unless File.executable?(spinel)
+  run!(spinel, File.basename(app), "-c", "-o", File.join(out, "app.c"), chdir: rb, log: File.join(out, "spinel.log"))
+  iree_inc = ["-I#{src}/runtime/src", "-I#{src}", "-I#{m33}/runtime/src", "-I#{out}"]
+  run!(gcc, *M33, *RT_DEFS, *RT_INC, *IREE_DEFS, *iree_inc, "-Dmain=sp_app_main", "-c", File.join(out, "app.c"), "-o", File.join(out, "app.o"))
+  run!(gcc, *M33, *RT_DEFS, *RT_INC, *IREE_DEFS, *iree_inc, "-c", File.join(ROOT, "tools/tensor/sp_tensor_shim.c"), "-o", File.join(out, "shim.o"))
+
+  west = File.join(ws, ".venv/bin/west")
+  west = "west" unless File.executable?(west)
+  env = { "ZEPHYR_BASE" => File.join(ws, "zephyr"), "CMAKE_EXPORT_NO_PACKAGE_REGISTRY" => "ON" }
+  run!(west, "build", "-p", "always", "-b", BOARD, "-d", File.join(out, "zephyr"), HOST, "--",
+       "-DSP_NPU_OUT=#{out}", "-DCMAKE_EXPORT_NO_PACKAGE_REGISTRY=ON",
+       env: env, chdir: ws, log: File.join(out, "zephyr.log"))
+end
+
+# ---- main ------------------------------------------------------------------
+args = ARGV.dup
+bi = args.index("--board")
+board = bi ? args[bi + 1] : "frdm-mcxn947"
+args.slice!(bi, 2) if bi
+die("--board is frdm-mcxn947 or stm32mp257f-dk; got #{board.inspect}", 2) unless %w[frdm-mcxn947 stm32mp257f-dk].include?(board)
+check_only = !args.delete("--check-only").nil?
+oi = args.index("-o")
+die("usage: spinel-npu [--board NAME] app.rb -o OUT [--check-only]", 2) unless oi && args[oi + 1]
+out = File.expand_path(args[oi + 1])
+args.slice!(oi, 2)
+die("usage: spinel-npu [--board NAME] app.rb -o OUT [--check-only]", 2) unless args.size == 1
+app = File.expand_path(args[0])
+die("#{app}: no such file", 2) unless File.exist?(app)
+
+decl, stripped = parse(app)
+guard_out(out)
+FileUtils.mkdir_p(out)
+File.write(File.join(out, "program.rb"), stripped)
+if decl.model
+  path = File.join(out, "generated.tflite")
+  File.binwrite(path, decl.model)
+else
+  path = File.expand_path(decl.tflite, File.dirname(app))
+  die("#{path}: no such model", 2) unless File.exist?(path)
+end
+if board == "stm32mp257f-dk"
+  stm32_lane(decl, path, out, stripped, app, check_only)
+  exit 0
+end
+converted, model = convert(path, out)
+m = check_model(decl, model, converted)
+puts "spinel-npu: #{decl.name}: 1 NeutronGraph, input #{shape_s(m[:input])}, output #{shape_s(m[:output])}"
+exit 0 if check_only
+
+check_workspace(env!("ZEPHYR_WORKSPACE"))
+rb = File.join(out, "rb")
+FileUtils.mkdir_p(rb)
+write_model(out, model, m)
+File.write(File.join(out, "npu.mlir"), mlir(decl))
+run!(env!("IREE_COMPILE"), File.join(out, "npu.mlir"), *IREE_M33,
+     "--iree-llvmcpu-static-library-output-path=#{File.join(out, "npu_k.h")}", "-o", File.join(out, "npu.vmfb"))
+sig = write_table(out, decl)
+write_gen(rb, decl, sig)
+vmfb = File.binread(File.join(out, "npu.vmfb"))
+# Printed by the image, so a console capture can be tied to this program and model.
+tag = Digest::SHA256.hexdigest(vmfb + stripped + File.binread(File.join(out, "npu_model.c")))
+File.write(File.join(out, "build.tag"), "#{tag}\n")
+write_glue(out, m, vmfb, tag)
+build(decl, out, rb, stripped, app)
+puts "spinel-npu: #{File.join(out, "zephyr/zephyr/zephyr.bin")}"

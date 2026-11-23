@@ -1,0 +1,13 @@
+verdict	object	symbol	reason
+ALLOW	kern.riscv32-zephyr.o	__adddf3	compiler-rt builtin
+ALLOW	kern.riscv32-zephyr.o	__divdf3	compiler-rt builtin
+ALLOW	kern.riscv32-zephyr.o	__floatdidf	compiler-rt builtin
+ALLOW	kern.riscv32-zephyr.o	__floatunsidf	compiler-rt builtin
+ALLOW	kern.riscv32-zephyr.o	__gedf2	compiler-rt builtin
+ALLOW	kern.riscv32-zephyr.o	__gtdf2	compiler-rt builtin
+ALLOW	kern.riscv32-zephyr.o	__ltdf2	compiler-rt builtin
+ALLOW	kern.riscv32-zephyr.o	__muldf3	compiler-rt builtin
+ALLOW	kern.riscv32-zephyr.o	__subdf3	compiler-rt builtin
+ALLOW	kern.riscv32-zephyr.o	spinel_grad_sq_hinge_loss	platform extern declared by the profile
+ALLOW	kern.riscv32-zephyr.o	spinel_hvp_sq_hinge_loss	platform extern declared by the profile
+ALLOW	kern.riscv32-zephyr.o	spinel_trap	platform extern declared by the profile

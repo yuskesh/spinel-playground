@@ -1,0 +1,1143 @@
+/* generated from tools/app/templates/main.c.erb by spinel-core-app build: the
+ * glue of decision 0014 §4 and §8 for `<%= app_name %>` on <%= board %>.
+ *
+ * Storage: one static buffer per `state`, aligned to its element, zero at
+ * start (§10). Entry wrappers: spc_entry_<name>() passes the entry's states
+ * to the kernel's object. The scheduler thread sweeps the thread entries in
+ * declaration order with a fresh clock reading per entry and sleeps until
+ * the earliest next release; each interrupt entry has a k_timer whose expiry
+ * runs the selection rule for every interrupt entry, in the system clock
+ * interrupt. The clock is k_cycle_get_64() (§4). The failure handler records
+ * the entry, status and release, stops every entry of that context and puts
+ * the devices that context owns into their safe state (§4).
+ *
+ * Compiled with the kernel's clang against Zephyr's headers and measured by
+ * the same method as the CORE objects (§8 step 8); linked by west. Every
+ * arithmetic on 64-bit cycle counts avoids a libgcc division helper: the
+ * release arithmetic uses a bounded shift-subtract division (spc_udiv64).
+ *
+ * A verification build (SPC_VERIFY, §10) records every selection with its
+ * clock reading, every invocation's start, status, private state and end,
+ * every failure with the cancellations it causes, the cuts at the horizon
+ * H, and runs the end sequence: once every context has ended every
+ * invocation it started, the transport thread drains the outbound queues
+ * and the recorder's rings and writes the end marker (transport_uart.c);
+ * after D past H an incomplete trace says so. Each actor sets the recorder's
+ * current context and entry around its recorded work and restores them, so
+ * a preempting actor leaves the preempted one's values as they were. The
+ * per-entry cycle figures of the plan's D3 item are printed after the end
+ * marker as SPC_CYCLES lines: the count is k_cycle_get_64() around the
+ * invocation, and around each __aeabi_ldivmod call through the linker's
+ * --wrap (cycles.c), so the wrapper's own cycles are inside the figure.
+ */
+#include <stdint.h>
+#include <string.h>
+#include <zephyr/kernel.h>
+#include <zephyr/sys/printk.h>
+<% bell = pair && pair[:doorbell] %><% if bell %>#include <zephyr/drivers/mbox.h>
+<% end %><% if pair %>#include <zephyr/init.h>
+#include <cmsis_core.h>
+#include "ring/ring_abi.h"
+#include "ring/cycles.h"
+#include "ring/wait_map.h"
+<% end %><% board_modules.each do |m| %>#include "adapters/<%= m[:class_dir] %>/adapter.h"
+<% end %>
+<% app.channels.each do |c| %>#include "channel_<%= c.name %>.h"
+<% end %>
+#ifndef SPC_SCHEDULER_STACK
+#define SPC_SCHEDULER_STACK 2048
+#endif
+#define SPC_CYC_PER_SEC <%= cycles_per_sec %>u
+<% if stress %>void spc_stress_timer_start(void); /* 0014 Task 12's sampling source, a production build's */
+<% end %><% if pcsample %>void spc_pcsample_timer_start(void); /* the PC sampler of a measurement build (--pcsample) */
+<% end %><% if verification %>#define SPC_VERIFY 1
+#include "recorder.h"
+#define SPC_CTX_SCHED 0u
+#define SPC_CTX_TIMER <%= timer_ctx %>u /* 3 + the system timer's index in the inventory */
+#define SPC_HORIZON_CYC ((uint64_t)<%= horizon_us %>u * (SPC_CYC_PER_SEC / 1000000u))
+#define SPC_DRAIN_CYC ((uint64_t)<%= drain_us %>u * (SPC_CYC_PER_SEC / 1000000u))
+extern volatile uint8_t spc_end_requested, spc_ended, spc_end_timed_out; /* transport_uart.c */
+void spc_rec_register_state(uint8_t id, const void *base, uint32_t count, uint8_t width);
+uint32_t spc_rec_sequence(void);
+extern uint32_t spc_rec_dropped, spc_rec_unregistered;
+extern uint32_t spc_transport_passes;
+uint32_t spc_transport_stack_mark(uint32_t *size); /* transport_uart.c */
+<% adapter_threads.each do |t| %>uint32_t spc_adapter_<%= t[:cls] %>_stack_mark(uint32_t *size); /* adapters/<%= t[:cls] %>: the <%= t[:name] %> thread */
+<% end %>/* the interrupt stack's high-water mark: CONFIG_INIT_STACKS painted it 0xAA at boot */
+extern K_KERNEL_STACK_ARRAY_DECLARE(z_interrupt_stacks, CONFIG_MP_MAX_NUM_CPUS, CONFIG_ISR_STACK_SIZE);
+static uint32_t spc_isr_stack_mark(uint32_t *size)
+{
+	const uint8_t *base = (const uint8_t *)K_KERNEL_STACK_BUFFER(z_interrupt_stacks[0]);
+	uint32_t n = K_KERNEL_STACK_SIZEOF(z_interrupt_stacks[0]);
+	uint32_t unused = 0;
+
+	while (unused < n && base[unused] == 0xAAu) {
+		unused++;
+	}
+	*size = n;
+	return n - unused;
+}
+void spc_stimulus_start(uint64_t epoch);
+<% if nest_timer %>void spc_nest_timer_start(uint64_t epoch);
+void spc_nest_timer_stop(void);
+<% end %>static volatile uint8_t spc_isr_cut_done; /* the timer dispatch wrote its cuts at H */
+/* the D3 figures, per entry: invocations, cycles inside them, and inside __aeabi_ldivmod */
+uint32_t spc_cyc_calls[<%= app.scheduled.size %>];
+uint64_t spc_cyc_total[<%= app.scheduled.size %>];
+uint32_t spc_cyc_ldivmod_calls[<%= app.scheduled.size %>];
+uint64_t spc_cyc_ldivmod[<%= app.scheduled.size %>];
+<% end %>
+/* ---- the failure record and the stopped contexts (§4) */
+volatile int32_t spc_failed_status;
+volatile uint32_t spc_failed_entry;
+volatile uint32_t spc_failed_release;
+volatile uint8_t spc_context_stopped[2]; /* [0] thread, [1] interrupt */
+<% if failure_sites %>
+/* ---- failure sites (spinel-core-app --failure-sites, a debugging aid): the
+ * first failed call's entry, status and site (spinel-core-kernel's table in
+ * the firmware's sites/), recorded by the failing path and printed once by
+ * main at the lowest priority */
+<% failure_sites.each do |e| %>extern int32_t spinel_core_<%= e %>_failure_site;
+<% end %>const char *volatile spc_fs_entry;
+volatile int32_t spc_fs_status;
+volatile int32_t spc_fs_site;
+static int32_t *const spc_fs_sites[<%= app.scheduled.size %>] = { <%= app.scheduled.map { |e, _| "&spinel_core_#{e.name}_failure_site" }.join(', ') %> };
+<% end %>
+
+/* ---- storage (§10: all zero at start) */
+<% app.states.each do |st| %><% if st.placement == :session && session[:dtcm].to_a.include?(st.name) %>/* <%= st.name %>: the session's, kept in the data TCM (core_session dtcm:, filled at boot) */
+extern uint8_t spc_dtcm_<%= st.name %>[];
+#define spc_state_<%= st.name %> ((<%= ctype[st.element] %> *)spc_dtcm_<%= st.name %>)
+<% elsif st.placement == :session %>/* <%= st.name %>: the session's (decision 0021), <%= st.part == "resource" ? "read in place from the NOR" : "in the writable part copied at boot" %> */
+#define spc_state_<%= st.name %> ((<%= ctype[st.element] %> *)<%= st.part == "resource" ? "(uintptr_t)#{format('0x%08xu', session[:base] + st.offset)}" : "(spc_session_rw + #{st.offset}u)" %>)
+<% else %>static <%= ctype[st.element] %> spc_state_<%= st.name %>[<%= st.count %>] __attribute__((aligned(<%= width[st.element] %>)));
+<% end %><% end %><% if session %>/* the session: its writable part, and the check and copy that run before
+ * any entry (decision 0021) */
+extern uint8_t spc_session_rw[];
+extern const char spc_session_id[];
+int32_t spc_session_load(void);
+<% end %>
+<% app.scratches.each do |ctx, bytes| %>/* the <%= ctx %> context's data stack (decision 0041 stage 2): the first word
+ * is the bump offset, zero at start; the arrays follow it */
+static uint8_t spc_scratch_<%= ctx %>[<%= bytes %>] __attribute__((aligned(8)));
+<% end %>/* ---- the entries, the kernel's objects */
+<% app.scheduled.each do |entry, trig| %>int32_t spinel_core_<%= entry.name %>(<%= (entry.params.map { |p| "#{ctype[app.state(p).element]} *#{p}" } + (app.scratches[trig.context] ? ["void *scratch"] : [])).join(", ") %>);
+<% end %>
+/* ---- the transport (Task 8) */
+<% app.channels.select(&:xcore).each do |c| %>int32_t spc_channel_<%= c.name %>_check(void);
+<% end %><% if app.channels.any?(&:framed?) || verification %>void spc_transport_start(void);
+<% end %>
+/* ---- board package init and safe states */
+<% board_modules.each do |m| %><% if m[:init] %>int32_t spc_board_<%= m[:stem] %>_init(void);
+<% end %><% end %>
+<% owned.each do |ctx, list| %><% list.each do |mod, idx, stem, cls| %>extern const <%= mod[:table] %> spc_board_<%= stem %>_table[];
+<% end %><% end %>
+
+/* 64 / 32 division without libgcc: 64 shift-subtract steps, always. */
+static uint64_t spc_udiv64(uint64_t n, uint32_t d)
+{
+	uint64_t q = 0, r = 0;
+
+	for (int i = 63; i >= 0; i--) {
+		r = (r << 1) | ((n >> i) & 1u);
+		q <<= 1;
+		if (r >= d) {
+			r -= d;
+			q |= 1u;
+		}
+	}
+	return q;
+}
+
+/* ---- the entry wrappers */
+<% app.scheduled.each_with_index do |(entry, trig), i| %>static int32_t spc_entry_<%= entry.name %>(void)
+{
+	return spinel_core_<%= entry.name %>(<%= (entry.params.map { |p| "spc_state_#{p}" } + (app.scratches[trig.context] ? ["spc_scratch_#{trig.context}"] : [])).join(", ") %>);
+}
+<% end %>
+/* ---- the entry table: index, name, context, period in cycles, wrapper */
+struct spc_entry {
+	const char *name;
+	uint8_t context; /* 0 thread, 1 interrupt */
+	uint64_t period_cyc;
+	int32_t (*run)(void);
+	uint64_t last_run; /* releases since the epoch: 64-bit, like the clock, so it never wraps */
+#if defined(SPC_VERIFY)
+	uint64_t last_classified; /* the last release with a terminal class (§10) */
+#endif
+};
+static struct spc_entry spc_entries[] = {
+<% app.scheduled.each do |entry, trig| %>	{ "<%= entry.name %>", <%= trig.context == "thread" ? 0 : 1 %>, (uint64_t)<%= trig.period_us %>u * (SPC_CYC_PER_SEC / 1000000u), spc_entry_<%= entry.name %>, 0u
+#if defined(SPC_VERIFY)
+	  , 0u
+#endif
+	},
+<% end %>};
+#define SPC_ENTRIES <%= app.scheduled.size %>u
+static uint64_t spc_epoch;
+<% if bell %>
+/* ---- the doorbell (decision 0028): the MU's general-purpose interrupt of
+ * <%= bell[:channels].map { |d| "channel #{d[:name]} (GIR#{d[:gi]})" }.join(', ') %>, on <%= bell[:label] %>, through Zephyr's MU
+ * driver, whose handler clears GIPn and calls spc_doorbell. It counts the
+ * wake-up in the channel's line C (woken), marks each entry the channel
+ * wakes due, and gives spc_wake_sem, which the scheduler thread takes in
+ * place of its sleep: a doorbell that comes while the entries run is kept
+ * by the semaphore, not lost. A due entry runs before its period; its
+ * periodic releases are unchanged and are the time-out of a doorbell that
+ * never comes. */
+K_SEM_DEFINE(spc_wake_sem, 0, 1);
+static volatile uint8_t spc_due[SPC_ENTRIES];
+<% bell[:channels].each do |d| %>static uint32_t spc_woken_<%= d[:name] %>;
+<% end %>
+static void spc_doorbell(const struct device *dev, mbox_channel_id_t channel, void *user_data, struct mbox_msg *data)
+{
+	volatile uint32_t *w = (volatile uint32_t *)<%= pair[:role] == :companion ? 'SPC_RING_M33_BASE' : 'SPC_RING_M7_BASE' %>;
+
+	(void)dev;
+	(void)user_data;
+	if (data != NULL) {
+		return; /* a data message, not a doorbell */
+	}
+<% bell[:channels].each do |d| %>	if (channel == <%= d[:gi] %>u) {
+		spc_woken_<%= d[:name] %>++;
+		spc_ring_store(w, SPC_CH_C(<%= d[:index] %>u) + SPC_CH_C_WOKEN, spc_woken_<%= d[:name] %>);
+<% d[:entries].each do |ei| %>		spc_due[<%= ei %>u] = 1u; /* <%= app.scheduled[ei][0].name %> */
+<% end %>	}
+<% end %>	k_sem_give(&spc_wake_sem);
+}
+<% end %>#if defined(SPC_VERIFY)
+/* the private (non-cross) states of each entry, for the PRIVATE records */
+struct spc_private { uint8_t state; const void *base; uint32_t bytes; };
+<% app.scheduled.each do |entry, trig| %>static const struct spc_private spc_private_<%= entry.name %>[] = {
+<% entry.params.each do |pn| %><% st = app.state(pn) %><% next if cross.include?(st.name) %>	{ <%= app.states.index(st) %>u, spc_state_<%= st.name %>, <%= st.count * width[st.element] %>u },
+<% end %>	{ 255u, 0, 0u }
+};
+<% end %>static const struct spc_private *spc_privates[] = { <%= app.scheduled.map { |e, _| "spc_private_#{e.name}" }.join(", ") %> };
+static inline uint8_t spc_ctx_of(const struct spc_entry *e) { return e->context == 0u ? SPC_CTX_SCHED : SPC_CTX_TIMER; }
+/* the last release admitted by the horizon: r with r * period < H */
+static inline uint64_t spc_last_admitted(const struct spc_entry *e) { return spc_udiv64(SPC_HORIZON_CYC - 1u, (uint32_t)e->period_cyc); }
+#define SPC_REC_SAVE() uint8_t spc_saved_ctx = spc_rec_ctx, spc_saved_entry = spc_rec_entry
+#define SPC_REC_SET(ctx, entry) do { spc_rec_ctx = (ctx); spc_rec_entry = (entry); } while (0)
+#define SPC_REC_RESTORE() do { spc_rec_ctx = spc_saved_ctx; spc_rec_entry = spc_saved_entry; } while (0)
+#endif
+
+/* ---- the failure handler (§4) */
+static void spc_safe_state(uint8_t context)
+{
+<% owned.each do |ctx, list| %>	if (context == <%= ctx == "thread" ? 0 : 1 %>) {
+<% list.each do |mod, idx, stem, cls| %><% if mod[:safe] %>		<%= mod[:safe].sub("index", idx.to_s).sub(/\A(\w+)\(/) { "spc_adapter_#{cls}_#{$1}(spc_board_#{stem}_table, " } %>;
+<% end %><% end %>	}
+<% end %>	(void)context;
+}
+
+static void spc_fail(uint32_t entry, int32_t status, uint64_t release)
+{
+	spc_failed_status = status;
+	spc_failed_entry = entry;
+	spc_failed_release = release;
+<% if failure_sites %>	if (spc_fs_status == 0) {
+		spc_fs_site = *spc_fs_sites[entry];
+		spc_fs_entry = spc_entries[entry].name;
+		spc_fs_status = status;
+	}
+<% end %>
+	spc_context_stopped[spc_entries[entry].context] = 1u;
+	spc_safe_state(spc_entries[entry].context);
+#if defined(SPC_VERIFY)
+	{
+		/* the FAIL record, then one CANCEL per entry of the stopped context
+		 * for its releases not yet classified (§10), each in that entry's
+		 * context and naming the FAIL */
+		uint32_t fail_seq;
+
+		spc_tr_FAIL(spc_rec_ctx, spc_rec_entry, status, (uint32_t)release);
+		fail_seq = spc_rec_sequence() - 1u;
+		for (uint32_t x = 0; x < SPC_ENTRIES; x++) {
+			struct spc_entry *xe = &spc_entries[x];
+			uint64_t from, to;
+
+			if (xe->context != spc_entries[entry].context) {
+				continue;
+			}
+			from = xe->last_classified + 1u;
+			to = spc_last_admitted(xe);
+			if (from > to) {
+				continue;
+			}
+			spc_tr_CANCEL(spc_ctx_of(xe), (uint8_t)x, (uint8_t)x, (uint32_t)from, (uint32_t)to, fail_seq);
+			xe->last_classified = to;
+		}
+	}
+#endif
+	/* no printk here: its frame is Zephyr's, unmeasured, and this runs on
+	 * the thread's stack or the timer's; the three words above are the
+	 * record, and the verification build's trace reads them */
+}
+
+/* ---- selection (§4): one clock reading, the newest pending release */
+static void spc_select_and_run(uint32_t i)
+{
+	struct spc_entry *e = &spc_entries[i];
+	uint64_t now = k_cycle_get_64();
+	uint64_t newest;
+	int32_t status;
+<% if bell %>	uint8_t early;
+<% end %>
+	if (spc_context_stopped[e->context]) {
+		return;
+	}
+#if defined(SPC_VERIFY)
+	if (now - spc_epoch >= SPC_HORIZON_CYC) {
+		return; /* at H the dispatchers stop selecting; the cuts follow */
+	}
+	SPC_REC_SAVE();
+	SPC_REC_SET(spc_ctx_of(e), (uint8_t)i);
+#endif
+	newest = spc_udiv64(now - spc_epoch, (uint32_t)e->period_cyc);
+<% if bell %>	/* decision 0028: marked due by the doorbell, the entry runs now even when
+	 * no release is pending; last_run stays the last periodic release */
+	early = spc_due[i] && newest <= e->last_run;
+	spc_due[i] = 0u;
+	if (newest <= e->last_run && !early) {
+<% else %>	if (newest <= e->last_run) {
+<% end %>#if defined(SPC_VERIFY)
+		spc_tr_SELECT(spc_rec_ctx, spc_rec_entry, now, 0u, 0u, 0u);
+		SPC_REC_RESTORE();
+#endif
+		return;
+	}
+	/* releases last_run + 1 .. newest - 1 are skipped, never caught up */
+#if defined(SPC_VERIFY)
+	{
+		uint32_t skipped_from = newest - 1u > e->last_run ? (uint32_t)(e->last_run + 1u) : 0u;
+		uint32_t skipped_to = skipped_from == 0u ? 0u : (uint32_t)(newest - 1u);
+
+		spc_tr_SELECT(spc_rec_ctx, spc_rec_entry, now, (uint32_t)newest, skipped_from, skipped_to);
+		e->last_classified = newest;
+		spc_tr_START(spc_rec_ctx, spc_rec_entry, (uint32_t)newest);
+	}
+#endif
+<% if bell %>	if (!early) {
+		e->last_run = newest;
+	}
+<% else %>	e->last_run = newest;
+<% end %>#if defined(SPC_VERIFY)
+	{
+		uint64_t t0 = k_cycle_get_64();
+
+		status = e->run();
+		spc_cyc_total[i] += k_cycle_get_64() - t0;
+		spc_cyc_calls[i] += 1u;
+		spc_tr_STATUS(spc_rec_ctx, spc_rec_entry, status);
+	}
+#else
+	status = e->run();
+#endif
+	if (status != 0) {
+		spc_fail(i, status, newest);
+	}
+#if defined(SPC_VERIFY)
+	for (const struct spc_private *pr = spc_privates[i]; pr->state != 255u; pr++) {
+		spc_tr_PRIVATE(spc_rec_ctx, spc_rec_entry, pr->state, (const uint8_t *)pr->base, pr->bytes);
+	}
+	spc_tr_END(spc_rec_ctx, spc_rec_entry, (uint32_t)newest);
+	SPC_REC_RESTORE();
+#endif
+}
+
+#if defined(SPC_VERIFY)
+/* at H: one CUT per unstopped entry of the context, for the releases still
+ * pending and never selected (§10) */
+static void spc_cut(uint8_t context)
+{
+	for (uint32_t i = 0; i < SPC_ENTRIES; i++) {
+		struct spc_entry *e = &spc_entries[i];
+		uint64_t from, to;
+
+		if (e->context != context || spc_context_stopped[context]) {
+			continue;
+		}
+		from = e->last_classified + 1u;
+		to = spc_last_admitted(e);
+		if (from > to) {
+			continue;
+		}
+		spc_tr_CUT(spc_ctx_of(e), (uint8_t)i, (uint8_t)i, (uint32_t)from, (uint32_t)to);
+		e->last_classified = to;
+	}
+}
+#endif
+
+/* ---- the scheduler thread */
+/* In the core's data TCM where the board has one (the FRDM-IMXRT1186's
+ * zephyr,dtcm): the entries run on this stack, and a board whose RAM is
+ * external (zephyr,sram = hyperram0) would otherwise spill to it. The size
+ * and the guard are the same either way. */
+#if DT_NODE_HAS_STATUS_OKAY(DT_CHOSEN(zephyr_dtcm)) && defined(CONFIG_USERSPACE)
+static Z_THREAD_STACK_DEFINE_IN(spc_scheduler_stack, SPC_SCHEDULER_STACK, __dtcm_noinit_section);
+#elif DT_NODE_HAS_STATUS_OKAY(DT_CHOSEN(zephyr_dtcm))
+/* without CONFIG_USERSPACE, K_THREAD_STACK_DEFINE is K_KERNEL_STACK_DEFINE */
+static Z_KERNEL_STACK_DEFINE_IN(spc_scheduler_stack, SPC_SCHEDULER_STACK, __dtcm_noinit_section);
+#else
+static K_THREAD_STACK_DEFINE(spc_scheduler_stack, SPC_SCHEDULER_STACK);
+#endif
+/* The requested size, as a word the build's step 10 reads back from the
+ * image (0014 §8): the stack object itself is rounded up to the stack
+ * alignment, so its size alone cannot tell R from R - 1. Volatile and read
+ * by the thread creation below, so nothing folds or garbage-collects it. */
+const volatile uint32_t spc_scheduler_stack_size = SPC_SCHEDULER_STACK;
+static struct k_thread spc_scheduler_thread_data;
+
+static void spc_scheduler_thread(void *a, void *b, void *c)
+{
+	(void)a; (void)b; (void)c;
+	for (;;) {
+		uint64_t next = UINT64_MAX;
+
+#if defined(SPC_VERIFY)
+		if (k_cycle_get_64() - spc_epoch >= SPC_HORIZON_CYC) {
+			/* the horizon: cut the thread entries, wait for the timer
+			 * dispatch's cuts, then ask the transport thread for the end
+			 * sequence; D past H makes an incomplete trace say so */
+			uint8_t has_isr = 0;
+
+			SPC_REC_SET(SPC_CTX_SCHED, SPC_NO_ENTRY);
+<% if nest_timer %>			spc_nest_timer_stop(); /* the nesting source ends with the run */
+<% end %>			spc_cut(0u);
+			for (uint32_t i = 0; i < SPC_ENTRIES; i++) {
+				has_isr |= spc_entries[i].context == 1u;
+			}
+			while (has_isr && !spc_isr_cut_done) {
+				if (k_cycle_get_64() - spc_epoch >= SPC_HORIZON_CYC + SPC_DRAIN_CYC) {
+					spc_end_timed_out = 1u; /* D bounds this wait too: the end marker says incomplete */
+					break;
+				}
+				k_msleep(1);
+			}
+			spc_end_requested = 1u;
+			while (!spc_ended) {
+				if (k_cycle_get_64() - spc_epoch >= SPC_HORIZON_CYC + SPC_DRAIN_CYC) {
+					spc_end_timed_out = 1u;
+				}
+				k_msleep(1);
+			}
+			k_sleep(K_FOREVER);
+		}
+#endif
+		for (uint32_t i = 0; i < SPC_ENTRIES; i++) {
+			if (spc_entries[i].context == 0u) {
+				spc_select_and_run(i);
+			}
+		}
+		for (uint32_t i = 0; i < SPC_ENTRIES; i++) {
+			struct spc_entry *e = &spc_entries[i];
+			uint64_t t;
+
+			if (e->context != 0u || spc_context_stopped[0]) {
+				continue;
+			}
+			t = spc_epoch + (e->last_run + 1u) * e->period_cyc;
+			if (t < next) {
+				next = t;
+			}
+		}
+		if (next == UINT64_MAX) {
+#if defined(SPC_VERIFY)
+			next = spc_epoch + SPC_HORIZON_CYC; /* nothing pending: wake at H for the cuts */
+#else
+			k_sleep(K_FOREVER);
+#endif
+		}
+#if defined(SPC_VERIFY)
+		if (next > spc_epoch + SPC_HORIZON_CYC) {
+			next = spc_epoch + SPC_HORIZON_CYC;
+		}
+#endif
+<% if bell %>		/* the next release, or the doorbell first (decision 0028) */
+		(void)k_sem_take(&spc_wake_sem, K_TIMEOUT_ABS_TICKS(k_cyc_to_ticks_ceil64(next)));
+<% else %>		k_sleep(K_TIMEOUT_ABS_TICKS(k_cyc_to_ticks_ceil64(next)));
+<% end %>	}
+}
+
+/* ---- timer dispatch: the interrupt entries, from the system clock interrupt */
+static struct k_timer spc_timers[SPC_ENTRIES];
+
+static void spc_timer_expiry(struct k_timer *t)
+{
+	(void)t;
+#if defined(SPC_VERIFY)
+	{
+		SPC_REC_SAVE();
+		SPC_REC_SET(SPC_CTX_TIMER, SPC_NO_ENTRY);
+		if (k_cycle_get_64() - spc_epoch >= SPC_HORIZON_CYC) {
+			if (!spc_isr_cut_done) {
+				spc_cut(1u);
+				spc_isr_cut_done = 1u;
+				for (uint32_t i = 0; i < SPC_ENTRIES; i++) {
+					if (spc_entries[i].context == 1u) {
+						k_timer_stop(&spc_timers[i]);
+					}
+				}
+			}
+			SPC_REC_RESTORE();
+			return;
+		}
+		SPC_REC_RESTORE();
+	}
+#endif
+	for (uint32_t i = 0; i < SPC_ENTRIES; i++) {
+		if (spc_entries[i].context == 1u) {
+			spc_select_and_run(i);
+		}
+	}
+}
+
+#if defined(SPC_VERIFY)
+/* after the end marker: the D3 figures, then the end line the host waits for */
+void spc_print_end(void)
+{
+	for (uint32_t i = 0; i < SPC_ENTRIES; i++) {
+		printk("SPC_CYCLES entry=%s invocations=%u cycles=%llu ldivmod_calls=%u ldivmod_cycles=%llu\n",
+		       spc_entries[i].name, (unsigned)spc_cyc_calls[i], (unsigned long long)spc_cyc_total[i],
+		       (unsigned)spc_cyc_ldivmod_calls[i], (unsigned long long)spc_cyc_ldivmod[i]);
+	}
+	{
+		/* the painted stacks' high-water marks (0014 §9, the plan's Task 11):
+		 * the thread stacks through Zephyr's stack-space query, the interrupt
+		 * stack by scanning for the paint; each against its static value in
+		 * verify's report */
+		size_t unused = 0;
+		uint32_t tsize, isize;
+		uint32_t tused = spc_transport_stack_mark(&tsize);
+		uint32_t iused = spc_isr_stack_mark(&isize);
+
+		if (k_thread_stack_space_get(&spc_scheduler_thread_data, &unused) == 0) {
+			printk("SPC_STACK name=scheduler used=%u size=%u\n", (unsigned)(spc_scheduler_stack_size - unused), (unsigned)spc_scheduler_stack_size);
+		}
+		printk("SPC_STACK name=transport used=%u size=%u\n", (unsigned)tused, (unsigned)tsize);
+<% adapter_threads.each do |t| %>		{
+			uint32_t asize, aused = spc_adapter_<%= t[:cls] %>_stack_mark(&asize);
+
+			printk("SPC_STACK name=<%= t[:name] %> used=%u size=%u\n", (unsigned)aused, (unsigned)asize);
+		}
+<% end %>		printk("SPC_STACK name=interrupt used=%u size=%u\n", (unsigned)iused, (unsigned)isize);
+	}
+	printk("SPC_END dropped=%u unregistered=%u transport_passes=%u\n", (unsigned)spc_rec_dropped, (unsigned)spc_rec_unregistered, (unsigned)spc_transport_passes);
+}
+#endif
+
+<% if pair && pair[:role] == :companion %>/* decision 0027: the region's header (tools/app/ring/ring_abi.h, version 5),
+ * written by this core alone before second_core_boot releases the M7
+ * (PRE_KERNEL_1 before PRE_KERNEL_2). First the MPU: the region must be
+ * Normal non-cacheable here (MAIR attribute 0x44) in exactly one enabled
+ * region, or nothing of it is written, since a cacheable write may never
+ * reach the OCRAM; the M7 then finds no magic and refuses. Then: magic 0, a
+ * barrier, every header word 0, line 0's version, the pair words (line
+ * 11), the channel table (line 12) and each channel's descriptor and
+ * indices, a barrier, the pair magic and the ring magic last. It runs once,
+ * on the start-up stack, before any interrupt is enabled. */
+uint32_t spc_m33_refused, spc_m33_mpu; /* the MPU check's reason and the attribute it found, for this core's console */
+uint32_t spc_m33_cycles; /* 1 when this core's cycle counter runs (ring/cycles.h) */
+
+static uint32_t spc_m33_mpu_check(void)
+{
+	uint32_t n = (MPU->TYPE & MPU_TYPE_DREGION_Msk) >> MPU_TYPE_DREGION_Pos, found = 0u, attr = 0u;
+
+	for (uint32_t r = 0; r < n; r++) {
+		uint32_t rlar, base, limit;
+
+		MPU->RNR = r;
+		rlar = MPU->RLAR;
+		base = MPU->RBAR & MPU_RBAR_BASE_Msk;
+		limit = (rlar & MPU_RLAR_LIMIT_Msk) | 0x1fu;
+		if ((rlar & MPU_RLAR_EN_Msk) && base <= SPC_RING_M33_BASE + SPC_RING_BYTES - 1u && SPC_RING_M33_BASE <= limit) {
+			uint32_t idx = (rlar & MPU_RLAR_AttrIndx_Msk) >> MPU_RLAR_AttrIndx_Pos;
+			uint32_t mair = idx < 4u ? MPU->MAIR0 : MPU->MAIR1;
+
+			found++;
+			attr = (mair >> (8u * (idx & 3u))) & 0xffu;
+			if (!(base <= SPC_RING_M33_BASE && SPC_RING_M33_BASE + SPC_RING_BYTES - 1u <= limit)) {
+				found++; /* a region over part of it: the whole region is not one region's */
+			}
+		}
+	}
+	spc_m33_mpu = attr;
+	return found == 1u && attr == 0x44u ? 0u : (found == 1u ? 1u : 2u);
+}
+
+static int spc_pair_publish(void)
+{
+	volatile uint32_t *w = (volatile uint32_t *)SPC_RING_M33_BASE;
+
+	spc_m33_cycles = spc_cycles_start();
+	spc_m33_refused = spc_m33_mpu_check();
+	if (spc_m33_refused != 0u) {
+		return 0;
+	}
+	spc_ring_store(w, SPC_RING_W_MAGIC, 0u);
+	spc_ring_dmb();
+	for (uint32_t i = 1u; i < <%= pair[:header_bytes] %>u / 4u; i++) {
+		spc_ring_store(w, i, 0u);
+	}
+	spc_ring_store(w, SPC_RING_W_VERSION, SPC_RING_ABI_VERSION);
+	spc_ring_store(w, SPC_RING_W_PAIR_HI, <%= pair[:pair_hi] %>u);
+	spc_ring_store(w, SPC_RING_W_PAIR_LO, <%= pair[:pair_lo] %>u);
+	spc_ring_store(w, SPC_RING_W_COMPANION_HI, <%= pair[:own_hi] %>u);
+	spc_ring_store(w, SPC_RING_W_COMPANION_LO, <%= pair[:own_lo] %>u);
+	spc_ring_store(w, SPC_RING_W_CHAN_MAGIC, SPC_CHAN_MAGIC);
+	spc_ring_store(w, SPC_RING_W_N_CHANNELS, <%= pair[:channels].size %>u);
+	spc_ring_store(w, SPC_RING_W_FIRST_LINE, SPC_CHAN_FIRST_LINE);
+	spc_ring_store(w, SPC_RING_W_HEADER_BYTES, <%= pair[:header_bytes] %>u);
+	spc_ring_store(w, SPC_RING_W_SLOTS_END, <%= pair[:slots_end] %>u);
+	spc_ring_store(w, SPC_RING_W_LAYOUT_HI, <%= pair[:layout_hi] %>u);
+	spc_ring_store(w, SPC_RING_W_LAYOUT_LO, <%= pair[:layout_lo] %>u);
+	spc_ring_store(w, SPC_RING_W_M33_MPU, spc_m33_mpu);
+	spc_ring_store(w, SPC_RING_W_M33_STATE, SPC_M33_RUNNING);
+<% pair[:channels].each do |d| %>	/* channel <%= d[:name] %>, descriptor <%= d[:index] %> */
+<% d[:words].each_with_index do |v, wi| %>	spc_ring_store(w, SPC_CH_D(<%= d[:index] %>u) + <%= wi %>u, <%= v %>);
+<% end %>	spc_ring_store(w, SPC_CH_P(<%= d[:index] %>u) + SPC_CH_P_HEAD, <%= d[:init_index] %>u);
+	spc_ring_store(w, SPC_CH_C(<%= d[:index] %>u) + SPC_CH_C_TAIL, <%= d[:init_index] %>u);
+	spc_ring_store(w, SPC_CH_M(<%= d[:index] %>u) + SPC_CH_M_SYNC_ERR, 0xFFFFFFFFu);
+<% end %>	spc_ring_dmb();
+	spc_ring_store(w, SPC_RING_W_PAIR_MAGIC, SPC_PAIR_MAGIC);
+	spc_ring_store(w, SPC_RING_W_MAGIC, SPC_RING_MAGIC);
+	spc_ring_dmb();
+	return 0;
+}
+
+SYS_INIT(spc_pair_publish, PRE_KERNEL_1, 0);
+
+/* decision 0027 stage 2, the wait from put to get (Stage 2's choices): the
+ * two cores' cycle counters aligned by this core, the consumer of
+ * <%= pair[:consumed].empty? ? "no channel" : pair[:consumed].map { |c| c[:name] }.join(", ") %>. Once the M7 has left its start, 16 rounds:
+ * s33_seq = k, the M7 answers with s7_t, its counter, and s7_seq = k; the
+ * round with the shortest trip is kept (ring/wait_map.h). The producer's
+ * cycles per consumer cycle are <%= pair[:num] %>/<%= pair[:den] %>, the two builds' CYCLES_PER_SECOND, both
+ * from RC24M. The channels' get reads spc_wait_ref, which spc_m33_watch
+ * renews every 10 ms; every second one more round measures the drift. No
+ * round answered within 5 ms, or no counter, leaves sync_err 0xFFFFFFFF:
+ * not measured. */
+volatile struct spc_wait_ref spc_wait_ref;
+static struct spc_wait_map spc_wait_map = { 0u, 0u, 0xFFFFFFFFu };
+static uint64_t spc_now_hi;
+static uint32_t spc_now_last;
+
+static uint64_t spc_m33_now(void)
+{
+	uint32_t c = spc_cycles();
+
+	if (c < spc_now_last) {
+		spc_now_hi += 1ull << 32;
+	}
+	spc_now_last = c;
+	return spc_now_hi | c;
+}
+
+/* one round of the exchange: 1 with the answer, 0 when none came in 5 ms.
+ * Each pass loads s7_seq, then a barrier (DMB, ISB), then reads t1, so a t1
+ * is never read before the load it follows: the M7's stamp, which it
+ * stores before s7_seq behind a barrier of its own, lies before t1. *g is
+ * t1 less the previous pass's t1 (t0 on the first): the previous load did
+ * not see s7_seq, so the stamp, made just before s7_seq's store with the
+ * M7's interrupts locked, lies within g before t1 (ring_abi.h, line F). */
+static uint32_t spc_m33_round(volatile uint32_t *w, uint32_t seq, uint64_t *t0, uint64_t *t1, uint32_t *answer, uint32_t *g)
+{
+	uint64_t prev;
+
+	*t0 = spc_m33_now();
+	spc_ring_store(w, SPC_RING_W_S33_SEQ, seq);
+	spc_ring_dmb();
+	prev = *t0;
+	for (;;) {
+		uint32_t seen = spc_ring_load(w, SPC_RING_W_S7_SEQ) == seq;
+
+		spc_ring_dmb();
+		__asm__ volatile("isb 0xF" ::: "memory");
+		*t1 = spc_m33_now();
+		if (seen) {
+			*answer = spc_ring_load(w, SPC_RING_W_S7_T);
+			*g = (uint32_t)(*t1 - prev);
+			return 1u;
+		}
+		if (*t1 - *t0 >= <%= pair[:consumer_hz] / 200 %>u) {
+			return 0u;
+		}
+		prev = *t1;
+	}
+}
+
+static uint32_t spc_m33_wait_m7(void)
+{
+	volatile uint32_t *w = (volatile uint32_t *)SPC_RING_M33_BASE;
+	uint32_t state = SPC_M7_STARTING;
+
+	for (uint32_t i = 0; i < 200u && spc_m33_refused == 0u; i++) {
+		state = spc_ring_load(w, SPC_RING_W_M7_STATE);
+		if (state != SPC_M7_STARTING) {
+			break;
+		}
+		k_msleep(10);
+	}
+	return state;
+}
+
+static void spc_m33_sync(void)
+{
+	volatile uint32_t *w = (volatile uint32_t *)SPC_RING_M33_BASE;
+	uint64_t t0, t1;
+	uint32_t p, g;
+
+	if (spc_m33_refused != 0u || !spc_m33_cycles || spc_m33_wait_m7() != SPC_M7_READY) {
+		return;
+	}
+	for (uint32_t k = 1u; k <= 16u; k++) {
+		if (spc_m33_round(w, k, &t0, &t1, &p, &g)) {
+			spc_wait_round(&spc_wait_map, t0, t1, p);
+			if (spc_wait_map.err == (uint32_t)((t1 - t0) / 2u)) {
+				spc_ring_store(w, SPC_RING_W_S33_T0, (uint32_t)t0);
+				spc_ring_store(w, SPC_RING_W_S33_T1, (uint32_t)t1);
+			}
+		}
+	}
+	spc_ring_store(w, SPC_RING_W_S33_SEQ, SPC_SYNC_DONE);
+	if (spc_wait_map.err == 0xFFFFFFFFu) {
+		return;
+	}
+	spc_wait_ref.k_prod = <%= pair[:k_prod] %>u;
+	spc_wait_ref.k_cons = <%= pair[:k_cons] %>u;
+	spc_wait_publish(&spc_wait_ref, &spc_wait_map, spc_m33_now(), <%= pair[:num] %>u, <%= pair[:den] %>u);
+	spc_wait_ref.valid = 1u;
+<% pair[:consumed].each do |c| %>	spc_ring_store(w, SPC_CH_M(<%= c[:index] %>u) + SPC_CH_M_SYNC_ERR, spc_wait_map.err);
+<% end %>}
+
+/* while the run goes on, at the lowest priority: the reference renewed every
+ * 10 ms; every second one more round, whose departure from the alignment
+ * past its own half trip is the drift, and whose trip and departure line E
+ * keeps (version 4, decision 0028 Q5: the shortest trip's round, the last
+ * round and the longest trip, so that the drift is an estimate with its
+ * error and not only its lower bound); since version 5 (0028's follow-ups)
+ * line F: the rounds that timed out, and each kept round's g, the bound of
+ * its departure measured from t1; and a fatal error the M7 records
+ * (its generated k_sys_fatal_error_handler)<%= pair[:console] ? ", printed once" : "" %> */
+static void spc_m33_watch(void)
+{
+	volatile uint32_t *w = (volatile uint32_t *)SPC_RING_M33_BASE;
+	uint32_t fatal = 0u, drift = 0u, rounds = 0u, trip_min = 0u, trip_max = 0u, timeouts = 0u, g_max = 0u;
+
+	k_thread_priority_set(k_current_get(), K_LOWEST_APPLICATION_THREAD_PRIO);
+	for (uint32_t i = 1u;; i++) {
+		k_msleep(10);
+		if (spc_wait_ref.valid) {
+			spc_wait_publish(&spc_wait_ref, &spc_wait_map, spc_m33_now(), <%= pair[:num] %>u, <%= pair[:den] %>u);
+			if (i % 100u == 0u) {
+				uint64_t t0, t1;
+				uint32_t p, g;
+
+				if (spc_m33_round(w, 0x100u + i / 100u, &t0, &t1, &p, &g)) {
+					int32_t dev = (int32_t)(p - spc_wait_predict(&spc_wait_map, t0 + (t1 - t0) / 2u, <%= pair[:num] %>u, <%= pair[:den] %>u));
+					uint64_t d = (uint64_t)(dev < 0 ? -(int64_t)dev : dev) * <%= pair[:den] %>u / <%= pair[:num] %>u;
+					uint64_t half = (t1 - t0) / 2u;
+					uint32_t trip = (uint32_t)(t1 - t0), at = i / 100u;
+					int32_t dev_c = (int32_t)((int64_t)dev * <%= pair[:den] %> / <%= pair[:num] %>);
+
+					rounds++;
+					if (rounds == 1u || trip < trip_min) {
+						trip_min = trip;
+<% pair[:consumed].each do |c| %>						spc_ring_store(w, SPC_CH_E(<%= c[:index] %>u) + SPC_CH_E_TRIP_MIN, trip);
+						spc_ring_store(w, SPC_CH_E(<%= c[:index] %>u) + SPC_CH_E_DEV_AT_MIN, (uint32_t)dev_c);
+						spc_ring_store(w, SPC_CH_E(<%= c[:index] %>u) + SPC_CH_E_ROUND_AT_MIN, at);
+						spc_ring_store(w, SPC_CH_F(<%= c[:index] %>u) + SPC_CH_F_G_AT_MIN, g);
+<% end %>					}
+					g_max = g > g_max ? g : g_max;
+					trip_max = trip > trip_max ? trip : trip_max;
+<% pair[:consumed].each do |c| %>					spc_ring_store(w, SPC_CH_E(<%= c[:index] %>u) + SPC_CH_E_TRIP_LAST, trip);
+					spc_ring_store(w, SPC_CH_E(<%= c[:index] %>u) + SPC_CH_E_DEV_LAST, (uint32_t)dev_c);
+					spc_ring_store(w, SPC_CH_E(<%= c[:index] %>u) + SPC_CH_E_ROUND_LAST, at);
+					spc_ring_store(w, SPC_CH_E(<%= c[:index] %>u) + SPC_CH_E_TRIP_MAX, trip_max);
+					spc_ring_store(w, SPC_CH_F(<%= c[:index] %>u) + SPC_CH_F_G_LAST, g);
+					spc_ring_store(w, SPC_CH_F(<%= c[:index] %>u) + SPC_CH_F_G_MAX, g_max);
+					spc_ring_store(w, SPC_CH_E(<%= c[:index] %>u) + SPC_CH_E_N, rounds);
+<% end %>					if (d > half && d - half > drift) {
+						drift = (uint32_t)(d - half);
+<% pair[:consumed].each do |c| %>						spc_ring_store(w, SPC_CH_M(<%= c[:index] %>u) + SPC_CH_M_DRIFT, drift);
+<% end %>					}
+				} else {
+					timeouts++;
+<% pair[:consumed].each do |c| %>					spc_ring_store(w, SPC_CH_F(<%= c[:index] %>u) + SPC_CH_F_TIMEOUTS, timeouts);
+<% end %>				}
+			}
+		}
+		if (!fatal && spc_ring_load(w, SPC_RING_W_M7_STATE) == SPC_M7_FATAL) {
+			fatal = 1u;
+<% if pair[:console] %>			spc_ring_dmb();
+			printk("SPC_M7_FATAL %u 0x%08x\n", (unsigned)spc_ring_load(w, SPC_RING_W_M7_REASON),
+			       (unsigned)spc_ring_load(w, SPC_RING_W_M7_DETAIL));
+<% end %>		}
+	}
+}
+<% if pair[:console] %>
+/* decision 0027 stage 2: this core owns the console, and prints the M7's
+ * lines for it (owner, 2026-10-26). It waits up to 2 s for the M7 to leave
+ * its start (line 14), then prints the M7's session id (line 15), the pair
+ * id, its own id twice (SPC_COMPANION_ID, as stage 1 has it, and
+ * SPC_M33_SESSION_ID), and the refusal either core recorded; an M7 that never
+ * left its start is `cm7 silent`. Before any relayed line. */
+static void spc_m33_report(void)
+{
+	volatile uint32_t *w = (volatile uint32_t *)SPC_RING_M33_BASE;
+	uint32_t state = SPC_M7_STARTING;
+	char id[33];
+
+	if (spc_m33_refused == 1u || spc_m33_refused == 2u) {
+		printk("SPC_CHANNEL_REFUSED mpu cm33 attr %02x regions %u\n", (unsigned)spc_m33_mpu, (unsigned)spc_m33_refused);
+		return;
+	}
+	for (uint32_t i = 0; i < 200u; i++) {
+		state = spc_ring_load(w, SPC_RING_W_M7_STATE);
+		if (state != SPC_M7_STARTING) {
+			break;
+		}
+		k_msleep(10);
+	}
+	spc_ring_dmb();
+	for (uint32_t i = 0; i < 8u; i++) {
+		uint32_t v = spc_ring_load(w, SPC_RING_W_M7_SESSION + i);
+
+		for (uint32_t b = 0; b < 4u; b++) {
+			id[4u * i + b] = (char)(v >> (8u * b));
+		}
+	}
+	id[32] = 0;
+	if (id[0] != 0) {
+		printk("SPC_SESSION_ID %s\n", id);
+	}
+	printk("SPC_PAIR_ID %08x%08x\n", <%= pair[:pair_hi] %>u, <%= pair[:pair_lo] %>u);
+	printk("SPC_COMPANION_ID %08x%08x\n", <%= pair[:own_hi] %>u, <%= pair[:own_lo] %>u);
+	printk("SPC_M33_SESSION_ID %08x%08x\n", <%= pair[:own_hi] %>u, <%= pair[:own_lo] %>u);
+	if (state == SPC_M7_STARTING) {
+		printk("SPC_CHANNEL_REFUSED cm7 silent\n");
+	} else if (state == SPC_M7_REFUSED) {
+		printk("SPC_CHANNEL_REFUSED cm7 %u %u\n", (unsigned)spc_ring_load(w, SPC_RING_W_M7_REASON),
+		       (unsigned)spc_ring_load(w, SPC_RING_W_M7_DETAIL));
+	} else if (state == SPC_M7_FATAL) {
+		printk("SPC_M7_FATAL %u 0x%08x\n", (unsigned)spc_ring_load(w, SPC_RING_W_M7_REASON),
+		       (unsigned)spc_ring_load(w, SPC_RING_W_M7_DETAIL));
+	}
+	if (spc_m33_refused == 3u) {
+		printk("SPC_CHANNEL_REFUSED cm33 channel\n");
+	}
+}
+
+<% end %>
+
+<% end %><% if pair && pair[:role] == :primary %>/* decision 0027: the region the M33 companion wrote before it released this
+ * core, checked in order -- the MPU (every byte of the region Normal
+ * non-cacheable here: TEX 001, C 0, B 0), the ring's magic and version, the
+ * pair words (line 11), the channel table (line 12) -- with the outcome in
+ * this core's own line 14 (m7_state, m7_reason, m7_detail, m7_mpu) for the
+ * M33 to print, and the session id in line 15. The pair words are cleared
+ * once read, so that a later boot with another M33 image never reads them
+ * as its own. Answers 0 when every step passed; otherwise the step's
+ * reason, and every channel of the pair stays not ready.<% if pair[:console] %> This core still
+ * owns the console (its application declares a uart: channel), so it also
+ * prints the ids and a refusal itself.<% end %> */
+#define SPC_M7_R_MPU 1u
+#define SPC_M7_R_MAGIC 2u
+#define SPC_M7_R_PAIR 3u
+#define SPC_M7_R_TABLE 4u
+#define SPC_M7_R_CHANNEL 5u
+
+static uint32_t spc_m7_mpu_check(uint32_t *found)
+{
+	uint32_t n = (MPU->TYPE & MPU_TYPE_DREGION_Msk) >> MPU_TYPE_DREGION_Pos;
+	int decided = -1;
+
+	*found = 0u;
+	for (uint32_t r = 0; r < n; r++) {
+		uint32_t rbar, rasr, size, base;
+
+		MPU->RNR = r;
+		rbar = MPU->RBAR;
+		rasr = MPU->RASR;
+		if (!(rasr & MPU_RASR_ENABLE_Msk)) {
+			continue;
+		}
+		size = 2u << ((rasr & MPU_RASR_SIZE_Msk) >> MPU_RASR_SIZE_Pos);
+		base = rbar & MPU_RBAR_ADDR_Msk;
+		if (base <= SPC_RING_M7_BASE && SPC_RING_M7_BASE - base + SPC_RING_BYTES <= size) {
+			uint32_t sub = size / 8u, srd = (rasr & MPU_RASR_SRD_Msk) >> MPU_RASR_SRD_Pos, covered = 1u;
+
+			for (uint32_t a = SPC_RING_M7_BASE; size >= 256u && a < SPC_RING_M7_BASE + SPC_RING_BYTES; a += sub) {
+				if (srd & (1u << ((a - base) / sub))) {
+					covered = 0u;
+				}
+			}
+			if (covered) {
+				/* the highest-numbered region that covers the ring decides it */
+				*found = rasr & (MPU_RASR_TEX_Msk | MPU_RASR_C_Msk | MPU_RASR_B_Msk | MPU_RASR_S_Msk);
+				decided = ((rasr & MPU_RASR_TEX_Msk) >> MPU_RASR_TEX_Pos) == 1u && !(rasr & MPU_RASR_C_Msk) &&
+					  !(rasr & MPU_RASR_B_Msk);
+			}
+		}
+	}
+	return decided == 1 ? 0u : 1u;
+}
+
+/* decision 0027 stage 2 (owner, 2026-10-26): a fatal error on this core is
+ * recorded in line 14, its reason and the faulting PC, the line cleaned from
+ * the data cache so that the M33 sees it and prints SPC_M7_FATAL; then the
+ * core halts. Zephyr's own report, when this core has a console, comes
+ * before this handler. */
+void k_sys_fatal_error_handler(unsigned int reason, const struct arch_esf *esf)
+{
+	volatile uint32_t *w = (volatile uint32_t *)SPC_RING_M7_BASE;
+
+	spc_ring_store(w, SPC_RING_W_M7_REASON, reason);
+	spc_ring_store(w, SPC_RING_W_M7_DETAIL, esf ? esf->basic.pc : 0u);
+	spc_ring_dmb();
+	spc_ring_store(w, SPC_RING_W_M7_STATE, SPC_M7_FATAL);
+	spc_ring_dmb();
+	SCB_CleanDCache_by_Addr((void *)(w + SPC_RING_W_M7_STATE), 32);
+	for (;;) {
+		__asm__ volatile("wfi");
+	}
+}
+
+static void spc_m7_record(volatile uint32_t *w, uint32_t state, uint32_t reason, uint32_t detail)
+{
+	spc_ring_store(w, SPC_RING_W_M7_REASON, reason);
+	spc_ring_store(w, SPC_RING_W_M7_DETAIL, detail);
+	spc_ring_dmb();
+	spc_ring_store(w, SPC_RING_W_M7_STATE, state);
+	spc_ring_dmb();
+}
+
+/* decision 0027 stage 2: this core's answers to the companion's clock
+ * exchange (ring/wait_map.h): when s33_seq changes, s7_t is this core's
+ * counter and then s7_seq the sequence. Right after the start's checks for
+ * up to 100 ms, until the companion marks the exchange done; then the
+ * once-a-second rounds of the drift, from main at priority 0, above the
+ * scheduler's 1 (0028's follow-ups): at the lowest priority the scheduler,
+ * always behind, left it too few gaps to answer within the companion's 5 ms.
+ * Each pass is a load and a compare, then a 1 ms sleep.
+ * The consumer of a channel from the companion is not measured: no
+ * alignment is made on this core. */
+volatile struct spc_wait_ref spc_wait_ref;
+static uint32_t spc_m7_last_seq;
+
+static uint32_t spc_m7_serve(void)
+{
+	volatile uint32_t *w = (volatile uint32_t *)SPC_RING_M7_BASE;
+	uint32_t seq = spc_ring_load(w, SPC_RING_W_S33_SEQ);
+
+	if (seq != spc_m7_last_seq && seq != 0u && seq != SPC_SYNC_DONE) {
+		/* the stamp, a barrier, then s7_seq, with interrupts locked so that
+		 * nothing comes between them: the companion's bound g on a round's
+		 * departure from t1 counts on it (ring_abi.h, line F) */
+		unsigned int key = irq_lock();
+
+		spc_ring_store(w, SPC_RING_W_S7_T, spc_cycles());
+		spc_ring_dmb();
+		spc_ring_store(w, SPC_RING_W_S7_SEQ, seq);
+		irq_unlock(key);
+		spc_m7_last_seq = seq;
+	}
+	return seq;
+}
+
+static void spc_m7_serve_start(void)
+{
+	uint32_t t0 = k_uptime_get_32();
+
+	while (k_uptime_get_32() - t0 < 100u && spc_m7_serve() != SPC_SYNC_DONE) {
+	}
+}
+
+static void spc_m7_serve_forever(void)
+{
+	k_thread_priority_set(k_current_get(), K_PRIO_PREEMPT(0));
+	for (;;) {
+		(void)spc_m7_serve();
+		k_msleep(1);
+	}
+}
+
+static int32_t spc_pair_check(void)
+{
+	volatile uint32_t *w = (volatile uint32_t *)SPC_RING_M7_BASE;
+	uint32_t mpu, magic;
+
+	(void)spc_cycles_start();
+	if (spc_m7_mpu_check(&mpu) != 0u) {
+		/* the region is cacheable here by assumption: the line is cleaned so
+		 * that the M33 sees it (the only cache maintenance of stage 2) */
+		spc_ring_store(w, SPC_RING_W_M7_MPU, mpu);
+		spc_m7_record(w, SPC_M7_REFUSED, SPC_M7_R_MPU, mpu);
+		SCB_CleanDCache_by_Addr((void *)(w + SPC_RING_W_M7_STATE), 32);
+<% if pair[:console] %>		printk("SPC_CHANNEL_REFUSED mpu cm7 0x%08x\n", (unsigned)mpu);
+<% end %>		return (int32_t)SPC_M7_R_MPU;
+	}
+	spc_ring_store(w, SPC_RING_W_M7_MPU, mpu);
+<% if session %>	{
+		uint32_t len = 0u;
+
+		while (len < 32u && spc_session_id[len] != 0) {
+			len++;
+		}
+		for (uint32_t i = 0; i < 8u; i++) {
+			uint32_t v = 0u;
+
+			for (uint32_t b = 0; b < 4u; b++) {
+				if (4u * i + b < len) {
+					v |= (uint32_t)(uint8_t)spc_session_id[4u * i + b] << (8u * b);
+				}
+			}
+			spc_ring_store(w, SPC_RING_W_M7_SESSION + i, v);
+		}
+	}
+<% end %>	magic = spc_ring_load(w, SPC_RING_W_PAIR_MAGIC);
+	spc_ring_dmb();
+	if (magic != SPC_PAIR_MAGIC || spc_ring_load(w, SPC_RING_W_MAGIC) != SPC_RING_MAGIC) {
+<% if pair[:console] %>		printk("SPC_PAIR_REFUSED absent %08x\n", (unsigned)magic);
+<% end %>		spc_m7_record(w, SPC_M7_REFUSED, SPC_M7_R_MAGIC, magic);
+		return (int32_t)SPC_M7_R_MAGIC;
+	}
+	{
+		uint32_t phi = spc_ring_load(w, SPC_RING_W_PAIR_HI), plo = spc_ring_load(w, SPC_RING_W_PAIR_LO);
+		uint32_t chi = spc_ring_load(w, SPC_RING_W_COMPANION_HI), clo = spc_ring_load(w, SPC_RING_W_COMPANION_LO);
+		uint32_t version = spc_ring_load(w, SPC_RING_W_VERSION);
+
+		spc_ring_store(w, SPC_RING_W_PAIR_MAGIC, 0u);
+		spc_ring_store(w, SPC_RING_W_PAIR_SEEN, 1u);
+		spc_ring_dmb();
+<% if pair[:console] %>		printk("SPC_PAIR_ID %08x%08x\n", (unsigned)phi, (unsigned)plo);
+		printk("SPC_COMPANION_ID %08x%08x\n", (unsigned)chi, (unsigned)clo);
+<% end %>		if (version != SPC_RING_ABI_VERSION) {
+			spc_m7_record(w, SPC_M7_REFUSED, SPC_M7_R_MAGIC, version);
+<% if pair[:console] %>			printk("SPC_PAIR_REFUSED version %u\n", (unsigned)version);
+<% end %>			return (int32_t)SPC_M7_R_MAGIC;
+		}
+		if (phi != <%= pair[:pair_hi] %>u || plo != <%= pair[:pair_lo] %>u) {
+<% if pair[:console] %>			printk("SPC_PAIR_REFUSED pair %08x%08x <%= pair[:pair_id] %>\n", (unsigned)phi, (unsigned)plo);
+<% end %>			spc_m7_record(w, SPC_M7_REFUSED, SPC_M7_R_PAIR, SPC_RING_W_PAIR_HI + 1u);
+			return (int32_t)SPC_M7_R_PAIR;
+		}
+	}
+	{
+		static const uint32_t want[][2] = {
+			{ SPC_RING_W_CHAN_MAGIC, SPC_CHAN_MAGIC }, { SPC_RING_W_N_CHANNELS, <%= pair[:channels].size %>u },
+			{ SPC_RING_W_FIRST_LINE, SPC_CHAN_FIRST_LINE }, { SPC_RING_W_HEADER_BYTES, <%= pair[:header_bytes] %>u },
+			{ SPC_RING_W_SLOTS_END, <%= pair[:slots_end] %>u }, { SPC_RING_W_LAYOUT_HI, <%= pair[:layout_hi] %>u },
+			{ SPC_RING_W_LAYOUT_LO, <%= pair[:layout_lo] %>u },
+		};
+
+		for (uint32_t i = 0; i < sizeof want / sizeof want[0]; i++) {
+			if (spc_ring_load(w, want[i][0]) != want[i][1]) {
+<% if pair[:console] %>				printk("SPC_CHANNEL_REFUSED table %u\n", (unsigned)(want[i][0] + 1u));
+<% end %>				spc_m7_record(w, SPC_M7_REFUSED, SPC_M7_R_TABLE, want[i][0] + 1u);
+				return (int32_t)SPC_M7_R_TABLE;
+			}
+		}
+	}
+<% pair[:channel_names].each do |n| %>	{
+		int32_t rc = spc_channel_<%= n %>_check();
+
+		if (rc != 0) {
+<% if pair[:console] %>			printk("SPC_CHANNEL_REFUSED <%= n %> %d\n", (int)rc);
+<% end %>			spc_m7_record(w, SPC_M7_REFUSED, SPC_M7_R_CHANNEL, (uint32_t)rc);
+			return (int32_t)SPC_M7_R_CHANNEL;
+		}
+	}
+<% end %>	spc_m7_record(w, SPC_M7_READY, 0u, 0u);
+	return 0;
+}
+
+<% end %>int main(void)
+{
+	int32_t rc;
+
+	memset((void *)spc_context_stopped, 0, sizeof spc_context_stopped);
+<% board_modules.each do |m| %><% if m[:init] %>	rc = spc_board_<%= m[:stem] %>_init();
+	if (rc != 0) {
+		printk("SPC_INIT_FAILED <%= m[:name] %> %d\n", (int)rc);
+		return 1;
+	}
+<% end %><% end %>
+<% if session %>	/* the session image must be the one this build was made from:
+	 * both digests are checked and the writable part copied to RAM before
+	 * the first release; otherwise nothing starts */
+	rc = spc_session_load();
+	if (rc != 0) {
+		printk("SPC_SESSION_REFUSED %d\n", (int)rc);
+		return 1;
+	}
+	/* the build this firmware is: a lane reading the console checks it is
+	 * the one it wrote before it reads a frame */
+	printk("SPC_SESSION_ID %s\n", spc_session_id);
+<% end %><% if pair && pair[:role] == :primary %>	/* the pair (decision 0027): a refusal leaves every channel of the pair
+	 * not ready, each answering 0, and line 14 says why */
+	(void)spc_pair_check();
+	spc_m7_serve_start();
+<% end %><% if pair && pair[:role] == :companion && !pair[:channel_names].empty? %>	/* the companion wrote the table itself: its channels' checks read it back */
+	if (spc_m33_refused == 0u) {
+<% pair[:channel_names].each do |n| %>		if (spc_channel_<%= n %>_check() != 0) {
+			spc_m33_refused = 3u;
+		}
+<% end %>	}
+<% end %><% if pair && pair[:role] == :companion %>	spc_m33_sync();
+<% end %><% if pair && pair[:role] == :companion && pair[:console] %>	spc_m33_report();
+<% end %><% app.channels.select(&:xcore).each do |c| %>	/* the OCRAM ring of channel <%= c.name %>, which the M33 initialised before
+	 * it released this core: a ring that is not this channel's leaves every
+	 * put (or get, for an :in channel) answering 0, and the console says so */
+	rc = spc_channel_<%= c.name %>_check();
+	if (rc != 0) {
+		printk("SPC_RING_REFUSED <%= c.name %> %d\n", (int)rc);
+	}
+<% end %><% if bell %>	/* decision 0028: the doorbell's callback on each woken channel's
+	 * interrupt, then the interrupt enabled, before the first release */
+	{
+		const struct device *mu = DEVICE_DT_GET(DT_NODELABEL(<%= bell[:label] %>));
+		int brc = device_is_ready(mu) ? 0 : -ENODEV;
+
+<% bell[:channels].each do |d| %>		brc = brc != 0 ? brc : mbox_register_callback(mu, <%= d[:gi] %>u, spc_doorbell, NULL);
+<% if bell[:unenabled] %>		/* THE CONTROL --mutate-doorbell-unenabled: GIE<%= d[:gi] %> is never set */
+<% else %>		brc = brc != 0 ? brc : mbox_set_enabled(mu, <%= d[:gi] %>u, true);
+<% end %><% if pair[:console] %>		printk("SPC_DOORBELL <%= d[:name] %> MU<%= bell[:mu] %> GIR<%= d[:gi] %> %s %d\n", "<%= bell[:unenabled] ? 'unenabled' : 'enabled' %>", brc);
+<% end %><% end %>	}
+<% end %><% if app.channels.any?(&:framed?) || verification %>	spc_transport_start();
+<% end %>	spc_epoch = k_cycle_get_64();
+#if defined(SPC_VERIFY)
+<% app.states.each_with_index do |st, si| %>	spc_rec_register_state(<%= si %>u, spc_state_<%= st.name %>, <%= st.count %>u, <%= width[st.element] %>u);
+<% end %>	spc_tr_HEADER(SPC_CTX_SCHED, SPC_NO_ENTRY, spc_epoch, SPC_CYC_PER_SEC, SPC_HORIZON_CYC, SPC_DRAIN_CYC,
+		      SPC_REC_CONTEXTS, SPC_ENTRIES, <%= app.states.size %>u, <%= app.channels.size %>u);
+	spc_stimulus_start(spc_epoch);
+<% if nest_timer %>	spc_nest_timer_start(spc_epoch);
+<% end %>#endif
+<% if stress %>	/* DECISION 0014 Task 12: the sampling source, started before the entries
+	 * so that the first releases are sampled too */
+	spc_stress_timer_start();
+<% end %><% if pcsample %>	/* the PC sampler of a measurement build, started before the entries so
+	 * that the first tic is sampled too */
+	spc_pcsample_timer_start();
+<% end %>
+	for (uint32_t i = 0; i < SPC_ENTRIES; i++) {
+		if (spc_entries[i].context == 1u) {
+			k_timer_init(&spc_timers[i], spc_timer_expiry, NULL);
+			k_timer_start(&spc_timers[i], K_TIMEOUT_ABS_TICKS(k_cyc_to_ticks_ceil64(spc_epoch + spc_entries[i].period_cyc)),
+				      K_TICKS(k_cyc_to_ticks_ceil64(spc_entries[i].period_cyc)));
+		}
+	}
+	k_thread_create(&spc_scheduler_thread_data, spc_scheduler_stack, spc_scheduler_stack_size,
+			spc_scheduler_thread, NULL, NULL, NULL, K_PRIO_PREEMPT(1), 0, K_NO_WAIT);
+	printk("SPC_RUNNING <%= app_name %>\n");
+<% if failure_sites %>	/* failure sites: main, at the lowest priority so it delays no tic, waits
+	 * for the first failed call and prints its site once */
+	k_thread_priority_set(k_current_get(), K_LOWEST_APPLICATION_THREAD_PRIO);
+	while (spc_fs_status == 0) {
+		k_msleep(100);
+	}
+	printk("SPC_FAILURE_SITE %s %d %d\n", spc_fs_entry, (int)spc_fs_status, (int)spc_fs_site);
+<% end %><% if pair && pair[:role] == :companion %>	spc_m33_watch();
+<% end %><% if pair && pair[:role] == :primary %>	spc_m7_serve_forever();
+<% end %>	return 0;
+}

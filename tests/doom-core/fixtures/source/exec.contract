@@ -1,0 +1,39 @@
+core-contract 1
+root src/packed.rb
+entry dc_sp_exec
+result i64
+param scr buffer u8 inout count n_scr
+param n_scr scalar u64
+param cmap buffer u8 in count n_cmap
+param n_cmap scalar u64
+param atlas buffer u8 in count n_atlas
+param n_atlas scalar u64
+param flat buffer u8 in count n_flat
+param n_flat scalar u64
+param wad buffer u8 in count n_wad
+param n_wad scalar u64
+param zonebuf buffer u8 in count n_zonebuf
+param n_zonebuf scalar u64
+param fuzzoffset buffer i8 in count n_fuzzoffset
+param n_fuzzoffset scalar u64
+param wall buffer i32 in count n_wall
+param n_wall scalar u64
+param span buffer i32 in count n_span
+param n_span scalar u64
+param masked buffer i32 in count n_masked
+param n_masked scalar u64
+param sc_kind buffer u8 in count n_sc_kind
+param n_sc_kind scalar u64
+param sc_idx buffer u16 in count n_sc_idx
+param n_sc_idx scalar u64
+param state buffer i64 in count n_state
+param n_state scalar u64
+param width buffer u16 in count n_width
+param n_width scalar u64
+param centery buffer u8 in count n_centery
+param n_centery scalar u64
+param vwx buffer u8 in count n_vwx
+param n_vwx scalar u64
+param vwy buffer u8 in count n_vwy
+param n_vwy scalar u64
+param i_nsched scalar i64

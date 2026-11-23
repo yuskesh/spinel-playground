@@ -1,0 +1,29 @@
+# The census's answer, recorded so a change to it is a change to be noticed.
+#
+# Regenerate from the repository root with:
+#
+#   ruby tests/core-boundary/fixtures/closure/census.rb . \
+#     > tests/core-boundary/fixtures/closure/census.expected
+#
+# and put these comment lines back: the lane strips them before comparing,
+# and they are here for whoever reads the file rather than the diff.
+files	34
+defs	573
+attr_methods	381
+attr_sites	69
+clean	72
+blocked	instance-state	475
+blocked	no-else-branch	282
+blocked	allocation	118
+blocked	and-or	115
+blocked	raise	87
+blocked	element-op-assign	33
+blocked	break-next	27
+blocked	blocks	14
+blocked	case	10
+calibrate	fixed.rb#to_i32	clean
+calibrate	fixed.rb#bam	clean
+calibrate	fixed.rb#mul	clean
+calibrate	fixed.rb#cdiv	clean
+calibrate	fixed.rb#div	blocked
+calibrate	bytes.rb#u8	clean

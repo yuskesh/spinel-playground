@@ -1,0 +1,480 @@
+#!/bin/sh
+# Build one ordinary Ruby program into a native executable whose CLI-selected
+# method is compiled as a core object.
+#
+# This is the Extended driver. Per the reviewed split, the snapshot and target
+# manifest is ITS responsibility, not the pinned compiler's: it owns which
+# source went to which stage, the settings, the target and the selected root.
+# The vendor seam only consumes a resolved identity, emits the mapping, keeps
+# the signature it already inferred, and omits the body.
+#
+# Stages, each refusing rather than continuing, and none falling back to
+# another:
+#
+#   0  snapshot   copy the inputs somewhere immutable and digest them
+#   1  eligible   the source admits the selected root
+#   2  hosted     C with the root declared and not defined, plus the mapping
+#   3  core       the object defining the mapped symbol
+#   4  artifact   tools/core/core-artifact-gate
+#   5  link       the executable, published by rename in its own directory
+#
+# Native Debian/ELF and macOS/Mach-O builds use their own symbol spelling,
+# checksum utility and system libraries. Cross compilation is not supported.
+#
+# The integer-overflow mode is FIXED at the hosted default, `raise`. The
+# contract agreed for this slice names one mode (decision 0015), and the
+# checker and the emitter reach the source through the contract reader while the
+# hosted half reaches it through the compiler -- two analyses that agree today
+# because both run at their defaults. Exposing a mode would let them be given
+# different ones, and the prototype check at the boundary is a check of the
+# BOUNDARY, not a substitute for the two analyses being the same.
+# `--int-overflow` is accepted only to refuse the other modes by name: `wrap`
+# would need its own record, and `promote` needs an allocator core does not have.
+#
+# The CORE intrinsics (decisions 0022 and 0042) are lowered in place in the
+# core object. The hosted compiler has no such names, so stage 2 compiles
+# hosted.rb: the source's leading blank and comment lines, the definitions of
+# the intrinsics it names, from tools/core/hosted-prelude.rb (decision 0042
+# stage 4), then the rest of the source. The definitions come before the
+# program because a call that runs before a method's first definition is a
+# NoMethodError (upstream 1782a9e13). The
+# prelude is snapshotted and digested like the source, and the core emitter's
+# embedded copy must be the snapshot's. A source that names no intrinsic is
+# compiled as it is. The core half never reads the prelude as source.
+#
+# Arithmetic failures leave the core object through one hook, spc_core_fail,
+# which is the only undefined symbol the artifact gate admits. Its header and
+# the hosted shim that defines it are generated beside the core object; the
+# shim is its own translation unit, includes no runtime header, and calls the
+# runtime's abort entry (decision 0015).
+#
+# usage: tools/core/spinel-core-build --source app.rb --core <method> -o app
+#          [--int-overflow raise]
+#   SPINEL_SEAM        compiler checkout (default: vendor/spinel)
+#   SPINEL_CORE_BUILD  build directory with bin/spinel-core-emit
+#   CLANG              the clang that build was configured with
+#   CC                 C compiler for the final link (default: CLANG)
+set -eu
+
+prog=spinel-core-build
+die() { printf '%s: %s\n' "$prog" "$*" >&2; exit 1; }
+stage() { [ -n "${SPINEL_CORE_VERBOSE:-}" ] && printf '  [%s] %s\n' "$1" "$2" >&2 || true; }
+
+source= root= output=
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --source) source=${2:?}; shift 2 ;;
+    --core)   root=${2:?};   shift 2 ;;
+    -o)       output=${2:?}; shift 2 ;;
+    --int-overflow|--int-overflow=*)
+      case "$1" in
+        --int-overflow=*) mode=${1#--int-overflow=}; shift ;;
+        *) mode=${2:?}; shift 2 ;;
+      esac
+      case "$mode" in
+        raise) ;;
+        wrap|promote)
+          die "--int-overflow=$mode is not supported with --core; the native scalar core slice implements only --int-overflow=raise (decision 0015)" ;;
+        *) die "--int-overflow: unknown mode '$mode'" ;;
+      esac ;;
+    *) die "unknown argument: $1" ;;
+  esac
+done
+[ -n "$source" ] && [ -n "$root" ] && [ -n "$output" ] \
+  || die "usage: --source app.rb --core <method> -o app"
+[ -f "$source" ] || die "no such source: $source"
+overflow=raise
+ov_define=-DSP_INT_OVERFLOW_MODE_RAISE
+
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+tree=$(CDPATH= cd -- "$here/../.." && pwd)
+SEAM="${SPINEL_SEAM:-$tree/vendor/spinel}"
+SEAM=$(CDPATH= cd -- "$SEAM" && pwd)
+SPINEL="$SEAM/bin/spinel"
+RT="$SEAM/lib/libspinel_rt.a"
+# The compiler-owned Ruby builtins (builtins/*.rb), which the hosted compiler
+# reads for itself on every compilation. Resolved with `pwd -P` because the
+# compiler reports REAL paths in its input ledger -- it reaches this directory
+# from its own executable (src/spinel_parse.c, sp_lib_dir: _NSGetExecutablePath
+# or /proc/self/exe, both through realpath) -- and a spelling that differs only
+# by a symlink would not match the ledger's. Empty when the directory does not
+# exist, which is every pin before builtins/ was introduced; the empty value is
+# never used as a path prefix, because a bare "/*" would match the whole
+# filesystem and silently retire the refusal below.
+if [ -d "$SEAM/builtins" ]; then
+  BUILTINS=$(CDPATH= cd -- "$SEAM/builtins" && pwd -P)
+else
+  BUILTINS=
+fi
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+tree=$(CDPATH= cd -- "$here/../.." && pwd)
+BUILD="${SPINEL_CORE_BUILD:-$tree/tools/mlir/native/build}"
+[ -d "$BUILD" ] || die "no native build directory: $BUILD"
+BUILD=$(CDPATH= cd -- "$BUILD" && pwd -P)
+EMIT="$BUILD/bin/spinel-core-emit"
+CHECK="$BUILD/bin/spinel-core-check"
+GATE="$here/core-artifact-gate"
+TYPEDUMP="${SPINEL_TYPEDUMP:-$tree/tools/contract/build/spinel-typedump}"
+for f in "$SPINEL" "$EMIT" "$CHECK" "$GATE" "$TYPEDUMP"; do
+  [ -x "$f" ] || die "missing or not executable: $f"
+done
+[ -f "$RT" ] || die "missing runtime archive: $RT"
+if [ -z "${CLANG:-}" ] && [ -f "$BUILD/CMakeCache.txt" ]; then
+  CLANG=$(sed -n 's|^CMAKE_C_COMPILER:[A-Z]*=\(.*\)$|\1|p' "$BUILD/CMakeCache.txt" | head -1)
+fi
+[ -n "${CLANG:-}" ] && [ -x "$CLANG" ] || die "set CLANG to the clang this build used"
+# One compiler by default. Two independently chosen compilers can disagree on
+# the target, and the core object and the hosted C must be for one machine.
+CC_="${CC:-$CLANG}"
+SHA_TOOL=sha256sum
+SHA_OPT=
+SDK=
+CRYPT=-lcrypt
+case "$(uname -s)" in
+  Darwin)
+    SHA_TOOL=shasum; SHA_OPT=-a256; CRYPT=
+    SDK=$(xcrun --show-sdk-path) || die "cannot locate the macOS SDK"
+    SDK=$(CDPATH= cd -- "$SDK" && pwd -P)
+    export SDKROOT="$SDK"
+    ;;
+  Linux) ;;
+  *) die "only native Linux and macOS builds are supported" ;;
+esac
+NM="${NM:-$(dirname -- "$CLANG")/llvm-nm}"
+export NM
+RESOURCE=$("$CLANG" -print-resource-dir) || die "cannot locate clang resource headers"
+RESOURCE=$(CDPATH= cd -- "$RESOURCE" && pwd -P)
+
+w=$(mktemp -d "${TMPDIR:-/tmp}/spinel-core-build.XXXXXX")
+trap 'rm -rf "$w"' EXIT INT TERM
+
+# ---- 0. the snapshot ------------------------------------------------------
+# Every stage reads a COPY, not the caller's path. Digesting the caller's file
+# before and after cannot see a change that is reverted in between, and each
+# stage re-reading a mutable path is each stage reading a possibly different
+# file. The copy is what the manifest describes and what every stage consumes.
+snap="$w/snapshot"
+mkdir -p "$snap"
+snap=$(CDPATH= cd -- "$snap" && pwd -P)
+cp "$source" "$snap/input.rb" || die "cannot snapshot $source"
+SRC=input.rb
+cp "$tree/tools/core/hosted-prelude.rb" "$snap/prelude.rb" \
+  || die "cannot snapshot tools/core/hosted-prelude.rb"
+# The emitter's embedded prelude must be this one: the definitions picked
+# below come from it, and the reader's copies in stages 1 and 3 too.
+"$EMIT" --print-prelude > "$w/prelude.emit" 2>"$w/prelude.err" \
+  || { cat "$w/prelude.err" >&2; die "the core emitter cannot print its prelude"; }
+cmp -s "$w/prelude.emit" "$snap/prelude.rb" \
+  || die "the core emitter embeds another prelude than tools/core/hosted-prelude.rb; rebuild tools/mlir/native"
+# What the hosted compiler reads: the source, and the definitions of the
+# intrinsics it names. The source itself when it names none.
+"$EMIT" --print-prelude --for "$snap/$SRC" > "$w/picked" 2>"$w/prelude.err" \
+  || { cat "$w/prelude.err" >&2; die "the core emitter cannot pick the prelude's definitions"; }
+HSRC=$SRC
+if [ -s "$w/picked" ]; then
+  HSRC=hosted.rb
+  # The same placement as the reader's copy (Core/Prelude.cpp, insertPrelude):
+  # a UTF-8 byte order mark first, the leading lines that are blank or
+  # comments, then the definitions. Bytes, not characters (LC_ALL=C).
+  LC_ALL=C awk -v picked="$w/picked" '
+    function prelude(  l) { while ((getline l < picked) > 0) print l; done = 1 }
+    NR == 1 && substr($0, 1, 3) == "\357\273\277" { printf "%s", "\357\273\277"; $0 = substr($0, 4) }
+    !done && !/^[ \t]*(#.*)?\r?$/ { prelude() }
+    { print }
+    END { if (!done) prelude() }' "$snap/$SRC" > "$snap/$HSRC" \
+    || die "cannot write the hosted copy"
+fi
+
+
+# Each digest checks its producer's exit before reading its output: in a
+# pipeline the leading command's failure is invisible, and a checksum tool that
+# could not run yields an empty digest that compares equal to another empty one.
+digest() {
+  "$SHA_TOOL" ${SHA_OPT:+"$SHA_OPT"} "$1" > "$w/sum" 2>"$w/sum.err" \
+    || { cat "$w/sum.err" >&2; die "cannot digest $1"; }
+  cut -c1-16 < "$w/sum"
+}
+# The headers the final compile reads. They live in the seam checkout, which is
+# mutable, so they are COPIED into the snapshot and compiled from there --
+# digesting them and then compiling from the original would check one file and
+# read another. -print0/-0 because a path with a space breaks `ls | xargs`.
+snapshot_headers() {
+  mkdir -p "$snap/include"
+  find "$SEAM/lib" -maxdepth 1 -name '*.h' -print0 > "$w/hdrs0" 2>"$w/hdrs.err" \
+    || { cat "$w/hdrs.err" >&2; die "cannot list the runtime headers in $SEAM/lib"; }
+  [ -s "$w/hdrs0" ] || die "no runtime headers in $SEAM/lib"
+  xargs -0 -I{} cp {} "$snap/include/" < "$w/hdrs0" \
+    || die "cannot copy the runtime headers into the snapshot"
+}
+digest_headers() {
+  find "$snap/include" -maxdepth 1 -name '*.h' -print0 \
+    | LC_ALL=C sort -z \
+    | xargs -0 "$SHA_TOOL" ${SHA_OPT:+"$SHA_OPT"} > "$w/hdrsums" 2>"$w/hdrs.err" \
+    || { cat "$w/hdrs.err" >&2; die "cannot digest the snapshot headers"; }
+  [ -s "$w/hdrsums" ] || die "no headers in the snapshot"
+  "$SHA_TOOL" ${SHA_OPT:+"$SHA_OPT"} "$w/hdrsums" > "$w/hdrsum" 2>"$w/hdrs.err" \
+    || { cat "$w/hdrs.err" >&2; die "cannot digest the header list"; }
+  cut -c1-16 < "$w/hdrsum"
+}
+# The builtins are digested WHERE THEY LIE, not copied into the snapshot, and
+# the manifest key says so. Copying them would be the dishonest half of what
+# snapshot_headers does: the headers are copied AND compiled from the copy
+# (-I"$snap/include"), so the digested bytes are the bytes read, while the
+# compiler resolves builtins/ from its own executable and cannot be pointed at
+# a copy by any option, environment variable or symlink. Recording a digest of
+# a file that is then read somewhere else would assert a containment the build
+# does not have. What is kept from the copy's protection is the re-check after
+# the stages: a builtin edited mid-build is caught rather than averaged over.
+digest_builtins() {
+  [ -n "$BUILTINS" ] || { printf 'none'; return; }
+  find "$BUILTINS" -maxdepth 1 -name '*.rb' -print0 > "$w/bi0" 2>"$w/bi.err" \
+    || { cat "$w/bi.err" >&2; die "cannot list the builtins in $BUILTINS"; }
+  [ -s "$w/bi0" ] || { printf 'none'; return; }
+  LC_ALL=C sort -z < "$w/bi0" \
+    | xargs -0 "$SHA_TOOL" ${SHA_OPT:+"$SHA_OPT"} > "$w/bisums" 2>"$w/bi.err" \
+    || { cat "$w/bi.err" >&2; die "cannot digest the builtins"; }
+  "$SHA_TOOL" ${SHA_OPT:+"$SHA_OPT"} "$w/bisums" > "$w/bisum" 2>"$w/bi.err" \
+    || { cat "$w/bi.err" >&2; die "cannot digest the builtins list"; }
+  cut -c1-16 < "$w/bisum"
+}
+probe() { # tool, args... -> first line of output, or die
+  _t=$1; shift
+  "$_t" "$@" > "$w/probe.out" 2>"$w/probe.err" \
+    || { cat "$w/probe.err" >&2; die "cannot query $_t $*"; }
+  head -1 "$w/probe.out"
+}
+
+CLANG_TARGET=$(probe "$CLANG" -dumpmachine)
+CC_TARGET=$(probe "$CC_" -dumpmachine)
+[ "$CLANG_TARGET" = "$CC_TARGET" ] \
+  || die "the core object would be built for $CLANG_TARGET and the program for $CC_TARGET"
+
+# Each value is computed and checked BEFORE anything is written. Wrapping a
+# digest in printf makes printf's success the only status that survives, so a
+# digest that died mid-manifest would leave an empty field and a build that
+# carried on.
+snapshot_headers   # defined above; must run before the headers are digested
+D_SRC=$(digest "$snap/$SRC")
+D_PRELUDE=$(digest "$snap/prelude.rb")
+D_HSRC=$(digest "$snap/$HSRC")
+D_SPINEL=$(digest "$SPINEL")
+D_EMIT=$(digest "$EMIT")
+D_CHECK=$(digest "$CHECK")
+D_TYPEDUMP=$(digest "$TYPEDUMP")
+D_RT=$(digest "$RT")
+D_GATE=$(digest "$GATE")
+D_HDRS=$(digest_headers)
+# After the digests above, not before: tests/native-core/driver.sh fails the
+# checksum tool on its THIRD call to prove an empty field cannot pass, and that
+# call is meant to land in the manifest values, not here.
+D_BUILTINS=$(digest_builtins)
+V_CLANG=$(probe "$CLANG" --version)
+V_CC=$(probe "$CC_" --version)
+for v in "$D_SRC" "$D_PRELUDE" "$D_HSRC" "$D_SPINEL" "$D_EMIT" "$D_CHECK" "$D_TYPEDUMP" "$D_RT" \
+         "$D_GATE" "$D_HDRS" "$D_BUILTINS" "$V_CLANG" "$V_CC"; do
+  [ -n "$v" ] || die "a manifest value came back empty"
+done
+
+manifest="$w/manifest.tsv"
+{ printf 'snapshot-source\t%s\n' "$D_SRC"
+  printf 'prelude\t%s\n'         "$D_PRELUDE"
+  printf 'hosted-source\t%s\n'   "$D_HSRC"
+  printf 'spinel\t%s\n'          "$D_SPINEL"
+  printf 'core-emit\t%s\n'       "$D_EMIT"
+  printf 'core-check\t%s\n'      "$D_CHECK"
+  printf 'typedump\t%s\n'        "$D_TYPEDUMP"
+  printf 'runtime-archive\t%s\n' "$D_RT"
+  printf 'runtime-headers\t%s\n' "$D_HDRS"
+  printf 'builtins-in-place\t%s\n' "$D_BUILTINS"
+  printf 'gate\t%s\n'            "$D_GATE"
+  printf 'clang\t%s\n'           "$V_CLANG"
+  printf 'cc\t%s\n'              "$V_CC"
+  printf 'target\t%s\n'          "$CLANG_TARGET"
+  printf 'sdk\t%s\n'             "$SDK"
+  printf 'deployment-target\t%s\n' "${MACOSX_DEPLOYMENT_TARGET:-compiler-default}"
+  printf 'int-overflow\t%s\n'    "$overflow"
+  printf 'root\t%s\n'            "$root"
+} > "$manifest" || die "cannot write the manifest"
+SNAP=$(digest "$manifest")
+[ -n "$SNAP" ] || die "the snapshot digest came back empty"
+stage 0 "snapshot $SNAP"
+
+# Re-verify a consumed input against the manifest at the point of use. The
+# manifest is not a label asserting the inputs are the same; it is a record that
+# each stage checks what it is about to read.
+verify() { # key, path
+  _want=$(awk -F'\t' -v k="$1" '$1==k{print $2}' "$manifest")
+  [ -n "$_want" ] || die "the manifest has no entry for $1"
+  _have=$(digest "$2")
+  [ "$_want" = "$_have" ] || die "$1 changed between stages ($2)"
+}
+# Every producer stage runs WITH THE SNAPSHOT AS ITS WORKING DIRECTORY and is
+# given a relative source. A `require_relative` then resolves inside the
+# snapshot or not at all: measured, a relative require of a file the snapshot
+# does not contain is refused by the producer itself, including when that file
+# is empty -- which is the case the #line scan below cannot see.
+in_snapshot() { ( cd "$snap" && "$@" ); }
+
+# The dependency boundary, asked of each analysis about ITS OWN inputs.
+#
+# The producer records every file it opened, at the one function every load goes
+# through, and writes them NUL-separated. NUL because a path may contain a
+# newline, which a line-oriented file could not represent unambiguously.
+#
+# This replaces the two heuristics that were here before. Neither was an input
+# ledger: #line is source POSITION information, so a file contributing no
+# emitted code leaves no trace -- measured, a require of an empty file appeared
+# nowhere -- and the snapshot working directory only constrains RELATIVE
+# resolution. Both are gone; nothing here falls back to them.
+check_ledger() { # stage-name, ledger-path[, the source it was given]
+  _stage=$1; _led=$2; _given=${3:-$SRC}
+  [ -f "$_led" ] || die "$_stage wrote no input ledger"
+  [ -s "$_led" ] || die "$_stage wrote an empty input ledger"
+  # Records are counted by their terminators, and split with xargs -0, which is
+  # the portable way to consume NUL-separated data: `read -d` is a bashism, and
+  # translating NUL to newline would reintroduce exactly the ambiguity NUL was
+  # chosen to avoid, for a path containing a newline.
+  _n=$(tr -cd '\0' < "$_led" | wc -c | tr -d ' ')
+  [ "$_n" -gt 0 ] || die "$_stage wrote a ledger with no records"
+  # Two origins are admissible, and only two. The snapshot is what this build
+  # owns. The builtins are what the COMPILER owns: it reads builtins/*.rb for
+  # itself on every compilation, so refusing them would refuse every program,
+  # and they are accounted for by the builtins-in-place digest rather than
+  # excused. LEDGER_BI is the resolved builtins directory or the empty string;
+  # the guard below tests it before using it as a prefix, because an empty
+  # LEDGER_BI would make the pattern "/*" and admit the entire filesystem.
+  # Everything else -- a require, a package, a file beside the source, another
+  # directory of the seam -- is still refused by the sentence below.
+  _outside=$(LEDGER_SNAP="$snap" LEDGER_BI="$BUILTINS" xargs -0 -n1 sh -c '
+      case "$1" in "$LEDGER_SNAP"/*) exit 0 ;; esac
+      [ -n "$LEDGER_BI" ] && case "$1" in "$LEDGER_BI"/*) exit 0 ;; esac
+      printf "x\n"' _ < "$_led" | wc -l | tr -d ' ') \
+    || die "cannot read $_stage's input ledger"
+  if [ "$_outside" != "0" ]; then
+    _first=$(LEDGER_SNAP="$snap" LEDGER_BI="$BUILTINS" xargs -0 -n1 sh -c '
+        case "$1" in "$LEDGER_SNAP"/*) exit 0 ;; esac
+        [ -n "$LEDGER_BI" ] && case "$1" in "$LEDGER_BI"/*) exit 0 ;; esac
+        printf "%s" "$1"; exit 255' _ < "$_led" 2>/dev/null || true)
+    die "$_stage read $_outside file(s) outside the snapshot, the first being [$_first]; this slice snapshots one file, so the dependency is refused rather than left out of the manifest"
+  fi
+  # The root must be in there. A ledger that does not contain the file the stage
+  # was given did not record that stage's reads.
+  _root=$(LEDGER_SNAP="$snap" LEDGER_ROOT="$snap/$_given" xargs -0 -n1 sh -c '
+      [ "$1" = "$LEDGER_ROOT" ] && printf "x\n"
+      exit 0' _ < "$_led" | wc -l | tr -d ' ')
+  [ "$_root" -ge 1 ] \
+    || die "$_stage's ledger does not contain the source it was given, so it does not describe that run"
+}
+
+# ---- 1. eligibility -------------------------------------------------------
+verify snapshot-source "$snap/$SRC"; verify core-check "$CHECK"; verify typedump "$TYPEDUMP"
+if ! in_snapshot "$CHECK" "$SRC" --method "$root" --typedump "$TYPEDUMP" \
+       --inputs-out "$w/check.inputs" > "$w/check.out" 2>"$w/check.err"; then
+  cat "$w/check.err" >&2
+  cat "$w/check.out" >&2
+  die "'$root' is not eligible for core compilation"
+fi
+[ -s "$w/check.err" ] && cat "$w/check.err" >&2
+check_ledger "the eligibility checker" "$w/check.inputs"
+stage 1 "eligible"
+
+# ---- 2. hosted half -------------------------------------------------------
+verify snapshot-source "$snap/$SRC"; verify hosted-source "$snap/$HSRC"; verify spinel "$SPINEL"
+
+# The hosted compiler's own ledger. The C is generated once and that same C is
+# compiled; --no-line-map because the line directives are no longer load-bearing
+# for anything -- the ledger answers what was read, and #line never did.
+in_snapshot "$SPINEL" "$HSRC" --core "$root" --core-id="$SNAP" --core-map="$w/map.tsv" \
+  --int-overflow "$overflow" --inputs-out="$w/hosted.inputs" --no-line-map -S \
+  > "$w/hosted.c" 2>"$w/hosted.err" \
+  || { cat "$w/hosted.err" >&2; die "the hosted compiler refused the selection"; }
+[ -s "$w/hosted.err" ] && cat "$w/hosted.err" >&2
+check_ledger "the hosted compiler" "$w/hosted.inputs" "$HSRC"
+[ -s "$w/map.tsv" ] || die "the hosted compiler wrote no mapping"
+SYM=$(awk -F'\t' -v r="$root" '$1==r{print $2}' "$w/map.tsv")
+[ -n "$SYM" ] || die "the mapping has no row for '$root'"
+stage 2 "symbol $SYM"
+
+# ---- 3. core half ---------------------------------------------------------
+verify snapshot-source "$snap/$SRC"; verify core-emit "$EMIT"; verify typedump "$TYPEDUMP"
+in_snapshot "$EMIT" --source "$SRC" --core-map "$w/map.tsv" -o "$w/core.o" \
+  --header-out "$w/spinel_core_fail.h" --shim-out "$w/spinel_core_fail.c" \
+  --typedump "$TYPEDUMP" --clang "$CLANG" --inputs-out "$w/emit.inputs" \
+  > "$w/emit.out" 2>&1 \
+  || { cat "$w/emit.out" >&2; die "the core object could not be produced"; }
+check_ledger "the core emitter" "$w/emit.inputs"
+stage 3 "core object"
+
+# ---- 4. the artifact gate -------------------------------------------------
+verify gate "$GATE"
+# The failure hook is admitted by its exact name, and only it (decision 0015).
+"$GATE" --extern spc_core_fail "$w/core.o" "$SYM" > "$w/gate.out" 2>"$w/gate.err" \
+  || { cat "$w/gate.err" >&2; die "the core object did not pass the artifact gate"; }
+stage 4 "artifact gate"
+
+# ---- 5. link --------------------------------------------------------------
+# The same overflow setting the C was generated for. Generating for one mode and
+# compiling for another is a different program from the one that was checked.
+verify runtime-archive "$RT"
+[ "$(digest_headers)" = "$D_HDRS" ] || die "the runtime headers changed between stages"
+# The builtins are read in place, so this re-check is the only thing standing
+# where the headers' snapshot copy stands: it catches a builtin edited while
+# the stages ran, which is the hazard the copy removes for everything else.
+[ "$(digest_builtins)" = "$D_BUILTINS" ] || die "the builtins changed between stages"
+# The shim first, as its own translation unit with its own dependency file: a
+# second source on the line below would share one -MF. It is held to the same
+# include rule, and it may not reach a snapshot header at all -- it is compiled
+# without -I"$snap/include", so a runtime include would fail here.
+[ -s "$w/spinel_core_fail.c" ] || die "the core emitter wrote no hook shim"
+"$CC_" -O2 -c -MD -MF "$w/shim.d" "$w/spinel_core_fail.c" -o "$w/shim.o" 2>"$w/shim.err" \
+  || { cat "$w/shim.err" >&2; die "the hook shim did not compile"; }
+# -I the SNAPSHOT's headers, not the seam checkout's: the digest above describes
+# the copies, and compiling from the originals would check one set and read
+# another. -MD records which headers were actually included, and every one of
+# them must be a snapshot copy.
+"$CC_" -O2 "$ov_define" -I"$snap/include" -MD -MF "$w/deps.d" \
+  "$w/hosted.c" "$w/shim.o" "$w/core.o" "$RT" -lm ${CRYPT:+"$CRYPT"} -o "$w/app" 2>"$w/link.err" \
+  || { cat "$w/link.err" >&2; die "the executable did not link"; }
+cat "$w/deps.d" "$w/shim.d" | tr ' \\' '\n\n' | sed -n 's/\.h$/.h/p' | sort -u > "$w/incs"
+while IFS= read -r h; do
+  [ -n "$h" ] || continue
+  case "$h" in
+    "$snap/include/"*|"$RESOURCE/"*) continue ;;
+    /usr/include/*|/usr/lib/*|/opt/llvm-*/*) continue ;;  # the system toolchain, see below
+  esac
+  # The SDK is tested separately, and only when there is one. As a `case` arm it
+  # cannot be: with SDK empty -- every Linux run -- the pattern "$SDK/"* is
+  # "/*", which matches every absolute path. That arm is then selected, its
+  # guarded `continue` does not run, and POSIX `case` does not fall through, so
+  # the toolchain arm below never runs and an ordinary /usr/include header fails
+  # the build. Measured on Debian: /usr/include/alloca.h was refused.
+  #
+  # The same shape is safe above only because RESOURCE cannot be empty -- the
+  # driver refuses to start if clang will not name its resource directory.
+  if [ -n "$SDK" ]; then
+    case "$h" in "$SDK"/*) continue ;; esac
+  fi
+  die "the compile included $h, which is neither a snapshot header nor a toolchain header"
+done < "$w/incs"
+
+# Published by rename WITHIN the output's own directory: a rename across
+# filesystems is a copy and a delete, which can leave a half-written file where
+# a working one was.
+#
+# `mv` onto a DIRECTORY moves into it and succeeds, quietly producing an
+# executable nobody asked for at a path nobody named.
+[ -d "$output" ] && die "$output is a directory"
+outdir=$(dirname -- "$output")
+[ -d "$outdir" ] || die "no such directory: $outdir"
+# An exclusively created directory rather than a name probed with `[ -e ]`:
+# testing then creating is not exclusive, and `[ -e ]` does not see a dangling
+# symlink, so the probe could pass and the write follow the link elsewhere.
+stagedir=$(mktemp -d "$outdir/.spinel-core-build.XXXXXX") \
+  || die "cannot create a staging directory in $outdir"
+trap 'rm -rf "$w" "$stagedir"' EXIT INT TERM
+cp "$w/app" "$stagedir/app" || die "cannot write into $outdir"
+chmod +x "$stagedir/app"
+mv "$stagedir/app" "$output" || die "cannot publish $output"
+stage 5 "linked"
+printf '%s: %s  (core %s, snapshot %s, int-overflow %s, target %s)\n' \
+  "$prog" "$output" "$SYM" "$SNAP" "$overflow" "$CLANG_TARGET"

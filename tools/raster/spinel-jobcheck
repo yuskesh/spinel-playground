@@ -1,0 +1,533 @@
+#!/usr/bin/env ruby
+# spinel-jobcheck -- an independent checker of the Job IR and the generated kernels (#1 to #15).
+# [the raster plan, phases 2 to 5 / E170: Ruby]
+#
+# **The product is this Ruby.** The frozen Python stays read-only in `frozen/spinel-jobcheck`,
+# and the E170 suite runs it every time as the oracle for **byte equality of stdout / stderr / rc and
+# the outputs**. The table's vocabulary is `spinel_jobtable.rb`.
+#
+# The order and the wording of the checks follow the frozen Python word for word — the checker's output is
+# what the raster gates read as it is.
+require_relative "spinel_jobtable"
+require "open3"
+
+JT = SpinelJobtable
+PROG = "spinel-jobcheck"
+CMAP_ROWS = 34
+TEXCOL_STRIDE = 128
+FLAT_STRIDE = 4096
+
+USAGE = <<~USAGE
+  usage: spinel-jobcheck [-h] --jobs JOBS [--table TABLE] [--mlir MLIR]
+                         [--vmfb VMFB] [--dump-module DUMP_MODULE]
+                         [--span-mlir SPAN_MLIR] [--span-vmfb SPAN_VMFB]
+                         [--Kspan KSPAN] [--masked-mlir MASKED_MLIR]
+                         [--fuzz-mlir FUZZ_MLIR] [--fuzzoff FUZZOFF]
+                         [--entries ENTRIES] [--driver-tsv DRIVER_TSV] [--K K]
+                         [--tsv TSV]
+USAGE
+
+def argparse_error(msg)
+  $stderr.write(USAGE)
+  $stderr.write("#{PROG}: error: #{msg}\n")
+  exit 2
+end
+
+def die(msg)
+  $stderr.puts "#{PROG}: #{msg}"
+  exit 2
+end
+DIE = method(:die)
+
+# **Read as UTF-8 regardless of the locale.** The frozen Python defaults to UTF-8, so
+# Ruby reading as US-ASCII under `LC_ALL=C` fails on the non-ASCII in the generated MLIR
+# (hit in practice).
+def read_text(path) = File.read(path, mode: "rb").force_encoding("UTF-8")
+
+def read_meta(d)
+  m = {}
+  read_text(File.join(d, "meta.tsv")).each_line do |line|
+    next if line.start_with?("#")
+    k, v = line.chomp("\n").split("\t")
+    m[k] = v.to_i
+  end
+  m
+end
+
+def read_tsv(path)
+  rows = []
+  read_text(path).each_line do |line|
+    next if line.start_with?("#")
+    rows << line.chomp("\n").split("\t").map(&:to_i)
+  end
+  rows
+end
+
+class Checker
+  def initialize = @out = []
+  def rec(num, subject, ok, detail)
+    @out << ["##{num}", subject, ok ? "PASS" : "REJECT", detail]
+  end
+  def rejects = @out.select { |r| r[2] == "REJECT" }
+  def dump(path = nil)
+    @out.each { |r| puts r.join("\t") }
+    if path
+      File.open(path, "w") do |f|
+        f.write("#check\tsubject\tresult\tdetail\n")
+        @out.each { |r| f.write(r.join("\t") + "\n") }
+      end
+    end
+    n = rejects.size
+    puts "#{PROG}: #{@out.size} checks, #{n} rejected"
+    n
+  end
+end
+
+def parse_args(argv)
+  a = { "jobs" => nil, "table" => nil, "mlir" => nil, "vmfb" => nil,
+        "dump_module" => "iree-dump-module", "span_mlir" => nil, "span_vmfb" => nil,
+        "Kspan" => 16, "masked_mlir" => nil, "fuzz_mlir" => nil, "fuzzoff" => nil,
+        "entries" => nil, "driver_tsv" => nil, "K" => 16, "tsv" => nil }
+  i = 0
+  pos = []
+  while i < argv.size
+    t = argv[i]
+    take = lambda do |name|
+      i += 1
+      argparse_error("argument #{name}: expected one argument") if i >= argv.size
+      argv[i]
+    end
+    case t
+    when "-h", "--help" then $stdout.write(USAGE); exit 0
+    when "--jobs" then a["jobs"] = take.call("--jobs")
+    when "--table" then a["table"] = take.call("--table")
+    when "--mlir" then a["mlir"] = take.call("--mlir")
+    when "--vmfb" then a["vmfb"] = take.call("--vmfb")
+    when "--dump-module" then a["dump_module"] = take.call("--dump-module")
+    when "--span-mlir" then a["span_mlir"] = take.call("--span-mlir")
+    when "--span-vmfb" then a["span_vmfb"] = take.call("--span-vmfb")
+    when "--Kspan" then a["Kspan"] = take.call("--Kspan").to_i
+    when "--masked-mlir" then a["masked_mlir"] = take.call("--masked-mlir")
+    when "--fuzz-mlir" then a["fuzz_mlir"] = take.call("--fuzz-mlir")
+    when "--fuzzoff" then a["fuzzoff"] = take.call("--fuzzoff")
+    when "--entries" then a["entries"] = take.call("--entries")   # D-4: accepted and ignored
+    when "--driver-tsv" then a["driver_tsv"] = take.call("--driver-tsv")
+    when "--K" then a["K"] = take.call("--K").to_i
+    when "--tsv" then a["tsv"] = take.call("--tsv")
+    else
+      argparse_error("unrecognized arguments: #{t}") if t.start_with?("-") && t != "-"
+      pos << t
+    end
+    i += 1
+  end
+  argparse_error("unrecognized arguments: #{pos.join(' ')}") unless pos.empty?
+  argparse_error("the following arguments are required: --jobs") if a["jobs"].nil?
+  a
+end
+
+def overlaps(per)
+  ov = 0
+  per.each do |v|
+    (0...v.size).each do |i|
+      ((i + 1)...v.size).each do |j|
+        ov += 1 if v[i][0] <= v[j][1] && v[j][0] <= v[i][1]
+      end
+    end
+  end
+  ov
+end
+
+a = parse_args(ARGV)
+c = Checker.new
+d = a["jobs"]
+m = read_meta(d)
+w_view = m["view_w"]
+h_view = m["view_h"]
+atlas = m["atlas_size"]
+flat = m["flat_size"]
+
+wall = read_tsv(File.join(d, "wall.tsv"))
+span = read_tsv(File.join(d, "span.tsv"))
+masked = read_tsv(File.join(d, "masked.tsv"))
+n0 = m["wall_phase0_n"]
+
+# ---- #1 coordinates inside the screen ------------------------------------
+bad = wall.reject { |x| x[1] >= 0 && x[1] < w_view && x[2] >= -1 && x[3] < h_view }
+c.rec(1, "wall coords inside #{w_view}x#{h_view}", bad.empty?,
+      "#{wall.size} jobs, #{bad.size} outside" +
+      (bad.empty? ? "" : " (first: x=#{bad[0][1]} yl=#{bad[0][2]} yh=#{bad[0][3]})"))
+bads = span.reject { |s| s[1] >= 0 && s[1] < h_view && s[2] >= 0 && s[2] <= s[3] && s[3] < w_view }
+c.rec(1, "span coords inside the view rect", bads.empty?, "#{span.size} jobs, #{bads.size} outside")
+badm = masked.reject { |x| x[1] >= 0 && x[1] < w_view }
+c.rec(1, "masked x inside the view", badm.empty?, "#{masked.size} jobs, #{badm.size} outside")
+
+# ---- #2 srcofs alignment and range ----------------------------------------
+bad = wall.select { |x| (x[6] % TEXCOL_STRIDE) != 0 || x[6] < 0 || x[6] + 127 >= atlas }
+c.rec(2, "wall srcofs is a 128-aligned window inside the #{atlas} B atlas", bad.empty?,
+      "#{bad.size} violations" + (bad.empty? ? "" : " (first srcofs=#{bad[0][6]})"))
+bad = span.select { |s| (s[6] % FLAT_STRIDE) != 0 || s[6] < 0 || s[6] + 4095 >= flat }
+c.rec(2, "span srcofs is a 4096-aligned flat inside the #{flat} B atlas", bad.empty?,
+      "#{bad.size} violations")
+
+# ---- #3 cmap is 0..33 ------------------------------------------------------
+bad = wall.reject { |x| x[7] >= 0 && x[7] < CMAP_ROWS }
+c.rec(3, "wall cmap in 0..33", bad.empty?, "#{bad.size} violations")
+bad = span.reject { |s| s[7] >= 0 && s[7] < CMAP_ROWS }
+c.rec(3, "span cmap in 0..33", bad.empty?, "#{bad.size} violations")
+bad = masked.select { |x| x[9] < 0 && !(x[8] >= 0 && x[8] < CMAP_ROWS) }
+c.rec(3, "masked cmap in 0..33 (non-fuzz)", bad.empty?, "#{bad.size} violations")
+
+# ---- #4 / #5 exclusion per x and the slot count ---------------------------
+per_x = Array.new(w_view) { [] }
+skipped = 0
+wall[0, n0].to_a.each do |x|
+  unless x[1] >= 0 && x[1] < w_view
+    skipped += 1
+    next
+  end
+  per_x[x[1]] << [x[2], x[3]] if x[2] <= x[3]
+end
+ov = overlaps(per_x)
+c.rec(4, "phase-0 wall columns are disjoint per x", ov.zero? && skipped.zero?,
+      "#{ov} overlapping pairs over #{n0} phase-0 jobs" +
+      (skipped.zero? ? "" : ", #{skipped} jobs skipped for being outside the view") +
+      " (gather is only well defined when this is 0 -- R009 s2)")
+maxk = per_x.map(&:size).max || 0
+c.rec(5, "per-x job count <= K_MAX=#{a['K']}", maxk <= a["K"],
+      "max_k=#{maxk} (E057: the measured maximum over 10 996 frames is 13)")
+c.rec(5, "the checker agrees with the producer's own max_k", maxk == m["max_k_phase0"],
+      "jobcheck=#{maxk} dump_jobs=#{m['max_k_phase0']}")
+
+# ---- #6 phase boundaries ---------------------------------------------------
+c.rec(6, "phase boundary is inside the wall bank", n0 >= 0 && n0 <= m["nwall"],
+      "wall_phase0_n=#{n0} nwall=#{m['nwall']} (phase 1 sky columns = #{m['nwall'] - n0})")
+
+# ---- #10 exclusion of x intervals per y ----------------------------------
+per_y = Array.new(h_view) { [] }
+skipped = 0
+span.each do |s|
+  unless s[1] >= 0 && s[1] < h_view
+    skipped += 1
+    next
+  end
+  per_y[s[1]] << [s[2], s[3]] if s[2] <= s[3]
+end
+ovy = overlaps(per_y)
+c.rec(10, "plane spans are disjoint per y", ovy.zero? && skipped.zero?,
+      "#{ovy} overlapping pairs over #{span.size} spans" +
+      (skipped.zero? ? "" : ", #{skipped} spans skipped for being outside the view") +
+      " (the span gather is only well defined when this is 0 -- E070 s3.2)")
+maxkx = per_y.map(&:size).max || 0
+c.rec(10, "per-y span count <= K_MAX=#{a['Kspan']}", maxkx <= a["Kspan"],
+      "span_max_kx=#{maxkx} (E070: the measured maximum over 10 996 frames is 12)")
+c.rec(10, "the checker agrees with the producer's own span_max_kx",
+      maxkx == m.fetch("span_max_kx", -1),
+      "jobcheck=#{maxkx} dump_jobs=#{m['span_max_kx']}")
+c.rec(10, "the producer saw no per-y overlap either", m.fetch("span_overlaps", -1).zero?,
+      "dump_jobs span_overlaps=#{m['span_overlaps']}")
+
+# ---- #11 closed-form identity -----------------------------------------------
+px = m.fetch("span_closed_px", 0)
+bad_n = m.fetch("span_closed_bad", -1)
+c.rec(11, "the closed form of position(x) agrees with the sequential walk",
+      bad_n.zero? && px > 0,
+      "#{bad_n} mismatching pixels out of #{px} span pixels in this frame " \
+      "(E070 s3.1: 0 out of 210 239 835 over all three demos)")
+pct = px.zero? ? 0.0 : 100.0 * m.fetch("span_ycarry", 0) / px
+c.rec(11, "observed: how often the y field carries into x (C-7)", true,
+      "#{m['span_ycarry']} of #{px} pixels in this frame " \
+      "(#{format('%.2f', pct)}%); all three demos: 90 220 683 of 210 239 835 = 42.91%")
+
+# ---- #12 masked slots and batch splitting ---------------------------------
+per_xm = Array.new(w_view) { [] }
+per_xf = Array.new(w_view) { [] }
+masked.each do |mj|
+  next unless mj[1] >= 0 && mj[1] < w_view
+  next if mj[2] > mj[3]
+  (mj[9] >= 0 ? per_xf : per_xm)[mj[1]] << [mj[0], mj[2], mj[3], mj[9]]
+end
+mk = per_xm.map(&:size).max || 0
+fk = per_xf.map(&:size).max || 0
+kdecl = m.fetch("masked_k_max", 40)
+c.rec(12, "per-x masked job count <= the largest declared K (#{kdecl})", mk <= kdecl,
+      "masked_max_kx=#{mk} (E071: the measured maximum over 10 996 frames is 37; " \
+      "84.0% of frames fit K=8 and 98.1% fit K=16)")
+c.rec(12, "the checker agrees with the producer's own masked_max_kx",
+      mk == m.fetch("masked_max_kx", -1), "jobcheck=#{mk} dump_jobs=#{m['masked_max_kx']}")
+c.rec(12, "the checker agrees with the producer's own fuzz_max_kx",
+      fk == m.fetch("fuzz_max_kx", -1), "jobcheck=#{fk} dump_jobs=#{m['fuzz_max_kx']}")
+mono = (0...(masked.size - 1)).all? { |i| masked[i][0] < masked[i + 1][0] }
+c.rec(12, "the masked bank index IS the schedule order", mono,
+      "the gather fold uses the slot index k as the key that decides the winner, " \
+      "so packing the slots in bank order is only correct because the bank is " \
+      "monotone in issue order (Jobs#push_masked appends to both)")
+plan = []
+i = 0
+live = masked.select { |x| x[2] <= x[3] }
+while i < live.size
+  fz = live[i][9] >= 0
+  lo = i
+  i += 1 while i < live.size && (live[i][9] >= 0) == fz
+  if !fz
+    plan << ["masked", lo, i, -1]
+  else
+    cnt = {}
+    (lo...i).each { |j| cnt[live[j][1]] = cnt.fetch(live[j][1], 0) + 1 }
+    (0...(cnt.empty? ? 0 : cnt.values.max)).each { |sl| plan << ["fuzz", lo, i, sl] }
+  end
+end
+c.rec(12, "the batch plan is what the Job IR forces", true,
+      "#{plan.size} dispatches (#{plan.count { |p| p[0] == 'masked' }} masked + " \
+      "#{plan.count { |p| p[0] == 'fuzz' }} fuzz); " \
+      "producer says masked_dispatches=#{m['masked_dispatches']}")
+c.rec(12, "the checker's plan and the producer's plan have the same length",
+      plan.size == m.fetch("masked_dispatches", -1),
+      "jobcheck=#{plan.size} dump_jobs=#{m['masked_dispatches']}")
+
+# ---- #13 per-x exclusion over the whole wall bank (phase 0 + empty) -------
+per_xa = Array.new(w_view) { [] }
+wall.each { |x| per_xa[x[1]] << [x[2], x[3]] if x[1] >= 0 && x[1] < w_view && x[2] <= x[3] }
+ova = overlaps(per_xa)
+maxa = per_xa.map(&:size).max || 0
+c.rec(13, "ALL wall-bank columns (phase 0 + phase 1 sky) are disjoint per x", ova.zero?,
+      "#{ova} overlapping pairs over #{wall.size} wall jobs " \
+      "(#{m['nwall'] - n0} of them are sky). E061/E070 only ever proved this for " \
+      "the #{n0} phase-0 jobs; opaque_columns needs it for the whole bank, and " \
+      "E071 measured 0 violations over all 10 996 frames")
+c.rec(13, "per-x wall-bank job count <= K_MAX=#{a['K']}", maxa <= a["K"],
+      "wall_all_max_k=#{maxa} (E071: measured maximum 14 over 10 996 frames, " \
+      "vs 13 for phase 0 alone)")
+c.rec(13, "the checker agrees with the producer's own wall_all_max_k",
+      maxa == m.fetch("wall_all_max_k", -1),
+      "jobcheck=#{maxa} dump_jobs=#{m['wall_all_max_k']}")
+c.rec(13, "the producer saw no overlap in the whole wall bank either",
+      m.fetch("wall_all_overlaps", -1).zero?,
+      "dump_jobs wall_all_overlaps=#{m['wall_all_overlaps']}")
+c.rec(13, "reordering the opaque stages does not change any pixel",
+      m.fetch("cover_bad", -1).zero?,
+      "cover_bad=#{m['cover_bad']} pixels where a wall job is the LAST " \
+      "sequential writer and a span also covers it " \
+      "(cover_dbl=#{m['cover_dbl']} of #{m['cover_px']} painted pixels; " \
+      "over all 10 996 frames: 0 bad out of 121 087 doubly covered)")
+c.rec(13, "the producer's staged frame equals its sequential frame",
+      m.fetch("staged_eq_full", -1) == 1,
+      "run_staged(jobs) == run(jobs) byte for byte in this frame")
+
+# ---- #14 fuzz is 1 dispatch, 1 column, 1 job --------------------------------
+c.rec(14, "every fuzz dispatch holds at most one job per column", true,
+      "#{plan.count { |p| p[0] == 'fuzz' }} fuzz dispatches, split by slot " \
+      "index; two fuzz jobs of one column can be read-after-write dependent " \
+      "(54 pairs over 10 996 frames), two of different columns never touch")
+fzbad = masked.select { |x| x[9] >= 0 && x[2] <= x[3] && (x[2] < 1 || x[3] > h_view - 2) }
+c.rec(14, "fuzz jobs are clamped to yl>=1 and yh<=H-2", fzbad.empty?,
+      "#{fzbad.size} jobs outside; that clamp (E053) is what makes the y+-1 read " \
+      "in bounds. Measured over all 10 996 frames: 0")
+fzp = masked.select { |x| x[9] >= 50 || (x[9] < 0 && x[9] != -1) }
+c.rec(14, "the fuzz phase is -1 (not a fuzz column) or 0..49", fzp.empty?,
+      "#{fzp.size} jobs with a fuzzpos outside 0..49; the phase is baked in at " \
+      "generation time (E057) and the kernel wraps it at 50")
+c.rec(14, "the producer counted no out-of-range fuzz job either",
+      m.fetch("fuzz_badrange", -1).zero?, "dump_jobs fuzz_badrange=#{m['fuzz_badrange']}")
+
+row = nil
+srow = nil
+if a["table"]
+  rows = JT.annotate(JT.read_table(a["table"], DIE))
+  row = rows.find { |r| r["name"] == "wall_columns" }
+  srow = rows.find { |r| r["name"] == "plane_spans_k#{a['Kspan']}" }
+  phases = rows.map { |r| r["phase"].to_i }
+  c.rec(6, "the table's dispatch order is phase-monotone", phases == phases.sort,
+        "phases=" + rows.map { |r| r["phase"] }.join(","))
+  c.rec(6, "the table has a plane_spans row for K=#{a['Kspan']}", !srow.nil?,
+        "have: " + rows.map { |r| r["name"] }.join(","))
+end
+
+# ---- #7 the fixed-point spelling -------------------------------------------
+if a["mlir"] && row
+  src = read_text(a["mlir"])
+  ufields = row["fields"].split(",", -1).each_with_index
+                         .select { |_f, i| row["ftypes"][i] == "u" }.map(&:first)
+  has_u = src.include?("arith.shrui")
+  has_s = src.include?("arith.shrsi")
+  c.rec(7, "u32 16.16 fields (#{ufields.join(',')}) are read with an UNSIGNED shift",
+        has_u && !has_s,
+        "shrui=#{has_u ? 'yes' : 'NO'} shrsi=#{has_s ? 'yes' : 'no'} " \
+        "-- texmid is negative for real jobs, so shrsi would give a different " \
+        "texel (R009 s7.2)")
+  c.rec(7, "the texel index is masked with & 127 (TEXCOL_STRIDE window)",
+        src.include?("arith.constant 127 : i32"), "127 constant present")
+  want = "tensor<#{h_view}x#{w_view}xi8>"
+  c.rec(7, "the kernel's framebuffer type is #{want}", src.include?(want),
+        "#{src.include?(want) ? 'found' : 'NOT FOUND'} in #{File.basename(a['mlir'])}")
+  wk = w_view * a["K"]
+  want = "tensor<#{wk * 6}xi32>"
+  c.rec(7, "the kernel's job buffer is planar SoA #{want}", src.include?(want),
+        "W*K*6 = #{wk * 6} i32")
+  cy = m["centery"]
+  c.rec(7, "the kernel's centery constant is #{cy}",
+        src.include?("arith.constant #{cy} : i32"), "frame constant is folded in")
+end
+
+# ---- #7 (span) -------------------------------------------------------
+if a["span_mlir"] && srow
+  src = read_text(a["span_mlir"])
+  ufields = srow["fields"].split(",", -1).each_with_index
+                          .select { |_f, i| srow["ftypes"][i] == "u" }.map(&:first)
+  nu = src.scan("arith.shrui").size
+  has_s = src.include?("arith.shrsi")
+  c.rec(7, "the span u32 fields (#{ufields.join(',')}) are read with UNSIGNED shifts",
+        nu >= 2 && !has_s,
+        "shrui x#{nu} (need 2: >>26 and >>4), shrsi=#{has_s ? 'YES -- WRONG' : 'no'}")
+  c.rec(7, "the spot mask is 0x0fc0 (4032) and the two shifts are 26 and 4",
+        src.include?("arith.constant 4032 : i32") &&
+        src.include?("arith.constant 26 : i32") && src.include?("arith.constant 4 : i32"),
+        "R_DrawSpan packs x in the high 16 bits and y in the low (C-7)")
+  c.rec(7, "the two halves of spot are combined with `ori`", src.include?("arith.ori"),
+        "spot = (p >>u 26) | ((p >>u 4) & 0x0fc0)")
+  want = "tensor<#{h_view}x#{w_view}xi8>"
+  c.rec(7, "the span kernel's framebuffer type is #{want}", src.include?(want),
+        "#{src.include?(want) ? 'found' : 'NOT FOUND'} in #{File.basename(a['span_mlir'])}")
+  wk = h_view * a["Kspan"]
+  want = "tensor<#{wk * 6}xi32>"
+  c.rec(7, "the span kernel's job buffer is planar SoA #{want}", src.include?(want),
+        "H*K*6 = #{wk * 6} i32 -- ★ the span slots are cut by y, not by x")
+  want = "tensor<#{flat}xi8>"
+  c.rec(7, "the span kernel reads the flat atlas as #{want}", src.include?(want),
+        "flat_size=#{flat} from meta.tsv")
+  c.rec(7, "the span kernel does NOT use centery",
+        !src.include?("arith.constant #{m['centery']} : i32"),
+        "span has no vertical fixed point; a centery constant would mean the " \
+        "wall template leaked in")
+end
+
+# ---- #7 (masked) -----------------------------------------------------
+if a["masked_mlir"]
+  src = read_text(a["masked_mlir"])
+  c.rec(7, "the masked fold is an ORDER-INDEPENDENT maxsi, not a select",
+        src.include?("arith.maxsi"),
+        "select-on-in would make the answer depend on the reduction order; " \
+        "masked columns overlap on 9.06% of the pixels they paint")
+  c.rec(7, "the winner key is (k+1)<<8 packed above the pixel byte",
+        src.include?("arith.constant 256 : i32") && src.include?("arith.ori"),
+        "cand = in ? ((k+1)*256 | px) : 0, acc starts at the background byte " \
+        "(key 0), so any covering slot beats the background and the largest k wins")
+  c.rec(7, "the pixel is the low 8 bits of the winning accumulator",
+        src.include?("arith.trunci"), "out = trunci(acc) : i32 to i8")
+  c.rec(7, "the masked texel index uses an UNSIGNED shift and & 127",
+        src.include?("arith.shrui") && !src.include?("arith.shrsi") &&
+        src.include?("arith.constant 127 : i32"),
+        "same fixed point as wall_columns (texmid is negative for a third of " \
+        "the real jobs)")
+  want = "tensor<#{1_048_576}xi8>"
+  c.rec(7, "the masked kernel reads the per-frame window atlas as #{want}",
+        src.include?(want),
+        "the CAPACITY is fixed (the Job IR ring CAP_MASKED = 8192 windows x " \
+        "128 B); a per-frame size would make the kernel depend on the frame")
+end
+
+# ---- #7 / #15 (fuzz) -------------------------------------------------
+if a["fuzz_mlir"]
+  src = read_text(a["fuzz_mlir"])
+  c.rec(7, "the fuzz kernel reads the FRAMEBUFFER, not a texture",
+        src.include?("tensor.extract %bg["),
+        "R_DrawFuzzColumn darkens the pixel one row above or below in the " \
+        "framebuffer the earlier stages wrote")
+  c.rec(7, "the fuzz darkening is colormap row 6 (offset 1536)",
+        src.include?("arith.constant 1536 : i32"), "cmap[6*256 + v]")
+  c.rec(7, "fuzzpos wraps at 50",
+        src.include?("arith.constant 50 : i32") && src.include?("arith.remsi"),
+        "fp(y) = (fuzz + y - yl) mod 50")
+  c.rec(7, "the fuzz kernel touches no texture atlas",
+        !src.include?("%win") && !src.include?("arith.constant 127 : i32"),
+        "no texel index at all -- a `& 127` here would mean the masked " \
+        "template leaked in")
+  nchain = src.scan("arith.remsi").size
+  chain_bits = (1..4).select { |t| src.include?("%ch#{t} ") || src.include?("%ch#{t},") }
+  nsel = src.scan("arith.select %ch").size
+  c.rec(15, "the self-reference chain is unrolled exactly 4 steps deep",
+        nchain == 5 && chain_bits.size == 4 && nsel >= 4,
+        "#{nchain} fuzzoffset lookups (need 5: 4 chain steps + the base), " \
+        "chain predicates %ch1..%ch#{chain_bits.size}, #{nsel} guarded colormap " \
+        "applications. The recurrence f(y) = C[f(y-1)] (off(y) = -1 and " \
+        "y > yl) is bounded by the longest run of -1 in fuzzoffset, which is 4")
+end
+if a["fuzzoff"]
+  fo = File.binread(a["fuzzoff"])
+  vals = fo.bytes[0, 50].map { |v| v > 127 ? v - 256 : v }
+  best = 0
+  cur = 0
+  (0...150).each do |k|
+    if vals[k % 50] < 0
+      cur += 1
+      best = [best, cur].max
+    else
+      cur = 0
+    end
+  end
+  c.rec(15, "the fuzzoffset table has no run of 5 or more -1 entries", best <= 4,
+        "longest run of -1 = #{best} (checked with wrap-around); the fuzz " \
+        "kernel unrolls the self-reference #{5} deep, so a longer run would " \
+        "make it SILENTLY wrong. Table: #{vals.count { |v| v < 0 }} of 50 " \
+        "are -1")
+  c.rec(15, "every fuzzoffset entry is exactly -1 or +1",
+        vals.all? { |v| v == -1 || v == 1 },
+        "the kernel adds it to the row index and clamps; anything else would " \
+        "read a row this contract does not cover")
+  c.rec(15, "the producer's measured chain depth fits the unrolled depth",
+        m.fetch("fuzz_chain_max", 0) <= 4,
+        "fuzz_chain_max=#{m['fuzz_chain_max']} in this frame " \
+        "(measured maximum over all 10 996 frames: 4, which is exactly the " \
+        "static bound the table gives)")
+end
+
+# ---- #8 the signature of the table and the .vmfb --------------------------
+entry_of = lambda do |path|
+  next nil unless path
+  mm = read_text(path).match(/func\.func @(\S+?)\(/)
+  mm ? mm[1] : nil
+end
+entry = entry_of.call(a["mlir"])
+sentry = entry_of.call(a["span_mlir"])
+if row && entry
+  decl = JT.kernel_decl(row, w_view, h_view, a["K"], m["centery"], m["atlas_size"],
+                        m["cmap_bytes"])
+  want = format("wall_gather_%016x", JT.fnv1a64(decl))
+  c.rec(8, "the MLIR entry name carries the kernel signature", entry == want,
+        "entry=#{entry} expected=#{want}")
+end
+if srow && sentry
+  decl = JT.kernel_decl(srow, w_view, h_view, a["Kspan"], m["centery"], flat, m["cmap_bytes"])
+  want = format("plane_gather_%016x", JT.fnv1a64(decl))
+  c.rec(8, "the span MLIR entry name carries the kernel signature", sentry == want,
+        "entry=#{sentry} expected=#{want} (table row #{srow['name']})")
+  c.rec(8, "the table's k_max for that row is the K the kernel was built with",
+        srow["k_max"].to_i == a["Kspan"],
+        "table k_max=#{srow['k_max']} kernel K=#{a['Kspan']}")
+end
+[[a["vmfb"], entry, "wall"], [a["span_vmfb"], sentry, "span"]].each do |path, e, what|
+  next unless path && e
+  begin
+    o, _err, _st = Open3.capture3(a["dump_module"], path)
+    c.rec(8, "the compiled #{what} .vmfb exports exactly that entry", o.include?(e),
+          "#{File.basename(path)} #{o.include?(e) ? 'exports' : 'DOES NOT export'} #{e}")
+  rescue StandardError => ex
+    c.rec(8, "the compiled #{what} .vmfb exports exactly that entry", false, ex.to_s)
+  end
+end
+
+# ---- #9 allocation in the frame loop -------------------------------------
+if a["driver_tsv"] && File.exist?(a["driver_tsv"])
+  bad = []
+  n = 0
+  read_text(a["driver_tsv"]).each_line do |line|
+    next if line.start_with?("#")
+    f = line.chomp("\n").split("\t")
+    n += 1
+    bad << f[0] if f[17].to_i != 0
+  end
+  c.rec(9, "no shim-side allocation inside the frame loop", bad.empty?,
+        "#{n} driver runs, #{bad.size} with alloc_in_loop != 0 " \
+        "(#{bad.empty? ? 'none' : bad.join(',')})")
+end
+
+exit(c.dump(a["tsv"]).zero? ? 0 : 1)

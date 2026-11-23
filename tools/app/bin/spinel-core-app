@@ -1,0 +1,512 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+#
+# tools/app/bin/spinel-core-app -- the application tool of decision 0014.
+#
+#   spinel-core-app package  --app APP --board BOARD.rb --out DIR
+#       Reads the declarations, generates the channel package, writes the
+#       contracts, the packed root and its map into DIR (contracts/, pack/,
+#       channels/), and prints the packed root's sha256.
+#   spinel-core-app admit    --app APP --board BOARD.rb --board-tsv BOARD.tsv --out DIR
+#                            --kernel K --clang CC --typedump READER
+#       `package`, then the kernel on every entry (admission only, with a
+#       report), then the cross-entry checks over the reports. Exit 0 with no
+#       diagnostic; exit 1 printing each diagnostic as `file:line: code: detail`.
+#   spinel-core-app run-host --app APP --board BOARD.rb --board-host HOST.rb
+#                            --stimulus S.tsv [--trace OUT]
+#       Runs the application under CRuby on the virtual clock and prints the
+#       run's summary; writes the trace text when asked.
+#   spinel-core-app board    --dts zephyr.dts --config .config --board NAME --out DIR
+#                            [--release v4.4.2] [--flags FILE]
+#       Generates the board package (board.rb, board_host.rb, board_port.c,
+#       board.tsv, provenance.json) from the final devicetree, the build's
+#       .config, the release's effect table and the adapters.
+#   spinel-core-app screen   --object FILE [--entry SYMBOL]... [--release v4.4.2]
+#       Reads the object's undefined symbols and exits 1 naming each listed
+#       allocating, blocking or interrupt-configuring primitive, or entry symbol.
+#   spinel-core-app build    --app APP --board mps2_an521|frdm_mcxn947|frdm_imxrt1186 --out DIR
+#                            [--board-overlay FILE] [--verify] [--keep-staging]
+#                            [--session-image DIR --session-objects DIR]
+#                            [--pcsample PERIOD_US,TICS[,CAPACITY]] [--net FILE] [--companion APP]
+#       The eleven steps of 0014 section 8 (tools from KERNEL, CLANG or
+#       LLVM_PREFIX, SPINEL_TYPEDUMP, ZEPHYR_BASE, ZEPHYR_SDK_INSTALL_DIR and
+#       the PATH): firmware under DIR/firmware when step 10 passes, nothing
+#       otherwise; the log at DIR/build.log. With --companion (decision 0027)
+#       the M33 companion is built in the same sysbuild: its firmware under
+#       DIR/companion and as the firmware's launcher.bin, and neither when
+#       either image is refused. The --mutate-* options are the
+#       controls of tests/app/build.sh, not for use.
+#   spinel-core-app labels   --object IMAGE --channel NAME...
+#       Checks a linked image's ring labels: each spc_ring_<channel>_<op>_
+#       <copy|pub>_<begin|end> once, begin before end, inside the operation's
+#       function. Exit 1 naming each finding.
+#
+# Every refusal prints `code:` so a caller can read the code; nothing here
+# guesses a tool path.
+require "optparse"
+require "json"
+require "fileutils"
+require "digest"
+require "open3"
+$LOAD_PATH.unshift(File.expand_path("../lib", __dir__))
+require "core_app/app_model"
+require "core_app/declarations"
+require "core_app/channels"
+require "core_app/contracts"
+require "core_app/app_checks"
+
+PROG = "spinel-core-app"
+def die(msg)
+  warn("#{PROG}: #{msg}")
+  exit 1
+end
+
+def refused(diags)
+  diags.each { |d| puts d.to_s }
+  exit 1
+end
+
+opt = { root: "app.rb", release: "v4.4.2", entries: [], channels: [] }
+cmd = ARGV.shift or die("usage: #{PROG} package|admit|run-host ...")
+OptionParser.new do |o|
+  o.on("--app FILE") { |v| opt[:app] = v }
+  o.on("--board FILE") { |v| opt[:board] = v }
+  o.on("--board-tsv FILE") { |v| opt[:board_tsv] = v }
+  o.on("--board-host FILE") { |v| opt[:board_host] = v }
+  o.on("--out DIR") { |v| opt[:out] = v }
+  o.on("--kernel FILE") { |v| opt[:kernel] = v }
+  o.on("--clang FILE") { |v| opt[:clang] = v }
+  o.on("--typedump FILE") { |v| opt[:typedump] = v }
+  o.on("--stimulus FILE") { |v| opt[:stimulus] = v }
+  o.on("--trace FILE") { |v| opt[:trace] = v }
+  o.on("--dts FILE") { |v| opt[:dts] = v }
+  o.on("--config FILE") { |v| opt[:config] = v }
+  o.on("--flags FILE") { |v| opt[:flags] = v }
+  o.on("--release NAME") { |v| opt[:release] = v }
+  o.on("--object FILE") { |v| opt[:object] = v }
+  o.on("--entry SYMBOL") { |v| opt[:entries] << v }
+  o.on("--channel NAME") { |v| opt[:channels] << v }
+  o.on("--board-overlay FILE") { |v| opt[:board_overlay] = v }
+  # decision 0021: an application with a core_session, built with the image
+  # of its session (tools/doom/session-image.rb) and the entries' objects
+  o.on("--session-image DIR") { |v| opt[:session_image] = v }
+  o.on("--session-objects DIR") { |v| opt[:session_objects] = v }
+  o.on("--net FILE") { |v| opt[:net] = v } # the network file of the udp: channels (CoreApp::Net), outside the repository
+  o.on("--companion APP") { |v| opt[:companion] = v } # decision 0027: the M33 companion's application, built with this one
+  o.on("--verify") { opt[:verify] = true }
+  o.on("--stimulus FILE") { |v| opt[:stimulus] = v }
+  o.on("--keep-staging") { opt[:keep_staging] = true } # diagnosis: keep <out>/.staging after a refusal (never firmware)
+  o.on("--console FILE") { |v| opt[:console] = v }   # verify: a captured console instead of a QEMU run
+  o.on("--trace-text FILE") { |v| opt[:trace_text] = v } # verify: a text trace instead of a console (the mutation controls)
+  o.on("--no-build") { opt[:no_build] = true }       # verify: the firmware under --out is already built
+  o.on("--timeout SECONDS") { |v| opt[:timeout] = v.to_i }
+  o.on("--icount-shift N") { |v| opt[:icount] = v.to_i }
+  o.on("--board-dir DIR") { |v| opt[:board_dir] = v } # verify: the board package to load, instead of the firmware's
+  # the controls of tests/app/build.sh: each plants one input where the
+  # plan says the pipeline refuses it
+  o.on("--mutate-stack DELTA") { |v| opt[:mutate_stack] = v }          # the scheduler stack allocated R + DELTA (step 10)
+  o.on("--mutate-prj LINE") { |v| (opt[:mutate_prj] ||= []) << v }     # a line appended to prj.conf at step 2 (steps 3, 8)
+  o.on("--mutate-config") { opt[:mutate_config] = true }               # a .config value changed between steps 3 and 9 (step 10)
+  o.on("--mutate-source FILE") { |v| opt[:mutate_source] = v }         # one more C unit compiled and linked at step 9 (step 10)
+  o.on("--mutate-reserved-slot N") { |v| opt[:mutate_slot] = v }       # vector slot N of the staged image set non-zero (step 10)
+  o.on("--stress SPEC") { |v| opt[:stress] = v }                       # 0014 Task 12: the sampling source, PERIOD_US[,REPORT_AT]
+  o.on("--failure-sites") { opt[:failure_sites] = true }               # a debugging aid: the first failed call's site on the console
+  o.on("--pcsample SPEC") { |v| opt[:pcsample] = v }                   # a measurement build's PC sampler on frdm_imxrt1186, PERIOD_US,TICS[,CAPACITY]
+  o.on("--mutate-glue FILE") { |v| opt[:mutate_glue] = v }             # one more glue unit compiled and screened at step 5
+  o.on("--mutate-adapter-stack DELTA") { |v| opt[:mutate_adapter] = v } # every adapter thread's stack allocated R + DELTA (step 10)
+  o.on("--mutate-reserves FILE") { |v| opt[:mutate_reserves] = v }     # another reserves table (step 6: a source with no applicable row)
+  o.on("--mutate-int64-allow FILE") { |v| opt[:mutate_int64] = v }    # another int64 table (step 7: decision 0019, the listed source unlisted)
+  o.on("--mutate-ring-early-publish CHANNEL") { |v| opt[:mutate_ring] = v } # 0014 Task 12's negative control: the put publishes before its copy
+  o.on("--mutate-itcm-entries LIST") { |v| opt[:mutate_itcm] = v }     # the session entries kept in the instruction TCM instead of the board's (step 4; "" for none)
+  o.on("--mutate-udp-consumer VALUE") { |v| opt[:mutate_udp] = v }   # another value of the board's udp_consumer (step 1; tests/app/udp.sh)
+  o.on("--mutate-pair-id HEX") { |v| opt[:mutate_pair] = v }         # the pair id the companion publishes (decision 0027; 16 hex digits)
+  o.on("--mutate-consumer-stopped CHANNEL") { |v| opt[:mutate_stopped] = v } # 0027 control 5: the consumer never checks CHANNEL, so it never takes
+  o.on("--mutate-channel-cacheable CORE") { |v| opt[:mutate_cacheable] = v }  # 0027 control 6: the region mapped cacheable on CORE (cm7 or cm33)
+  o.on("--mutate-doorbell-unrung CHANNEL") { |v| opt[:mutate_unrung] = v }  # 0028: the put of CHANNEL never rings its doorbell
+  o.on("--mutate-doorbell-unenabled") { opt[:mutate_unenabled] = true }      # 0028: the consumer never enables the MU's interrupt
+  o.on("--mutate-doorbell-notify CORE") { |v| opt[:mutate_notify] = v }      # 0028: CORE's descriptor check wants another notify (cm7 or cm33)
+end.parse!(ARGV)
+# Decision 0035 stage 2: an application that declares fiber_def (or enum_def, or 0041's pool_def) is built from
+# its CORE form (tools/fiber/spinel-fiber-core). The rewritten file is
+# written into a temporary directory whose other entries link to the
+# application's own, so helpers and providers resolve as before; run-host
+# keeps the original, which spinel/core.rb runs on real Fibers.
+if %w[package admit build].include?(cmd) && opt[:app] && File.file?(opt[:app]) && File.read(opt[:app]).match?(/^\s*(fiber|enum|pool)_def\b/)
+  require "tmpdir"
+  src = File.expand_path(opt[:app])
+  mirror = Dir.mktmpdir("spinel-fiber-core.")
+  at_exit { FileUtils.rm_rf(mirror) }
+  Dir.children(File.dirname(src)).each do |e|
+    File.symlink(File.join(File.dirname(src), e), File.join(mirror, e)) unless e == File.basename(src)
+  end
+  core_tool = File.expand_path("../../fiber/spinel-fiber-core", __dir__)
+  rewritten = File.join(mirror, File.basename(src))
+  system(ENV.fetch("RUBY", RbConfig.ruby), core_tool, src, "-o", rewritten) or die("fiber-core: #{src} refused (decision 0035 stage 2; diagnostics above)")
+  opt[:app] = rewritten
+end
+unless %w[board screen labels build verify].include?(cmd)
+  %i[app board].each { |k| die("--#{k.to_s.tr('_', '-')} is required") unless opt[k] }
+end
+LIB = File.expand_path("../lib", __dir__)
+
+def read_all(opt)
+  app = CoreApp::Declarations.read(opt[:app])
+  board = CoreApp::Declarations.read_package(opt[:board], origin: "board")
+  pkg = CoreApp::Channels.generate(app, net: opt[:net] && CoreApp::Net.read(opt[:net], app))
+  [app, board.externs, pkg, board.constants]
+rescue CoreApp::Declarations::Refused => e
+  refused(e.diagnostics)
+rescue CoreApp::Net::Error => e
+  die(e.message)
+end
+
+def package(opt, app, board, pkg, constants)
+  out = opt[:out] or die("--out is required")
+  %w[contracts pack channels].each { |d| FileUtils.mkdir_p(File.join(out, d)) }
+  sha = CoreApp::Contracts.pack(app, board, pkg.externs, File.join(LIB, "spinel", "net.rb"), File.join(out, "pack"), root: opt[:root], constants: constants)
+  # The contracts sit beside the packed root: `root app.rb` resolves there.
+  paths = CoreApp::Contracts.write(app, board, pkg.externs, File.join(out, "pack"), root: opt[:root])
+  pkg.c_files.each { |n, t| File.write(File.join(out, "channels", n), t) }
+  File.write(File.join(out, "channels", "channels_host.rb"), pkg.host_source)
+  File.write(File.join(out, "channels", "channels.rb"), pkg.ruby_source)
+  File.write(File.join(out, "pack", "#{opt[:root]}.sha256"), "#{sha}  #{opt[:root]}\n")
+  [sha, paths]
+end
+
+case cmd
+when "package"
+  app, board, pkg, constants = read_all(opt)
+  sha, paths = package(opt, app, board, pkg, constants)
+  puts "packed #{opt[:root]} sha256 #{sha}"
+  paths.each { |e, p| puts "contract #{e} #{p}" }
+
+when "admit"
+  %i[out kernel clang typedump board_tsv].each { |k| die("--#{k.to_s.tr('_', '-')} is required") unless opt[k] }
+  app, board, pkg, constants = read_all(opt)
+  _sha, paths = package(opt, app, board, pkg, constants)
+  rows = CoreApp::AppChecks.read_board_tsv(opt[:board_tsv])
+  zero = "0" * 64
+  reports = {}
+  FileUtils.mkdir_p(File.join(opt[:out], "reports"))
+  paths.each do |entry, contract|
+    report = File.join(opt[:out], "reports", "#{entry}.json")
+    log = File.join(opt[:out], "reports", "#{entry}.log")
+    argv = [opt[:kernel], contract, "--root", File.dirname(contract), "--admit-only", "--clang", opt[:clang],
+            "--typedump", opt[:typedump], "--int-width=#{CoreApp::TARGET_BITS}", "--layout", "ptr32-i64-32long", "--report", report, "--profile", "realtime",
+            "--config-binding", "#{zero}:#{zero}:#{zero}", "--", "--target=thumbv8m.main-none-eabi", "-mcpu=cortex-m33", "-mthumb"]
+    text, status = Open3.capture2e(*argv)
+    # the log names the application's own files, not the packed root
+    File.write(log, CoreApp::Contracts.relocate(text, File.dirname(contract), CoreApp::Contracts.units_of(app, File.join(LIB, "spinel", "net.rb")), root: opt[:root]))
+    if status.success? && File.exist?(report)
+      reports[entry] = JSON.parse(File.read(report))
+    else
+      # The kernel's refusals: `<file>:<line>: <code>: <detail>` from the
+      # checker, `not-eligible: <code>` summaries from the driver.
+      found = text.scan(/^(?:[^:\n]+):(\d+): ([a-z][a-z0-9-]*): (.*)$/).map { |l, c, d| { "code" => c, "line" => l.to_i, "detail" => d } }
+      found += text.scan(/not-eligible: ([a-z][a-z0-9-]*)(.*)$/).map { |c, d| { "code" => c, "line" => nil, "detail" => d.sub(/\A:\s*/, "").strip } } if found.empty?
+      found = [{ "code" => "kernel", "line" => nil, "detail" => text.lines.last.to_s.strip }] if found.empty?
+      reports[entry] = { "refused" => found }
+    end
+  end
+  diags = CoreApp::AppChecks.run(app, { externs: board, rows: rows }, pkg.externs, reports)
+  refused(diags) unless diags.empty?
+  puts "admitted #{paths.size} entr#{paths.size == 1 ? 'y' : 'ies'}: #{paths.keys.join(', ')}"
+
+when "run-host"
+  %i[board_host stimulus].each { |k| die("--#{k.to_s.tr('_', '-')} is required") unless opt[k] }
+  require "core_app/host_runner"
+  app, board, pkg, _constants = read_all(opt)
+  stim = CoreApp::Stimulus.read(opt[:stimulus])
+  # The host package, the channel simulators, then the application itself,
+  # each under CRuby: spinel/core.rb makes the declarations no-ops.
+  $LOAD_PATH.unshift(File.join(LIB))
+  require "spinel/core"
+  load File.expand_path(opt[:board_host])
+  eval(pkg.host_source, TOPLEVEL_BINDING, "<channels_host>", 1) # rubocop:disable Security/Eval -- generated by this tool
+  load File.expand_path(opt[:app])
+  externs = board + pkg.externs + app.externs
+  # decision 0019's table, as the build reads it (--mutate-int64-allow names
+  # another, as it does for the build)
+  table = opt[:mutate_int64] ? File.expand_path(opt[:mutate_int64]) : CoreApp::INT64_ALLOW
+  result = begin
+    CoreApp::HostRunner.run(app, externs, stim, int64_allow: table)
+  rescue CoreApp::WidthRefused => e
+    die(e.message)
+  end
+  File.write(opt[:trace], result.trace.to_text) if opt[:trace]
+  t = result.trace
+  puts "records #{t.records.size} clock #{result.final_clock} horizon #{result.horizon}"
+  puts "selected #{t.of('START').size} skipped #{t.of('SELECT').sum { |r| r['skipped_from'].zero? ? 0 : r['skipped_to'] - r['skipped_from'] + 1 }} " \
+       "cancelled #{t.of('CANCEL').sum { |r| r['to'] - r['from'] + 1 }} cut #{t.of('CUT').sum { |r| r['to'] - r['from'] + 1 }}"
+  result.failures.each { |f| puts "failure #{f.entry} release #{f.release} status #{f.status} seq #{f.seq}" }
+  result.drops.each { |c, d| d.each { |reason, n| puts "drop #{c} #{reason} #{n}" if n > 0 } }
+  result.unconsumed.each { |u| puts "unconsumed #{u.channel} msg #{u.msg_id}#{u.stranded_by ? " stranded_by_fail_seq #{u.stranded_by}" : ''}" }
+  expected = stim.expected_failures.map { |f| [f.entry, f.release, f.status] }.sort
+  got = result.failures.map { |f| [f.entry, f.release, f.status] }.sort
+  if expected == got
+    puts "failures as declared: #{got.size}"
+  else
+    puts "failures differ from the stimulus's expect_failure lines: expected #{expected.inspect}, got #{got.inspect}"
+    exit 1
+  end
+  exit 1 if result.unconsumed.any? { |u| !u.stranded_by }
+when "board"
+  %i[dts config board out].each { |k| die("--#{k} is required") unless opt[k] }
+  require "core_app/board"
+  tables = File.join(LIB, "..", "zephyr", opt[:release])
+  effects = File.join(tables, "effects.tsv")
+  die("no effect table for release #{opt[:release]} at #{effects}") unless File.file?(effects)
+  begin
+    dts = CoreApp::Dts.read(opt[:dts])
+  rescue CoreApp::Dts::Error => e
+    die("#{opt[:dts]}: #{e.message}")
+  end
+  begin
+    pkg = CoreApp::Board.generate(dts: dts, config: File.read(opt[:config]), effects: effects,
+                                  adapters: File.join(LIB, "..", "adapters"), out: opt[:out], board: opt[:board],
+                                  release: opt[:release], dts_sha256: Digest::SHA256.file(opt[:dts]).hexdigest,
+                                  config_sha256: Digest::SHA256.file(opt[:config]).hexdigest,
+                                  flags_sha256: opt[:flags] ? Digest::SHA256.file(opt[:flags]).hexdigest : nil)
+  rescue CoreApp::Board::Error => e
+    die(e.message)
+  end
+  pkg.modules.each { |m| puts "module #{m.name} count #{m.instances.size} isr_ok #{m.isr_ok} blocking #{m.blocking} #{m.evidence}" }
+  puts "wrote #{pkg.files.keys.join(', ')} to #{opt[:out]}"
+
+when "screen"
+  die("--object is required") unless opt[:object]
+  require "core_app/evidence"
+  table = File.join(LIB, "..", "zephyr", opt[:release], "screen.tsv")
+  die("no screen table for release #{opt[:release]} at #{table}") unless File.file?(table)
+  tool = File.expand_path("../../core/object-symbols", __dir__)
+  found = CoreApp::Evidence.screen(opt[:object], CoreApp::Evidence.read_screen(table), opt[:entries], symbols_tool: tool)
+  found.each { |f| puts "#{opt[:object]}: screen: #{f['symbol']} (#{f['set']}): #{f['reason']}" }
+  exit 1 unless found.empty?
+  puts "#{opt[:object]}: screen passed"
+when "labels"
+  die("--object is required (the linked image)") unless opt[:object]
+  die("--channel <name> is required, once per channel") if opt[:channels].empty?
+  require "core_app/labels"
+  tool = File.expand_path("../../core/object-symbols", __dir__)
+  begin
+    found = CoreApp::Labels.check(opt[:object], opt[:channels], symbols_tool: tool)
+  rescue CoreApp::Labels::Error => e
+    die("labels: #{e.message}")
+  end
+  found.each { |f| puts f }
+  exit 1 unless found.empty?
+  puts "#{opt[:object]}: every label once, begin before end, inside its function, for #{opt[:channels].join(', ')}"
+when "build"
+  %i[out board].each { |k| die("--#{k} is required") unless opt[k] }
+  die("--app is required") unless opt[:app]
+  require "core_app/pipeline"
+  kernel = opt[:kernel] || ENV["KERNEL"] or die("--kernel or KERNEL names spinel-core-kernel")
+  clang = opt[:clang] || ENV["CLANG"] || (ENV["LLVM_PREFIX"] && File.join(ENV["LLVM_PREFIX"], "bin", "clang")) or die("--clang, CLANG or LLVM_PREFIX names the official clang")
+  typedump = opt[:typedump] || ENV["SPINEL_TYPEDUMP"] or die("--typedump or SPINEL_TYPEDUMP names the contract reader")
+  %w[ZEPHYR_BASE ZEPHYR_SDK_INSTALL_DIR].each { |v| die("#{v} is required; the installation record says how") unless ENV[v] }
+  llvm_bin = File.dirname(clang)
+  # decision 0019's table is this tree's, named to the kernel: without
+  # --int64-allow it looks beside its own executable, and a copy has none
+  tools = { kernel: kernel, clang: clang, typedump: typedump, lib: LIB,
+            int64_allow: File.expand_path("../../core/int64-allow.tsv", __dir__),
+            symbols: File.expand_path("../../core/object-symbols", __dir__), objcopy: File.join(llvm_bin, "llvm-objcopy"),
+            readelf: File.join(llvm_bin, "llvm-readelf"), zephyr_base: ENV["ZEPHYR_BASE"], sdk: ENV["ZEPHYR_SDK_INSTALL_DIR"], path: ENV["PATH"] }
+  mutate = {}
+  mutate[:thread_stack_delta] = opt[:mutate_stack].to_i if opt[:mutate_stack]
+  mutate[:prj_lines] = opt[:mutate_prj] if opt[:mutate_prj]
+  mutate[:config_touch] = true if opt[:mutate_config]
+  mutate[:extra_source] = File.expand_path(opt[:mutate_source]) if opt[:mutate_source]
+  mutate[:reserved_slot] = opt[:mutate_slot].to_i if opt[:mutate_slot]
+  mutate[:extra_glue] = File.expand_path(opt[:mutate_glue]) if opt[:mutate_glue]
+  mutate[:adapter_stack_delta] = opt[:mutate_adapter].to_i if opt[:mutate_adapter]
+  mutate[:reserves] = File.expand_path(opt[:mutate_reserves]) if opt[:mutate_reserves]
+  mutate[:int64_allow] = File.expand_path(opt[:mutate_int64]) if opt[:mutate_int64]
+  mutate[:ring_early_publish] = opt[:mutate_ring] if opt[:mutate_ring]
+  mutate[:itcm_entries] = opt[:mutate_itcm].split if opt[:mutate_itcm]
+  mutate[:udp_consumer] = opt[:mutate_udp] if opt[:mutate_udp]
+  if opt[:mutate_pair]
+    unless opt[:mutate_pair].match?(/\A\h{16}\z/) && opt[:companion]
+      warn("#{PROG}: --mutate-pair-id is 16 hexadecimal digits, with --companion")
+      exit 2
+    end
+    mutate[:pair_id] = opt[:mutate_pair].downcase
+  end
+  if opt[:mutate_stopped] || opt[:mutate_cacheable]
+    unless opt[:companion] && (opt[:mutate_cacheable].nil? || %w[cm7 cm33].include?(opt[:mutate_cacheable]))
+      warn("#{PROG}: --mutate-consumer-stopped and --mutate-channel-cacheable go with --companion; the core is cm7 or cm33")
+      exit 2
+    end
+    mutate[:consumer_stopped] = opt[:mutate_stopped] if opt[:mutate_stopped]
+    mutate[:channel_cacheable] = opt[:mutate_cacheable] if opt[:mutate_cacheable]
+  end
+  if opt[:mutate_unrung] || opt[:mutate_unenabled] || opt[:mutate_notify]
+    unless opt[:companion] && (opt[:mutate_notify].nil? || %w[cm7 cm33].include?(opt[:mutate_notify]))
+      warn("#{PROG}: the --mutate-doorbell-* options go with --companion; the core is cm7 or cm33")
+      exit 2
+    end
+    mutate[:doorbell_unrung] = opt[:mutate_unrung] if opt[:mutate_unrung]
+    mutate[:doorbell_unenabled] = true if opt[:mutate_unenabled]
+    mutate[:doorbell_notify] = opt[:mutate_notify] if opt[:mutate_notify]
+  end
+  begin
+    stress = nil
+    if opt[:stress]
+      period, report = opt[:stress].split(",", 2)
+      unless period.to_s.match?(/\A\d+\z/) && (report.nil? || report.match?(/\A\d+\z/))
+        warn("#{PROG}: --stress is PERIOD_US[,REPORT_AT], both positive integers")
+        exit 2
+      end
+      stress = { period_us: period.to_i, report_at: (report || 20_000).to_i }
+    end
+    pcsample = nil
+    if opt[:pcsample]
+      f = opt[:pcsample].split(",")
+      unless f.size.between?(2, 3) && f.all? { |x| x.match?(/\A[1-9]\d*\z/) }
+        warn("#{PROG}: --pcsample is PERIOD_US,TICS[,CAPACITY], positive integers")
+        exit 2
+      end
+      pcsample = { period_us: f[0].to_i, tics: f[1].to_i, capacity: (f[2] || 1_048_576).to_i }
+    end
+    pl = CoreApp::Pipeline.new(app_path: opt[:app], board: opt[:board], out: opt[:out], tools: tools, board_overlay: opt[:board_overlay],
+                               verification: opt[:verify] == true, mutate: mutate, keep_staging: opt[:keep_staging] == true,
+                               stimulus: opt[:stimulus], stress: stress,
+                               session_image: opt[:session_image], session_objects: opt[:session_objects],
+                               pcsample: pcsample, failure_sites: opt[:failure_sites] == true, net: opt[:net], companion: opt[:companion])
+    pl.run
+  rescue CoreApp::Pipeline::Refused, CoreApp::Declarations::Refused, CoreApp::Board::Error, CoreApp::Dts::Error, CoreApp::Reserves::Error, CoreApp::Inventory::Error, CoreApp::Stack::Error => e
+    warn("#{PROG}: build: #{e.message}")
+    warn("#{PROG}: no firmware; the log is #{File.join(opt[:out], 'build.log')}")
+    exit 1
+  end
+  pl.log.each { |l| puts l }
+  puts "firmware: #{File.join(opt[:out], 'firmware', 'zephyr.elf')}"
+when "verify"
+  # the verification run of 0014 §10 (Task 11): a verification build, its
+  # QEMU run to the end line, the decoded trace, the four checks and the
+  # replay; the report under <out>/verify/
+  %i[out board app stimulus].each { |k| die("--#{k} is required") unless opt[k] }
+  require "core_app/pipeline"
+  require "core_app/console"
+  require "core_app/verify"
+  require "core_app/host_runner"
+  require "open3"
+  fw = File.join(opt[:out], "firmware")
+  unless opt[:no_build] || opt[:trace_text]
+    args = ["build", "--app", opt[:app], "--board", opt[:board], "--out", opt[:out], "--verify", "--stimulus", opt[:stimulus]]
+    args += ["--board-overlay", opt[:board_overlay]] if opt[:board_overlay]
+    system(RbConfig.ruby, __FILE__, *args) or die("the verification build failed")
+  end
+  # a text trace (the mutation controls) reports beside the run, never over it
+  vdir = opt[:trace_text] ? File.join(opt[:out], "verify", "text") : File.join(opt[:out], "verify")
+  FileUtils.mkdir_p(vdir)
+  app = CoreApp::Declarations.read(opt[:app])
+  stim = CoreApp::Stimulus.read(opt[:stimulus])
+  frames = nil
+  figures = { cycles: [], stacks: [], ended: true, dropped: 0 }
+  complete = true
+  if opt[:trace_text]
+    records = CoreApp::Trace.from_text_file(opt[:trace_text])
+  else
+    console = opt[:console]
+    unless console
+      # the QEMU the build's cache named, run until SPC_END or the timeout:
+      # icount shift 5 is 32 ns per instruction, about the 25 MHz core's own
+      # rate; the board's default shift 7 starves the transport thread of a
+      # recorded build and its rings overflow (Task 11, measured)
+      build = JSON.parse(File.read(File.join(fw, "build.json")))
+      qemu = build["qemu"] or die("the build's CMake cache named no QEMU; run with --console")
+      console = File.join(vdir, "console.bin")
+      shift = opt[:icount] || 5
+      qargs = [qemu, "-cpu", "cortex-m33", "-machine", "mps2-an521", "-m", "16", "-vga", "none", "-net", "none",
+               "-chardev", "stdio,id=con,mux=on", "-serial", "chardev:con", "-mon", "chardev=con,mode=readline", "-nographic",
+               "-icount", "shift=#{shift},align=off,sleep=off", "-rtc", "clock=vm", "-chardev", "null,id=hostS0", "-serial", "chardev:hostS0",
+               "-kernel", File.join(fw, "zephyr.elf")]
+      die("verify runs the mps2/an521 image under QEMU; #{opt[:board]} has no run target here") unless opt[:board] == "mps2_an521"
+      pid = Process.spawn(*qargs, in: File::NULL, out: console, err: [:child, :out])
+      limit = opt[:timeout] || 120
+      waited = 0
+      until File.file?(console) && File.binread(console).include?("SPC_END") || waited >= limit
+        sleep 1
+        waited += 1
+      end
+      Process.kill("TERM", pid) rescue nil
+      Process.wait(pid) rescue nil
+      puts "qemu: #{waited} s#{waited >= limit ? ' (timeout: no SPC_END)' : ''}"
+    end
+    parsed = CoreApp::Console.parse(File.binread(console))
+    frames = parsed.frames
+    complete = !parsed.truncated
+    figures = CoreApp::Console.figures(parsed.lines)
+    begin
+      records = CoreApp::Trace.decode(parsed.trace).sort_by(&:seq)
+    rescue CoreApp::Trace::DecodeError => e
+      warn("#{PROG}: verify: the trace does not decode: #{e.message}")
+      exit 1
+    end
+  end
+  File.write(File.join(vdir, "trace.txt"), records.map(&:line).join("\n") + "\n") unless opt[:trace_text]
+  # the replay re-executes each invocation under CRuby against the trace: an
+  # oracle, run only on the owner's instruction (tools/oracle/gate)
+  require_relative "../../oracle/gate"
+  replay = OracleGate.allow?("tools/app/bin/spinel-core-app", "replay")
+  # the host package: the board's, the channels', the application, under CRuby
+  bdir = opt[:board_dir] || File.join(fw, "board")
+  board = CoreApp::Declarations.read_package(File.join(bdir, "board.rb"), origin: "board")
+  pkg = CoreApp::Channels.generate(app)
+  if replay
+    $LOAD_PATH.unshift(File.join(LIB))
+    require "spinel/core"
+    load File.join(bdir, "board_host.rb")
+    eval(pkg.host_source, TOPLEVEL_BINDING, "<channels_host>", 1) # rubocop:disable Security/Eval -- generated by this tool
+    load File.expand_path(opt[:app])
+  end
+  externs = board.externs + pkg.externs + app.externs
+  result = CoreApp::Verify.run(records, app, externs, stim, figures: figures, frames: frames, complete: complete, replay: replay)
+  report = result.report.merge("verdict" => result.ok? ? "pass" : "fail", "failures" => result.failures)
+  report["replay"] = "NOT RUN (oracle)" unless replay
+  unless opt[:trace_text]
+    # the painted stacks against their static values (build.json), and the
+    # D3 figures as instructions: under icount every instruction takes
+    # 2^shift ns of virtual time, so instructions = cycles * 1e9 / (clock_hz * 2^shift)
+    build ||= JSON.parse(File.read(File.join(fw, "build.json")))
+    threads = build.dig("stacks", "threads") || []
+    # every thread requirement by the mark's name ("<name> thread"), the interrupt chain by its own
+    limits = threads.to_h { |t| [t["name"].sub(/ thread\z/, ""), t["requirement"]] }.merge("interrupt" => build.dig("stacks", "interrupt", "requirement"))
+    report["stacks"] = figures[:stacks].map do |st|
+      lim = limits[st["name"]]
+      ok = lim && st["used"] <= lim
+      report["failures"] << "the #{st['name']} stack's high-water mark #{st['used']} exceeds its static value #{lim.inspect}" unless ok
+      st.merge("static" => lim, "within" => ok)
+    end
+    limits.each_key do |n|
+      report["failures"] << "no high-water mark was printed for the #{n} stack" unless figures[:stacks].any? { |st| st["name"] == n }
+    end
+    shift = opt[:icount] || 5
+    hz = records.first.kind == "HEADER" ? records.first[:clock_hz] : 0
+    per = hz.zero? ? 0.0 : 1_000_000_000.0 / (hz * (2**shift)) # instructions per cycle
+    report["instructions"] = {
+      "method" => "QEMU -icount shift=#{shift}: 2^#{shift} ns of virtual time per instruction; k_cycle_get_64 at #{hz} Hz around each invocation and, through --wrap, around each __aeabi_ldivmod call; instructions = cycles * 1e9 / (#{hz} * #{2**shift}); the wrapper's own instructions are inside the ldivmod figure",
+      "entries" => figures[:cycles].map do |c|
+        { "entry" => c["entry"], "invocations" => c["invocations"], "instructions" => (c["cycles"] * per).round,
+          "per_invocation" => c["invocations"].zero? ? nil : (c["cycles"] * per / c["invocations"]).round,
+          "ldivmod_calls" => c["ldivmod_calls"], "ldivmod_instructions" => (c["ldivmod_cycles"] * per).round }
+      end,
+    }
+    report["transport_passes"] = figures[:transport_passes]
+    report["verdict"] = "fail" unless report["failures"].empty?
+  end
+  # the failures the stimulus declared must be the ones recorded
+  declared = stim.expected_failures.map { |x| [x.entry, x.release, x.status] }.sort
+  got = records.select { |r| r.kind == "FAIL" }.map { |r| [r.entry == 255 ? "(no entry)" : app.scheduled[r.entry][0].name, r[:release], r[:status]] }.sort
+  unless declared == got
+    report["failures"] << "the run's failures #{got.inspect} are not the stimulus's expect_failure lines #{declared.inspect}"
+    report["verdict"] = "fail"
+  end
+  File.write(File.join(vdir, "report.json"), JSON.pretty_generate(report) + "\n")
+  replayed = replay ? "#{report['invocations']} invocations replayed #{report['replayed']}" : "replay NOT RUN (oracle)"
+  puts "verify: #{report['verdict']}; #{records.size} records, #{replayed}; report #{File.join(vdir, 'report.json')}"
+  report["failures"].each { |x| puts "  #{x}" }
+  exit 1 unless report["verdict"] == "pass"
+else
+  die("unknown command #{cmd}; package, admit, run-host, board, screen, labels, build or verify")
+end

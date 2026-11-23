@@ -1,0 +1,366 @@
+/* generated from tools/app/templates/transport_uart.c.erb: the transport
+ * thread of decision 0014 §4 and §5 over one UART, for the channels
+ * <%= app.channels.map(&:name).join(", ") %>.
+ *
+ * Framing, both directions: 0xA5, the channel's index (u8), the length (u8,
+ * 1..size), the payload. Outbound: every :out ring is drained to the UART in
+ * declaration order. Inbound: bytes are read as they arrive and assembled
+ * into frames; a frame for an :in channel is enqueued, or dropped for one of
+ * exactly two reasons, counted per channel -- oversize (length above the
+ * channel's size) or channel_full (the ring refused it, which is legal only
+ * at occupancy == depth; the verification build checks that). A frame naming
+ * an :out channel or an unknown index is a framing error, counted apart. No
+ * other loss exists in this file.
+ *
+ * spc_transport_step() is one pass -- drain, then read what is pending -- so
+ * the host tests drive it directly; on Zephyr, spc_transport_thread() loops
+ * it with a sleep between passes. The transport is the consumer of every
+ * :out ring and the producer of every :in ring, so each occupancy it reads
+ * is that end's own reading (channel_ring.c.erb). The UART is reached through SPC_UART_OUT
+ * and SPC_UART_IN, which the host harness defines (-DSPC_HOST) and Zephyr's
+ * polling API supplies otherwise -- except outbound under SPC_UART_TX_IRQ,
+ * which the build defines only where the board's own Kconfig fragment sets
+ * CONFIG_UART_INTERRUPT_DRIVEN (the FRDM-IMXRT1186's Cortex-M7, decision
+ * 0023), not where Zephyr's board defaults do (mps2, frdm_mcxn947): the
+ * bytes go into a transmit ring that the UART's interrupt drains into its
+ * FIFO, so a frame is sent while the scheduler runs instead of only
+ * when this lowest-priority thread gets the CPU; the framing and the bytes
+ * are the same. In a verification build (-DSPC_VERIFY) each
+ * transport event is recorded in the transport context, the recorder's rings
+ * are drained here too -- as frames on the trace channel 0xFE, which no
+ * application channel can be -- the stimulus thread's inbound frames arrive
+ * through the same byte path as the UART's, and the end sequence of §10
+ * (quiescence, the drain, the end marker, the cycle figures) runs here. */
+#include <stdint.h>
+<% app.channels.each do |c| %>#include "channel_<%= c.name %>.h"
+<% end %>
+<% if app.channels.any?(&:local_udp?) %>/* the udp: channels (transport_udp.c), drained on this thread after the UART ones */
+void spc_transport_udp_drain(void);
+int32_t spc_transport_udp_open(void);
+<% end %>#define SPC_FRAME_SOF 0xA5u
+#define SPC_CHANNELS <%= app.channels.size %>u
+#define SPC_DROP_OVERSIZE 1u
+#define SPC_DROP_CHANNEL_FULL 2u
+
+#if defined(SPC_HOST)
+void spc_uart_out(uint8_t b);
+int spc_uart_in(uint8_t *b); /* 1 with a byte, 0 when none is pending */
+#define SPC_UART_OUT(b) spc_uart_out(b)
+#define SPC_UART_IN(pb) spc_uart_in(pb)
+#else
+#include <zephyr/kernel.h>
+#include <zephyr/device.h>
+#include <zephyr/drivers/uart.h>
+static const struct device *spc_uart = DEVICE_DT_GET(DT_CHOSEN(zephyr_console));
+#if defined(SPC_UART_TX_IRQ)
+#if !defined(CONFIG_UART_INTERRUPT_DRIVEN)
+#error "SPC_UART_TX_IRQ needs CONFIG_UART_INTERRUPT_DRIVEN"
+#endif
+/* the transmit ring: this thread is its only producer (head), the UART's
+ * interrupt its only consumer (tail); a power of two, so the indices wrap
+ * by masking and head - tail is the occupancy */
+#define SPC_TX_RING 1024u
+static uint8_t spc_tx_ring[SPC_TX_RING];
+static volatile uint32_t spc_tx_head;
+static volatile uint32_t spc_tx_tail;
+
+/* the UART's interrupt: move what the ring holds into the FIFO, and stop
+ * the transmit interrupt once the ring is empty */
+static void spc_transport_uart_isr(const struct device *dev, void *user_data)
+{
+	(void)user_data;
+	while (uart_irq_update(dev) && uart_irq_tx_ready(dev)) {
+		uint32_t tail = spc_tx_tail;
+		uint32_t n = spc_tx_head - tail;
+		uint32_t at = tail & (SPC_TX_RING - 1u);
+		int sent;
+
+		if (n == 0u) {
+			uart_irq_tx_disable(dev);
+			break;
+		}
+		if (n > SPC_TX_RING - at) {
+			n = SPC_TX_RING - at; /* the contiguous part; the rest on the next pass */
+		}
+		sent = uart_fifo_fill(dev, &spc_tx_ring[at], (int)n);
+		if (sent <= 0) {
+			break;
+		}
+		spc_tx_tail = tail + (uint32_t)sent;
+	}
+}
+
+/* one byte into the ring, waiting a tick while it is full: the wire is
+ * then what bounds the transport */
+static void spc_transport_tx_byte(uint8_t b)
+{
+	while (spc_tx_head - spc_tx_tail >= SPC_TX_RING) {
+		uart_irq_tx_enable(spc_uart);
+		k_msleep(1);
+	}
+	spc_tx_ring[spc_tx_head & (SPC_TX_RING - 1u)] = b;
+	__asm__ volatile("" ::: "memory"); /* the byte before the head that publishes it */
+	spc_tx_head = spc_tx_head + 1u;
+}
+#define SPC_UART_OUT(b) spc_transport_tx_byte((uint8_t)(b))
+#define SPC_UART_FLUSH() uart_irq_tx_enable(spc_uart)
+#else
+#define SPC_UART_OUT(b) uart_poll_out(spc_uart, (unsigned char)(b))
+#endif
+#define SPC_UART_IN(pb) (uart_poll_in(spc_uart, (unsigned char *)(pb)) == 0)
+#endif
+#ifndef SPC_UART_FLUSH
+#define SPC_UART_FLUSH() ((void)0)
+#endif
+
+#if defined(SPC_VERIFY)
+#include "recorder.h"
+#define SPC_CTX_TRANSPORT 1u
+#define SPC_TRACE_CHANNEL 0xFEu
+#define SPC_TX(ch, id) spc_tr_TX(SPC_CTX_TRANSPORT, SPC_NO_ENTRY, (ch), (id))
+#define SPC_RX(ch, sid, len) spc_tr_RX(SPC_CTX_TRANSPORT, SPC_NO_ENTRY, (ch), (sid), (len))
+#define SPC_DROP(ch, sid, reason) spc_tr_DROP(SPC_CTX_TRANSPORT, SPC_NO_ENTRY, (ch), (sid), (reason))
+/* the stimulus thread's inbound bytes (stimulus.c): the same path as the UART's */
+int spc_stim_in(uint8_t *b);
+/* the recorder's rings (recorder.c) */
+uint32_t spc_rec_drain(uint8_t ctx, uint8_t *out, uint32_t max, uint8_t *overflowed);
+uint32_t spc_rec_pending(void);
+/* the end sequence (main.c sets the request once every context is quiescent) */
+volatile uint8_t spc_end_requested;
+volatile uint8_t spc_ended;
+volatile uint8_t spc_end_timed_out; /* main.c: D has elapsed since H */
+uint32_t spc_transport_passes; /* steps taken, printed with the end line */
+void spc_print_end(void);
+#else
+#define SPC_TX(ch, id) ((void)(id))
+#define SPC_RX(ch, sid, len) ((void)(sid))
+#define SPC_DROP(ch, sid, reason) ((void)(sid))
+#endif
+
+/* drops by reason, per channel: [channel][reason - 1] */
+/* one slot more than the channels, so an application with none (a verification
+ * build drains the trace through this unit) has no zero-length array */
+uint32_t spc_transport_drops[SPC_CHANNELS + 1u][2];
+uint32_t spc_transport_framing_errors;
+uint32_t spc_transport_tx_count[SPC_CHANNELS + 1u];
+/* the stimulus identifier of the last inbound frame delivered to each :in
+ * channel, a per-channel counter (0014 §10); a framing error takes none */
+static uint32_t spc_transport_stimulus_id[SPC_CHANNELS + 1u];
+
+static const uint32_t spc_channel_size[SPC_CHANNELS + 1u] = { <%= (app.channels.map { |c| "#{c.size}u" } + ["0u"]).join(", ") %> };
+static const uint8_t spc_channel_inbound[SPC_CHANNELS + 1u] = { <%= (app.channels.map { |c| c.direction == "in" && c.uart ? "1u" : "0u" } + ["0u"]).join(", ") %> };
+
+static void spc_transport_frame_out(uint8_t channel, const uint8_t *payload, uint32_t n)
+{
+	SPC_UART_OUT(SPC_FRAME_SOF);
+	SPC_UART_OUT(channel);
+	SPC_UART_OUT((uint8_t)n);
+	for (uint32_t i = 0; i < n; i++) {
+		SPC_UART_OUT(payload[i]);
+	}
+	SPC_UART_FLUSH(); /* the interrupt sends it (or nothing, when polled) */
+}
+
+static void spc_transport_drain(void)
+{
+<% app.channels.each_with_index do |c, i| %><% next unless c.direction == "out" && c.uart %>	{
+		uint8_t buf[SPC_CHANNEL_<%= c.name.upcase %>_SIZE];
+		int32_t n;
+
+		while ((n = spc_channel_<%= c.name %>_get(buf, SPC_CHANNEL_<%= c.name.upcase %>_SIZE)) > 0) {
+					/* the message's identifier: the ring's tail after the get, the
+			 * per-channel count of messages dequeued so far (0014 §10) */
+			uint32_t msg_id = atomic_load_explicit(&spc_channel_<%= c.name %>_tail, memory_order_relaxed);
+
+			spc_transport_frame_out(<%= i %>u, buf, (uint32_t)n);
+			spc_transport_tx_count[<%= i %>] += 1u;
+			SPC_TX(<%= i %>u, msg_id);
+		}
+	}
+<% end %>}
+
+/* the inbound frame being assembled */
+static uint8_t spc_rx_state; /* 0 SOF, 1 channel, 2 length, 3 payload */
+static uint8_t spc_rx_channel;
+static uint32_t spc_rx_length;
+static uint32_t spc_rx_have;
+static uint8_t spc_rx_payload[256];
+
+static void spc_transport_deliver(uint8_t channel, const uint8_t *payload, uint32_t n)
+{
+	uint32_t sid;
+	int32_t queued = 0;
+
+	(void)payload; /* unused when the application has no :in channel */
+	(void)n;
+	if (channel >= SPC_CHANNELS || !spc_channel_inbound[channel]) {
+		spc_transport_framing_errors += 1u;
+		return;
+	}
+	sid = ++spc_transport_stimulus_id[channel];
+	if (n > spc_channel_size[channel]) {
+		spc_transport_drops[channel][SPC_DROP_OVERSIZE - 1u] += 1u;
+		SPC_DROP(channel, sid, SPC_DROP_OVERSIZE);
+		return;
+	}
+	switch (channel) {
+<% app.channels.each_with_index do |c, i| %><% next unless c.direction == "in" && c.uart %>	case <%= i %>u:
+		queued = spc_channel_<%= c.name %>_put(payload, n, n); /* SPC_DELIVER <%= c.name %> */
+		break;
+<% end %>	default:
+		break;
+	}
+	if (queued == 1) {
+		SPC_RX(channel, sid, n);
+	} else {
+		spc_transport_drops[channel][SPC_DROP_CHANNEL_FULL - 1u] += 1u;
+		SPC_DROP(channel, sid, SPC_DROP_CHANNEL_FULL);
+	}
+}
+
+static void spc_transport_byte(uint8_t b)
+{
+	switch (spc_rx_state) {
+	case 0:
+		if (b == SPC_FRAME_SOF) {
+			spc_rx_state = 1;
+		} else {
+			spc_transport_framing_errors += 1u;
+		}
+		break;
+	case 1:
+		spc_rx_channel = b;
+		spc_rx_state = 2;
+		break;
+	case 2:
+		if (b == 0u) {
+			spc_transport_framing_errors += 1u; /* messages are never empty */
+			spc_rx_state = 0;
+			break;
+		}
+		spc_rx_length = b;
+		spc_rx_have = 0;
+		spc_rx_state = 3;
+		break;
+	default:
+		spc_rx_payload[spc_rx_have++] = b;
+		if (spc_rx_have == spc_rx_length) {
+			spc_transport_deliver(spc_rx_channel, spc_rx_payload, spc_rx_length);
+			spc_rx_state = 0;
+		}
+		break;
+	}
+}
+
+#if defined(SPC_VERIFY)
+/* every ring of the recorder onto the UART, as trace frames; an overflowed
+ * ring reports itself once it is empty, so the OVERFLOW record follows
+ * what was kept. Returns the bytes moved. */
+static uint32_t spc_transport_drain_trace(void)
+{
+	uint8_t buf[255];
+	uint32_t moved = 0;
+
+	for (uint8_t c = 0; c < SPC_REC_CONTEXTS; c++) {
+		uint8_t overflowed;
+		uint32_t n;
+
+		while ((n = spc_rec_drain(c, buf, sizeof buf, &overflowed)) > 0u) {
+			spc_transport_frame_out(SPC_TRACE_CHANNEL, buf, n);
+			moved += n;
+		}
+		if (overflowed) {
+			spc_tr_OVERFLOW(SPC_CTX_TRANSPORT, SPC_NO_ENTRY, c);
+		}
+	}
+	return moved;
+}
+
+static uint8_t spc_transport_outbound_empty(void)
+{
+	uint32_t n = 0;
+<% app.channels.each do |c| %><% next unless c.direction == "out" && c.framed? %>	n += spc_channel_<%= c.name %>_occupancy();
+<% end %>	return n == 0u;
+}
+#endif
+
+void spc_transport_step(void)
+{
+	uint8_t b;
+
+	spc_transport_drain();
+<% if app.channels.any?(&:local_udp?) %>	spc_transport_udp_drain(); /* transport_udp.c: the udp: channels */
+<% end %>	while (SPC_UART_IN(&b)) {
+		spc_transport_byte(b);
+	}
+#if defined(SPC_VERIFY)
+	spc_transport_passes += 1u;
+	while (spc_stim_in(&b)) {
+		spc_transport_byte(b);
+	}
+	spc_transport_drain_trace();
+	if (spc_end_requested && !spc_ended) {
+		/* quiescence was established by main.c; the outbound queues drain
+		 * above; the end marker follows the last record and is drained
+		 * itself; the bound D makes an incomplete trace say so */
+		uint8_t drained = spc_transport_outbound_empty() && spc_rec_pending() == 0u;
+
+		if (drained || spc_end_timed_out) {
+			spc_tr_ENDMARK(SPC_CTX_TRANSPORT, SPC_NO_ENTRY, 1u, drained ? 1u : 0u);
+			spc_transport_drain_trace();
+			spc_ended = 1u;
+			spc_print_end();
+		}
+	}
+#endif
+}
+
+#if !defined(SPC_HOST)
+#ifndef SPC_TRANSPORT_STACK
+#define SPC_TRANSPORT_STACK 1024
+#endif
+static K_THREAD_STACK_DEFINE(spc_transport_stack, SPC_TRANSPORT_STACK);
+/* the requested size, read back from the image at step 10 (see main.c) */
+const volatile uint32_t spc_transport_stack_size = SPC_TRANSPORT_STACK;
+static struct k_thread spc_transport_thread_data;
+
+static void spc_transport_thread(void *a, void *b, void *c)
+{
+	(void)a; (void)b; (void)c;
+	for (;;) {
+#if defined(SPC_VERIFY)
+		spc_rec_ctx = SPC_CTX_TRANSPORT;
+		spc_rec_entry = SPC_NO_ENTRY;
+		if (spc_ended) {
+			k_sleep(K_FOREVER); /* the end line was printed; nothing more is drained */
+		}
+#endif
+		spc_transport_step();
+		k_msleep(1);
+	}
+}
+
+#if defined(SPC_VERIFY)
+/* the transport stack's high-water mark, for the end line (main.c) */
+uint32_t spc_transport_stack_mark(uint32_t *size)
+{
+	size_t unused = 0;
+
+	*size = spc_transport_stack_size;
+	if (k_thread_stack_space_get(&spc_transport_thread_data, &unused) != 0) {
+		return 0xffffffffu; /* unreadable: verify reports it */
+	}
+	return spc_transport_stack_size - (uint32_t)unused;
+}
+#endif
+
+void spc_transport_start(void)
+{
+#if defined(SPC_UART_TX_IRQ)
+	uart_irq_callback_user_data_set(spc_uart, spc_transport_uart_isr, NULL);
+#endif
+<% if app.channels.any?(&:local_udp?) %>	(void)spc_transport_udp_open(); /* on main, before the thread: a failure is counted per message, and the lane reads the state */
+<% end %>	k_thread_create(&spc_transport_thread_data, spc_transport_stack, spc_transport_stack_size,
+			spc_transport_thread, NULL, NULL, NULL, K_LOWEST_APPLICATION_THREAD_PRIO, 0, K_NO_WAIT);
+}
+#endif

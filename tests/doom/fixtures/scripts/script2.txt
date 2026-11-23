@@ -1,0 +1,13 @@
+# doom/test/script2.txt — synthetic input, the second (short) script.
+#
+# This script **differs by one pixel at tic 31**. The reference implementation
+# draws the low byte of the `size` of the zone block right after
+# `texturecomposite` as a pixel: a value that cannot be derived from the WAD.
+# The gate knows that one tic in advance.
+0    104  up
+105  139  right
+140  209  fire,up
+210  244  left,speed
+245  259  use
+260  314  up,speed
+315  349  fire

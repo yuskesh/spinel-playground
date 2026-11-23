@@ -1,0 +1,8 @@
+check	value	verdict
+kern_undef.arm64-host	extern_allows=3 deny=0	PASS
+kern_undef.cortex-m33-zephyr	extern_allows=3 deny=0	PASS
+kern_undef.riscv32-zephyr	extern_allows=3 deny=0	PASS
+kern_undef.wasm32-worker	extern_allows=3 deny=0	PASS
+grad_exports	spinel_grad_sq_hinge_loss,spinel_hvp_sq_hinge_loss,	PASS
+wasm_imports	spinel_trap,	PASS
+kern_wasm_undef	spinel_grad_sq_hinge_loss,spinel_hvp_sq_hinge_loss,spinel_trap,	PASS

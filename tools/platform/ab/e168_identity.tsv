@@ -1,0 +1,5 @@
+path	sha256
+tools/platform/menus.yaml	b5b7b7a4c9e7947008b19796eb70101eb4678f7eb87ccbecea552dfe4b815117
+tools/platform/arena.yaml	6c0cffd46bab6a2286d48fcd2240ff6096a8ed0116f73365b006065206e58558
+tools/platform/profiles/workers-full.yaml	e2b85fdeffe5ee563ff1c36486555cd218f3d3d25ea385b6a83d49fce7b0cc5c
+tools/platform/profiles/fastly-full.yaml	da6e7167a16783937d72078bdc39d6d5d6be41bebf3debda7f9f7d54af2b2d40

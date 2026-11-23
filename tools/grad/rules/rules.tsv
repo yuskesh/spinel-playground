@@ -1,0 +1,4 @@
+function	signature	reverse_rule	forward_rule	alloc_free	kink_convention	notes
+spg_clamp01	double(double)	yes	yes	yes	derivative 1 on the open interval (0,1); 0 outside and AT u=0,u=1	general clamp(x,lo,hi) is lo+(hi-lo)*spg_clamp01((x-lo)/(hi-lo)) on the Ruby side; Ruby Float#clamp itself stays refused (G2/O5: sp_float_clamp_ck -> sp_float_to_s -> sp_str_alloc, measured E082)
+spg_lut1	double(const double*,int64,double)	yes	no	yes	slope of the RIGHT cell at interior nodes; 0 at and beyond the clamp range	unit index grid on purpose: map x->(x-x0)/dx in Ruby (differentiable there); forward rule impossible at const-arg call sites in Enzyme v0.0.290 (EnzymeLogic.cpp:4903 hasconstant), so jvp:/hvp: targets reaching spg_lut1 are refused (norulefwd)
+spg_mystery	double(double)	no	no	yes	-	CONTROL: registered in the SPGR surface but carries no rule, so the norule refusal can be demonstrated on every run rather than asserted

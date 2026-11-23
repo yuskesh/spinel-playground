@@ -1,0 +1,12 @@
+/build/
+*.bpf.o
+# 実験の結果の ELF は証拠として commit する (bpf-mlir の E223 と同じ規則)
+!docs/experiments/results/**/*.bpf.o
+# 例の生成物の ELF は commit する (新しい clone で ebpf-compile 無しに build できるように — go-bpf-mlir P001 のレビューの P1)
+!examples/**/*.bpf.o
+.DS_Store
+._*
+.claude/
+# Go の c-archive の産物 (build.sh が build/tmp に作る — 手で golib/ に作ったものを commit しない)
+*.a
+**/golib/*.h

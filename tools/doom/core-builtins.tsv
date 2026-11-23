@@ -1,0 +1,32 @@
+# tools/doom/core-builtins.tsv — decision 0008 task 1's Full-boundary catalog.
+#
+# A call whose callee has no definition in DOOM's tree is a builtin. `builtin`
+# is NOT an exclusion: it says only that the audit found no `def`, and CORE
+# reachability is a separate question that this table answers one entry at a
+# time. A builtin with no row here stays UNRESOLVED and the audit fails, so
+# the list is closed rather than a way to silence the count.
+#
+# Matched on the receiver evidence the audit already carries: `implicit` for a
+# call with no receiver, otherwise the receiver's type as the reader reports
+# it. `poly` is never a valid key -- it means the reader did not resolve the
+# receiver, which is an evidence gap and not a disposition.
+#
+# verdict:
+#   core           representable inside a CORE entry under 0007's contracts
+#   obligation     must be rewritten before migration; named here so the
+#                  rewrite is tracked rather than discovered during it
+#   full-boundary  belongs to Full and must not appear in a CORE entry
+#
+# receiver	name	verdict	why
+implicit	raise	obligation	CORE has no exceptions. 0007's status ABI is 0 OK / 1 ARGUMENT / 2 ARITHMETIC / 3 BOUNDS / 4 CAPACITY and core_fail(:capacity) is the only constructor, so each site becomes a status return on a path the caller checks.
+implicit	loop	obligation	Kernel#loop runs a block, and the block body is part of the closure. Rewritten as `while true` the body is ordinary statements the audit already follows; left as a block-carrying call it hides its own contents.
+int	abs	core	Pure arithmetic on a machine integer. No allocation and no runtime call.
+int	odd?	core	A parity test on a machine integer.
+int_array	length	core	The extent of a resident buffer, which Full owns and sizes. Reading it allocates nothing.
+obj_array	length	core	The element count of an array of object references (`@lumps.length` in Wad#lump, wad.rb:65). The reader names that type obj_array; length reads the count, allocates nothing and does not touch the elements, as for int_array.
+int_array	include?	core	A linear scan of a resident buffer. Representable, but it is a loop and not a constant-time test; named so its cost is not mistaken for one.
+string	getbyte	core	An indexed byte read with a bounds check, which is 0007's BOUNDS status.
+obj_Textures	nil?	full-boundary	Textures is a Full-owned resource handle. CORE has no object references and cannot hold or test one; the decision of whether a resource is present belongs to Full, before the entry is called.
+string	setbyte	core	An indexed byte write into a buffer Full allocated and owns. The write is bounds checked, which is 0007's BOUNDS status; it allocates nothing and does not resize.
+string	bytesize	core	The byte length of a buffer Full owns. A method of the same name exists in this tree (Wad#bytesize), and it is not this one: the receiver is a string, so the tree definition is not a candidate.
+poly_array	length	core	The element count of an array. `poly_array` means the reader resolved the receiver to an array but not its element type, and length does not depend on the element type -- which is why this is a verdict and `poly`, where the receiver itself is unknown, is refused as a key.

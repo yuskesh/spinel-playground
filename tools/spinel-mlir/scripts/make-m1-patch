@@ -1,0 +1,102 @@
+#!/usr/bin/env ruby
+# Generate only additions against the pristine pinned source; never edit it.
+require 'fileutils'
+require 'open3'
+root = File.expand_path('..', __dir__)
+source, destination = ARGV
+abort 'usage: make-m1-patch pristine-source private-output-directory' unless destination
+abort 'destination exists' if File.exist?(destination)
+FileUtils.mkdir_p(destination)
+edits = {}
+insert = lambda do |file, anchor, addition|
+  original = edits.fetch(file) { File.binread(File.join(source, file)) }
+  abort "anchor not unique: #{file}: #{anchor}" unless original.scan(anchor).length == 1
+  edits[file] = original.sub(anchor, addition + anchor)
+end
+insert.call('src/main.c', '#include "node_table.h"', <<~C)
+  /* M1: opt-in generic MLIR transport; no MLIR dependency. */
+  int sp_emit_mlir_enabled = 0;
+  const char *sp_emit_mlir_overflow = "raise";
+  const char *sp_emit_mlir_path = 0;
+  C
+insert.call('src/main.c', '    else if (sp_streq(a, "--dump-ast"))', <<~C)
+      else if (!strncmp(a, "--emit-mlir=", 12) && a[12]) {
+        sp_emit_mlir_enabled = 1; sp_emit_mlir_path = a+12; i++;
+      }
+      else if (sp_streq(a, "--emit-mlir") || sp_streq(a, "--emit-mlir=")) {
+        fprintf(stderr, "spinel: --emit-mlir=<path> requires a nonempty path\\n"); return 2;
+      }
+  C
+insert.call('src/main.c', '  char *text = sp_parse_file_to_text(source, argv[0]);', <<~C)
+    if (sp_emit_mlir_enabled) {
+      if (dump_ast || emit_types || emit_rbs || emit_symbol_map || run_mode || stdout_mode || c_only || output) {
+        fprintf(stderr, "spinel: --emit-mlir=<path> is a standalone transport mode\\n"); return 2;
+      }
+      setenv("SPINEL_LINE_MAP", "1", 1);
+      setenv("SPINEL_MLIR_POSITIONS", "1", 1);
+      sp_emit_mlir_overflow = int_overflow;
+    }
+  C
+insert.call('src/main.c', '  free(text);' + "\n" + '  if (!nt)', <<~C)
+    if (sp_emit_mlir_enabled) sp_emit_mlir_pristine = nt_load_text(text);
+  C
+insert.call('src/main.c', '  char *csrc = codegen_program(nt);', <<~C)
+    if (sp_emit_mlir_enabled && !sp_emit_mlir_pristine) {
+      fprintf(stderr, "spinel: MLIR pristine snapshot failed\\n"); nt_free(nt); return 1;
+    }
+  C
+insert.call('src/main.c', '  /* Emit modes already wrote their file;', <<~C)
+    if (sp_emit_mlir_enabled) {
+      free(csrc); nt_free(sp_emit_mlir_pristine); sp_emit_mlir_pristine = NULL;
+      return 0;
+    }
+  C
+insert.call('src/main.c', '#include "codegen.h"', <<~C)
+  NodeTable *sp_emit_mlir_pristine = NULL;
+  C
+insert.call('src/codegen_util.c', '#include "codegen_internal.h"', <<~C)
+  extern int sp_emit_mlir_enabled;
+  C
+# Two intentionally identical gates: nd_stamp and nd_callee.
+file = 'src/codegen_util.c'
+body = edits.fetch(file)
+anchor = '  if (on < 0) { const char *et = getenv("SPINEL_EMIT_TYPES");'
+abort 'expected two evidence gates' unless body.scan(anchor).length == 2
+edits[file] = body.gsub(anchor, "  if (sp_emit_mlir_enabled) on = 1;\n" + anchor)
+insert.call('src/spinel_parse.c', '    g_emit_end = (on &&', <<~C)
+      if (getenv("SPINEL_MLIR_POSITIONS")) g_emit_line = on = 1;
+  C
+insert.call('src/spinel_parse.c', '  /* Resolve require_relative and plain require */', <<~C)
+    if (getenv("SPINEL_MLIR_POSITIONS")) g_emit_end = 1;
+  C
+insert.call('src/codegen.c', 'char *codegen_program(const NodeTable *nt) {', <<~C)
+  #include "emit_mlir.inc"
+  C
+insert.call('src/codegen.c', '  Compiler *c = comp_new(nt);' + "\n" + '  analyze_program(c);', <<~C)
+    if (sp_emit_mlir_enabled && atexit(mlir_on_exit)) {
+      fprintf(stderr, "spinel: MLIR exit handler registration failed\\n"); exit(1);
+    }
+  C
+insert.call('src/codegen.c', '  if (types_out) {' + "\n" + '    char *json = build_types_json(c);', <<~C)
+    if (sp_emit_mlir_enabled) {
+      int mlir_rc = mlir_emit(c);
+      if (mlir_rc || g_ndiags) { comp_free(c); free(b.p); exit(1); }
+    }
+  C
+edits['src/emit_mlir.inc'] = File.binread(File.join(root, 'patches/m1/emit_mlir.inc'))
+FileUtils.mkdir_p(File.join(root, 'patches'))
+patch = String.new
+edits.each do |name, content|
+  target = File.join(destination, name)
+  FileUtils.mkdir_p(File.dirname(target))
+  File.binwrite(target, content)
+  original = File.join(source, name)
+  original = '/dev/null' unless File.exist?(original)
+  diff, status = Open3.capture2('diff', '-u', '--label', "a/#{name}", '--label', "b/#{name}", original, target)
+  abort "diff failed: #{name}" unless [0, 1].include?(status.exitstatus)
+  # H2: no existing line may be deleted or replaced.
+  abort "non-additive patch: #{name}" if diff.lines.any? { |l| l.start_with?('-') && !l.start_with?('---') }
+  patch << diff
+end
+File.binwrite(File.join(root, 'patches/M1-emit-mlir.patch'), patch)
+puts "M1: #{edits.length} files; #{patch.lines.count { |l| l.start_with?('+') && !l.start_with?('+++') }} additions"

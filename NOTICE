@@ -1,0 +1,22 @@
+Spinel Extended
+Copyright (c) 2026 Yusuke Shinozaki
+
+Spinel Extended is licensed under Apache-2.0 WITH LLVM-exception. See LICENSE.
+This covers the files written here and the files ported from the owner's
+earlier repositories, which stated no licence of their own.
+
+Files that keep another licence are listed in THIRD_PARTY.md, each with the
+licence text that covers it. Among them:
+- Spinel (https://github.com/matz/spinel), pinned as the git submodule
+  vendor/spinel: MIT License, Copyright (c) 2024- Yukihiro Matsumoto. Files
+  that reproduce Spinel code carry its LICENSE beside them.
+- spinel-bpf-mlir and bpf-mlir-loader, tools/spinel-bpf-mlir: Apache-2.0 WITH
+  LLVM-exception, with their own LICENSE and NOTICE.
+- DOOM, examples/doom and the DOOM fixtures and reference patches under tests/:
+  GPL-2.0, from doomgeneric. They are distributed as source only. No WAD is
+  included.
+- Files of this project that state another licence in an
+  SPDX-License-Identifier line (eBPF programs under tools/ebpf, for example)
+  keep that licence; THIRD_PARTY.md names the texts.
+
+This is a summary and not legal advice.

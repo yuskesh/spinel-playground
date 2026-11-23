@@ -1,0 +1,296 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+#
+# spinel-searchgate -- the search-correctness gates (E082, generalising
+# E078 s6's S1 into a permanent, reusable checker).
+#
+# E171 checkpoint 1. **A copy of the frozen Python `tools/grad/frozen/spinel-searchgate`**.
+# The claim is that argv / stdout / stderr / rc / the contents of `--out` do not differ by a single byte,
+# and the differential check is `tools/grad/ab/test_e171.rb`. **The source of the behaviour is the frozen
+# Python side**, so before fixing anything here, always read that side first.
+#
+# Four faces are hard to copy, and each is cut out into a helper:
+#   * `py_split` — Python's `str.split(sep)` returns `['']` from an empty string
+#     and does not drop trailing empty fields. Ruby's `String#split` differs on both.
+#   * `py_rstrip_nl` — `rstrip("\n")` drops **every** trailing `\n` (`chomp`
+#     drops only one). It does not drop `\r`.
+#   * `pyfloat` / `pyint` — Ruby's `Float()` / `Integer()` accept hex and `0x1p3`
+#     and refuse `inf` / `nan`. Python is exactly the opposite.
+#   * argparse — the wording of usage / errors, and **prefix matching** of long options.
+
+PROG = "spinel-searchgate"
+
+USAGE_LINES = [
+  "usage: spinel-searchgate [-h] [--control CONTROL] [--tol TOL] [--out OUT]",
+  "                         trace",
+].freeze
+
+HELP_LINES = (USAGE_LINES + [
+  "",
+  "positional arguments:",
+  "  trace",
+  "",
+  "options:",
+  "  -h, --help         show this help message and exit",
+  "  --control CONTROL  TSV of the random control (columns: run, objective or",
+  "                     best); enables S3",
+  "  --tol TOL          S1 slack: an increase up to tol is not a violation",
+  "                     (default 0 -- a descent that accepts a step must not",
+  "                     report a larger objective, exactly)",
+  "  --out OUT          write gate rows here too",
+]).freeze
+
+USAGE = "#{USAGE_LINES.join("\n")}\n"
+HELP = "#{HELP_LINES.join("\n")}\n"
+
+# Python's `repr(str)`. argparse's `invalid float value: 'x'` uses it.
+# The quote is `'` by default, and `"` only when the string contains `\'` and no `"`.
+def py_repr(str)
+  q = str.include?("'") && !str.include?('"') ? '"' : "'"
+  body = +""
+  str.each_char do |ch|
+    body << case ch
+            when "\\" then "\\\\"
+            when q then "\\#{q}"
+            when "\n" then "\\n"
+            when "\r" then "\\r"
+            when "\t" then "\\t"
+            else
+              o = ch.ord
+              o < 0x20 || o == 0x7f ? format("\\x%02x", o) : ch
+            end
+  end
+  "#{q}#{body}#{q}"
+end
+
+def arg_error(msg)
+  $stderr.write(USAGE)
+  $stderr.write("#{PROG}: error: #{msg}\n")
+  exit 2
+end
+
+# ---------------------------------------------------------------------------
+# Python's str / int / float semantics
+# ---------------------------------------------------------------------------
+
+# Python's `str.split(sep)`: sep is explicit, so empty fields are not collapsed, and an empty string becomes [''].
+def py_split(str, sep)
+  return [""] if str.empty?
+
+  str.split(sep, -1)
+end
+
+# Python's `str.rstrip("\n")`: drops every trailing "\n" (keeps "\r").
+def py_rstrip_nl(str)
+  str.sub(/\n+\z/, "")
+end
+
+PY_WS = Regexp.escape(" \t\n\r\f\v")
+
+def py_strip(str)
+  str.sub(/\A[#{PY_WS}]+/, "").sub(/[#{PY_WS}]+\z/, "")
+end
+
+# Python's `int(s)` (decimal). `_` only between digits; surrounding whitespace is allowed. On a spelling it does not
+# accept, Python fails with a ValueError traceback, so this raises an exception
+# too (failing is more honest than catching it and making up a shape; the boundary is written in the experiment record).
+def pyint(str)
+  s = py_strip(str)
+  unless s =~ /\A[+-]?[0-9](?:_?[0-9])*\z/
+    raise ArgumentError, "invalid literal for int() with base 10: #{str.inspect}"
+  end
+
+  Integer(s.delete("_"), 10)
+end
+
+# Python's `float(s)`. No hex floats; `inf` / `infinity` / `nan` are accepted.
+def pyfloat(str)
+  s = py_strip(str)
+  if s =~ /\A([+-]?)(inf(?:inity)?|nan)\z/i
+    neg = Regexp.last_match(1) == "-"
+    return Regexp.last_match(2).downcase.start_with?("inf") ? (neg ? -Float::INFINITY : Float::INFINITY) : Float::NAN
+  end
+  d = "[0-9](?:_?[0-9])*"
+  unless s =~ /\A[+-]?(?:#{d}\.?(?:#{d})?|\.#{d})(?:[eE][+-]?#{d})?\z/
+    raise ArgumentError, "could not convert string to float: #{str.inspect}"
+  end
+
+  Float(s.delete("_"))
+end
+
+# ---------------------------------------------------------------------------
+# argparse (only the faces this parser has)
+# ---------------------------------------------------------------------------
+
+LONG_OPTS = { "--help" => :help, "--control" => :control,
+              "--tol" => :tol, "--out" => :out }.freeze
+
+def parse_args(argv)
+  opts = { control: nil, tol: 0.0, out: nil }
+  positional = []
+  extras = []
+  only_positional = false
+  i = 0
+  while i < argv.size
+    a = argv[i]
+    if only_positional
+      positional << a
+      i += 1
+      next
+    end
+    if a == "--"
+      only_positional = true
+      i += 1
+      next
+    end
+    if a.start_with?("--")
+      name, eq, inline = a.partition("=")
+      hits = LONG_OPTS.key?(name) ? [name] : LONG_OPTS.keys.select { |k| k.start_with?(name) }
+      if hits.empty?
+        extras << a
+        i += 1
+        next
+      elsif hits.size > 1
+        arg_error("ambiguous option: #{name} could match #{hits.join(', ')}")
+      end
+      key = LONG_OPTS[hits.first]
+      if key == :help
+        arg_error("argument -h/--help: ignored explicit argument #{py_repr(inline)}") unless eq.empty?
+        $stdout.write(HELP)
+        exit 0
+      end
+      if eq.empty?
+        arg_error("argument #{hits.first}: expected one argument") if i + 1 >= argv.size
+        value = argv[i + 1]
+        i += 2
+      else
+        value = inline
+        i += 1
+      end
+      if key == :tol
+        begin
+          opts[:tol] = pyfloat(value)
+        rescue ArgumentError
+          arg_error("argument --tol: invalid float value: #{py_repr(value)}")
+        end
+      else
+        opts[key] = value
+      end
+      next
+    end
+    if a.start_with?("-") && a != "-"
+      if a == "-h"
+        $stdout.write(HELP)
+        exit 0
+      end
+      extras << a
+      i += 1
+      next
+    end
+    positional << a
+    i += 1
+  end
+  arg_error("the following arguments are required: trace") if positional.empty?
+  extras.concat(positional[1..])
+  arg_error("unrecognized arguments: #{extras.join(' ')}") unless extras.empty?
+  opts[:trace] = positional.first
+  opts
+end
+
+# ---------------------------------------------------------------------------
+# The body (a copy of the frozen Python's read_tsv / main)
+# ---------------------------------------------------------------------------
+
+def read_tsv(path)
+  rows = []
+  head = nil
+  File.open(path, "rb") do |f|
+    first = f.gets
+    head = py_split(py_rstrip_nl(first.nil? ? +"" : first.dup.force_encoding("UTF-8")), "\t")
+    f.each_line do |line|
+      c = py_split(py_rstrip_nl(line.dup.force_encoding("UTF-8")), "\t")
+      next unless c.size == head.size
+
+      row = {}
+      head.each_with_index { |k, idx| row[k] = c[idx] }
+      rows << row
+    end
+  end
+  [head, rows]
+end
+
+def main(argv)
+  a = parse_args(argv)
+  head, rows = read_tsv(a[:trace])
+  gates = []
+  gate = ->(name, run, verdict, detail) { gates << [name, run, verdict, detail] }
+
+  # ---- aggregate refusal --------------------------------------------------
+  aggregate = nil
+  unless head.include?("run")
+    aggregate = "no `run` column -- rows cannot be attributed to a single descent"
+  end
+  # **The last matching column wins** — the frozen Python's `for c in (...)` overwrites.
+  %w[starts population survivors n].each do |c|
+    next unless head.include?(c)
+
+    vals = rows.map { |r| r[c] }.uniq
+    aggregate = if vals.size > 1
+                  format("`%s` varies (%s...) -- a population statistic, " \
+                         "and the min over a SHRINKING population can " \
+                         "rise without any run misbehaving (and hide a " \
+                         "run that does)", c, vals.sort.first)
+                else
+                  format("`%s` column -- a population statistic, not a " \
+                         "per-run trace", c)
+                end
+  end
+
+  if !aggregate.nil?
+    gate.call("S1", "-", "AGGREGATE-UNAUDITABLE", aggregate)
+  else
+    # ---- S1 / S2, per run -------------------------------------------------
+    runs = {}
+    rows.each { |r| (runs[r["run"]] ||= []) << r }
+    # Python's `sorted(runs, key=lambda x: (len(x), x))`.
+    runs.keys.each_with_index.sort_by { |x, i| [x.length, x, i] }.map(&:first).each do |run|
+      seq = runs[run].reject { |r| %w[0 no false].include?(r.fetch("accepted", "1")) }
+      # Python's list.sort is stable. Ruby's sort_by is not, so the index is added.
+      seq = seq.each_with_index.sort_by { |r, i| [pyint(r["step"]), i] }.map(&:first)
+      v1 = 0
+      last = nil
+      seq.each do |r|
+        o = pyfloat(r["objective"])
+        v1 += 1 if !last.nil? && o > last + a[:tol]
+        last = o
+      end
+      gate.call("S1", run, v1.zero? ? "OK" : "RED",
+                format("%d increase(s) over %d accepted steps", v1, seq.size))
+      next unless head.include?("dirderiv")
+
+      v2 = seq[1..].count { |r| pyfloat(r["dirderiv"]) >= 0.0 }
+      gate.call("S2", run, v2.zero? ? "OK" : "RED",
+                format("%d non-negative directional derivative(s)", v2))
+    end
+  end
+
+  # ---- S3 -----------------------------------------------------------------
+  if a[:control]
+    _, ctl = read_tsv(a[:control])
+    key = !ctl.empty? && ctl[0].key?("best") ? "best" : "objective"
+    cbest = ctl.map { |r| pyfloat(r[key]) }.min
+    sbest = rows.map { |r| pyfloat(r["objective"]) }.min
+    raise ArgumentError, "min() iterable argument is empty" if cbest.nil? || sbest.nil?
+
+    gate.call("S3", "-", sbest < cbest ? "OK" : "RED",
+              format("search best %.6g vs random control best %.6g", sbest, cbest))
+  end
+
+  lines = ["gate\trun\tverdict\tdetail"]
+  lines += gates.map { |g| format("%s\t%s\t%s\t%s", *g) }
+  $stdout.write("#{lines.join("\n")}\n")
+  File.write(a[:out], "#{lines.join("\n")}\n") if a[:out]
+  gates.all? { |g| g[2] == "OK" } ? 0 : 1
+end
+
+exit(main(ARGV)) if $PROGRAM_NAME == __FILE__

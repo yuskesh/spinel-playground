@@ -1,0 +1,3 @@
+# profile lie 3: a supplies value outside full|externs-only|trap-only.
+platform: workers
+supplies: everything

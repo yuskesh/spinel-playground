@@ -1,0 +1,7 @@
+core-contract 1
+root src/roundtrip_i64.rb
+entry roundtrip_i64
+result i64
+param dst buffer i64 inout count n_dst
+param n_dst scalar u64
+param v scalar i64

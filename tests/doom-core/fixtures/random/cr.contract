@@ -1,0 +1,8 @@
+core-contract 1
+root src/packed.rb
+entry dc_cr
+result i64
+param prndindex buffer i64 inout count n_prndindex
+param n_prndindex scalar u64
+param rndindex buffer i64 inout count n_rndindex
+param n_rndindex scalar u64

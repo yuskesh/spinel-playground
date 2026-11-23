@@ -1,0 +1,41 @@
+#!/usr/bin/env ruby
+require 'fileutils'
+require 'json'
+require 'open3'
+root=File.expand_path('..',__dir__)
+manifest,oracle,baseline,candidate,output=ARGV
+abort 'usage: check-no-flag-sensitivity manifest oracle baseline candidate new-output' unless output
+abort 'output exists' if File.exist?(output)
+FileUtils.mkdir_p(output)
+trial=File.join(output,'candidate')
+FileUtils.cp_r(candidate,trial)
+main=File.join(trial,'src/main.c')
+original=File.binread(main)
+anchor='  if (stdout_mode) { fputs(csrc, stdout); free(csrc); return 0; }'
+abort 'injection anchor not unique' unless original.scan(anchor).length==1
+File.binwrite(File.join(output,'main.original.c'),original)
+File.binwrite(main,original.sub(anchor,"  if (stdout_mode) fputc('X', stdout); /* test-only one-byte change */\n"+anchor))
+diff,status=Open3.capture2('diff','-u','--label','a/src/main.c','--label','b/src/main.c',File.join(output,'main.original.c'),main)
+abort 'no test-only patch' unless status.exitstatus==1
+File.binwrite(File.join(output,'injected.patch'),diff)
+ok=system('make','-C',trial,'-j4','bin/spinel','CC=/opt/llvm-23.1.1/bin/clang',
+  out:File.join(output,'build.log'),err:[:child,:out])
+abort 'STOP sensitivity build' unless ok
+compared=File.join(output,'comparison')
+system('ruby',File.join(root,'scripts/compare-no-flag'),manifest,oracle,baseline,trial,compared,
+  '--case=examples/xdpcount/xdpcount.rb',out:File.join(output,'compare.stdout'),err:File.join(output,'compare.stderr'))
+status=$?
+rows=File.readlines(File.join(compared,'comparisons.jsonl')).map{|l|JSON.parse(l)}
+abort 'STOP sensitivity row count' unless rows.length==1
+row=rows.first
+a=File.binread(File.join(compared,'0.baseline.c'))
+b=File.binread(File.join(compared,'0.candidate.c'))
+named=File.binread(File.join(output,'compare.stderr')).include?('C bytes')
+observation={comparator_rc:status.exitstatus,baseline_rc:row.fetch('baseline').fetch('rc'),
+  candidate_rc:row.fetch('candidate').fetch('rc'),baseline_c_bytes:a.bytesize,candidate_c_bytes:b.bytesize,
+  exact_one_byte_prefix:b=='X'+a,failures:row.fetch('failures'),named_difference:named}
+File.binwrite(File.join(output,'sensitivity.json'),JSON.pretty_generate(observation)+"\n")
+abort 'STOP sensitivity did not detect exact one-byte difference' unless status.exitstatus==1 &&
+  observation[:baseline_rc]==0 && observation[:candidate_rc]==0 && a.bytesize>0 &&
+  observation[:exact_one_byte_prefix] && observation[:named_difference] && observation[:failures]==['C bytes']
+puts JSON.generate(observation)

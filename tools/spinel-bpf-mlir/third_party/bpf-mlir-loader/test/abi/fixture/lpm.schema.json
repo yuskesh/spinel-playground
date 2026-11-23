@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "coverage": {"programs": "complete", "maps": "complete", "records": "complete", "telemetry": "complete"},
+  "core": {
+    "records": [
+      {"symbol": "mojobpf_lpm_key4", "id": 0, "size": 8, "min_size": 8, "alignment": 4, "required_through": "", "note": "E016: mojo の LpmTrie4 の key",
+       "fields": [{"name": "prefixlen", "offset": 0, "expose": "int", "note": "", "type": {"kind":"int","bits":32,"signed":false,"endianness":"little","alignment":4}},
+                  {"name": "addr", "offset": 4, "expose": "int", "note": "network order", "type": {"kind": "array", "count": 4, "element": {"kind":"int","bits":8,"signed":false,"endianness":"little","alignment":1}}}]}
+    ],
+    "maps": [
+      {"symbol": "pol", "kind": "lpm_trie", "key": {"kind": "record_ref", "symbol": "mojobpf_lpm_key4"}, "value": {"kind":"int","bits":32,"signed":false,"endianness":"little","alignment":4}, "max_entries": 3, "flags": 1, "record": "", "note": "E016"},
+      {"symbol": "pol8", "kind": "lpm_trie", "key": {"kind": "record_ref", "symbol": "mojobpf_lpm_key4"}, "value": {"kind":"int","bits":64,"signed":false,"endianness":"little","alignment":8}, "max_entries": 16, "flags": 1, "record": "", "note": "E016"}
+    ],
+    "programs": [
+      {"name": "xp", "kind": "xdp", "attach_target": "", "maps": ["pol", "pol8"], "note": "E016"}
+    ]
+  },
+  "telemetry": {"clocks": [], "value_maps": [], "bounds_sets": [], "signals": []},
+  "extensions": {}
+}

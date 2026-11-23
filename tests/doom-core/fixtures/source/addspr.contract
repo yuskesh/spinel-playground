@@ -1,0 +1,92 @@
+core-contract 1
+root src/packed.rb
+entry dc_sp_addspr
+result i64
+param state buffer i64 inout count n_state
+param n_state scalar u64
+param sector_validcount buffer i16 inout count n_sector_validcount
+param n_sector_validcount scalar u64
+param sector_lightlevel buffer i16 in count n_sector_lightlevel
+param n_sector_lightlevel scalar u64
+param sector_head buffer i16 in count n_sector_head
+param n_sector_head scalar u64
+param thing_next buffer i16 in count n_thing_next
+param n_thing_next scalar u64
+param mobj_x buffer i32 in count n_mobj_x
+param n_mobj_x scalar u64
+param mobj_y buffer i32 in count n_mobj_y
+param n_mobj_y scalar u64
+param mobj_z buffer i32 in count n_mobj_z
+param n_mobj_z scalar u64
+param mobj_angle buffer i32 in count n_mobj_angle
+param n_mobj_angle scalar u64
+param mobj_frame buffer u16 in count n_mobj_frame
+param n_mobj_frame scalar u64
+param mobj_sprite buffer u8 in count n_mobj_sprite
+param n_mobj_sprite scalar u64
+param mobj_flags buffer u32 in count n_mobj_flags
+param n_mobj_flags scalar u64
+param numframes buffer u8 in count n_numframes
+param n_numframes scalar u64
+param rotate buffer u8 in count n_rotate
+param n_rotate scalar u64
+param framebase buffer u16 in count n_framebase
+param n_framebase scalar u64
+param sprlump buffer u16 in count n_sprlump
+param n_sprlump scalar u64
+param sprflip buffer u8 in count n_sprflip
+param n_sprflip scalar u64
+param spriteoffset buffer i32 in count n_spriteoffset
+param n_spriteoffset scalar u64
+param spritewidth buffer u32 in count n_spritewidth
+param n_spritewidth scalar u64
+param spritetopoffset buffer i32 in count n_spritetopoffset
+param n_spritetopoffset scalar u64
+param tantoangle buffer u32 in count n_tantoangle
+param n_tantoangle scalar u64
+param projection buffer u32 in count n_projection
+param n_projection scalar u64
+param centerxfrac buffer u32 in count n_centerxfrac
+param n_centerxfrac scalar u64
+param viewwidth buffer u16 in count n_viewwidth
+param n_viewwidth scalar u64
+param scalelight buffer u8 in count n_scalelight
+param n_scalelight scalar u64
+param resscale buffer u8 in count n_resscale
+param n_resscale scalar u64
+param vs_mobjflags buffer u32 inout count n_vs_mobjflags
+param n_vs_mobjflags scalar u64
+param vs_scale buffer u32 inout count n_vs_scale
+param n_vs_scale scalar u64
+param vs_gx buffer i32 inout count n_vs_gx
+param n_vs_gx scalar u64
+param vs_gy buffer i32 inout count n_vs_gy
+param n_vs_gy scalar u64
+param vs_gz buffer i32 inout count n_vs_gz
+param n_vs_gz scalar u64
+param vs_gzt buffer i32 inout count n_vs_gzt
+param n_vs_gzt scalar u64
+param vs_texturemid buffer i32 inout count n_vs_texturemid
+param n_vs_texturemid scalar u64
+param vs_x1 buffer u16 inout count n_vs_x1
+param n_vs_x1 scalar u64
+param vs_x2 buffer u16 inout count n_vs_x2
+param n_vs_x2 scalar u64
+param vs_startfrac buffer u32 inout count n_vs_startfrac
+param n_vs_startfrac scalar u64
+param vs_xiscale buffer i32 inout count n_vs_xiscale
+param n_vs_xiscale scalar u64
+param vs_patch buffer u16 inout count n_vs_patch
+param n_vs_patch scalar u64
+param vs_cmap buffer u8 inout count n_vs_cmap
+param n_vs_cmap scalar u64
+param i_validcount scalar i64
+param i_extralight scalar i64
+param i_viewx scalar i64
+param i_viewy scalar i64
+param i_viewz scalar i64
+param i_viewcos scalar i64
+param i_viewsin scalar i64
+param i_spritelights scalar i64
+param i_vis_n scalar i64
+param sec scalar i64

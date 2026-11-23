@@ -1,0 +1,26 @@
+id	leg	case	ret	wrote_nothing	verdict
+nc0	native	iters=0	-1	yes	PASS
+nc1	native	iters=-3	-1	yes	PASS
+nc2	native	gtol2=-1.0	-1	yes	PASS
+nc3	native	gtol2=NaN	-1	yes	PASS
+nc4	native	control	7	wrote (== F rows)	PASS
+nc0	wasm32	iters=0	-1	yes	PASS
+nc1	wasm32	iters=-3	-1	yes	PASS
+nc2	wasm32	gtol2=-1.0	-1	yes	PASS
+nc3	wasm32	gtol2=NaN	-1	yes	PASS
+nc4	wasm32	control	7	wrote (== F rows)	PASS
+nc0	m33	iters=0	-1	yes	PASS
+nc1	m33	iters=-3	-1	yes	PASS
+nc2	m33	gtol2=-1.0	-1	yes	PASS
+nc3	m33	gtol2=NaN	-1	yes	PASS
+nc4	m33	control	7	wrote (== F rows)	PASS
+nc0	rv32	iters=0	-1	yes	PASS
+nc1	rv32	iters=-3	-1	yes	PASS
+nc2	rv32	gtol2=-1.0	-1	yes	PASS
+nc3	rv32	gtol2=NaN	-1	yes	PASS
+nc4	rv32	control	7	wrote (== F rows)	PASS
+len_trap1	native	extra=1	exit=3	trap4=1 unreached=0	PASS
+len_trapneg	native	extra=-6	exit=3	trap4=1 unreached=0	PASS
+len_trap1	wasm32	extra=1	exit=3	trap4=1 unreached=0	PASS
+len_trap-6	wasm32	extra=-6	exit=3	trap4=1 unreached=0	PASS
+len_trap1	m33	extra=1	panic	trap4=1 halt=1 unreached=0	PASS

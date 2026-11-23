@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "coverage": {"programs": "complete", "maps": "complete", "records": "complete", "telemetry": "complete"},
+  "core": {
+    "records": [],
+    "maps": [
+      {"symbol": "hits", "kind": "array", "key": {"kind":"int","bits":32,"signed":false,"endianness":"little","alignment":4}, "value": {"kind":"int","bits":64,"signed":false,"endianness":"little","alignment":8}, "max_entries": 2, "flags": 0, "record": "", "note": "E015: 0 は回数・1 は最後の pid_tgid"}
+    ],
+    "programs": [
+      {"name": "up", "kind": "uprobe", "attach_target": "probe_target", "arch": "x86_64", "maps": ["hits"], "params": [],
+       "binary_sha256": "5a57b4994db32696dfad6c0105aaceb52e6505e0374fd556ae3fbd37c1e2c35c",
+       "note": "E015: bpf-mlir kernel/uprobe/fixture/bin/fixture の probe_target — 引数を読まない"},
+      {"name": "xp", "kind": "xdp", "attach_target": "", "maps": [], "note": "E015: 種類の取り違えの対照"}
+    ]
+  },
+  "telemetry": {"clocks": [], "value_maps": [], "bounds_sets": [], "signals": []},
+  "extensions": {}
+}

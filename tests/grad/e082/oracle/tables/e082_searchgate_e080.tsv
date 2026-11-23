@@ -1,0 +1,3 @@
+trace	verdict	detail
+margin_curve_eps255	AGGREGATE-UNAUDITABLE	`starts` varies (10000...) -- a population statistic, and the min over a SHRINKING population can rise without any run misbehaving (and hide a run that does)
+margin_curve_eps8	AGGREGATE-UNAUDITABLE	`starts` varies (10000...) -- a population statistic, and the min over a SHRINKING population can rise without any run misbehaving (and hide a run that does)

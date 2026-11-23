@@ -1,0 +1,4 @@
+function	source	note
+gpio_mcux_port_isr	su	https://github.com/zephyrproject-rtos/zephyr/blob/dccb09599635bdff17633fa7e9dab014b91dce90/drivers/gpio/gpio_mcux.c#L401: the port interrupt each nxp,kinetis-gpio instance connects at init (line 498); the application configures no pin interrupt (buttons are polled), so the callback list is empty
+_isr_wrapper	su	https://github.com/zephyrproject-rtos/zephyr/blob/dccb09599635bdff17633fa7e9dab014b91dce90/arch/arm/core/cortex_m/isr_wrapper.c#L33: the vector table's entry for every IRQ (CONFIG_GEN_IRQ_VECTOR_TABLE=y), demuxes _sw_isr_table[irq] and calls the handler
+z_arm_exc_exit	su	https://github.com/zephyrproject-rtos/zephyr/blob/dccb09599635bdff17633fa7e9dab014b91dce90/arch/arm/core/cortex_m/exc_exit.c#L55: pends PendSV when a reschedule is due; no frame

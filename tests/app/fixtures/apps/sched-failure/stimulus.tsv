@@ -1,0 +1,3 @@
+horizon_us 10000
+drain_us 1000
+expect_failure fast 2 3

@@ -1,0 +1,6 @@
+core-contract 1
+root len_i32.rb
+entry len_i32
+result i32
+param src buffer i32 in count n_src
+param n_src scalar u64

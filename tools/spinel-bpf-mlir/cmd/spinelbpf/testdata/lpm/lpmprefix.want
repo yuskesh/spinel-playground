@@ -1,0 +1,9 @@
+10.0.0.0/8 ok 8
+0.0.0.0/0 ok 0
+255.255.255.255/32 ok 32
+IPv6 err=SpinelBPF::Other
+host bits err=SpinelBPF::Other
+/33 err=SpinelBPF::Other
+no length err=SpinelBPF::Other
+octet 256 err=SpinelBPF::Other
+empty err=SpinelBPF::Other

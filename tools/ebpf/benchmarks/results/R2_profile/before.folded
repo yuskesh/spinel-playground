@@ -1,0 +1,107 @@
+[spinel-ebpf] BPF loaded and attached
+[spinel-ebpf] perf_event attached: perf_event__main @ 99 Hz across 5 CPU(s)
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];sp_build_response [srv_before];__libc_malloc [libc.so.6];0xfffff7de5d48 [libc.so.6] 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];sp_build_response [srv_before] 1
+0x2b86618;0x265b8a4;0x265b41c;0x265cfd4;0x19c8124;0x11fcb00;0x11fe5a8;0x11ea408;0x2b829d0 1
+0x2b86618;0x265b8a4;0x265b41c;0x265cfd4;0x19c8280;0x19ca660;0x19b02dc;0x2b84d34 64
+0xaaaac50e29b0;0xffff85f2233c;0xffff85f2225c;0xaaaac50e3234;0xaaaac50e4cc8;0xffff8622c57c;0xffff8622bda8;0xaaaac50e4e64;0xffff85f4cc88;0xffff85f570e8;0xffff85f55a98;0xffff85f4d764 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];sp_build_response [srv_before];snprintf [libc.so.6];0xfffff7dca290 [libc.so.6];0xfffff7d9b9c0 [libc.so.6] 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];0xfffff7df309c [libc.so.6] 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];sp_gc_collect [srv_before];cfree [libc.so.6] 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];sp_build_response [srv_before];snprintf [libc.so.6];0xfffff7d9d138 [libc.so.6] 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];strcmp [libc.so.6] 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];0x4014f4 [srv_before] 1
+0x2b86618;0x265b8a4;0x265b41c;0x265cfd4;0x19c8124;0x11fcc28;0x1fea298;0x2ba6f6c 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before] 1
+0x2b86618;0x265b8a4;0x265b41c;0x265cfd4;0x2b5a720 1
+0x2b86618;0x265b8a4;0x265b41c;0x265cfd4;0x19c8124;0x11fcb00;0x11fe5a8;0x11ea388;0x1fe84d4;0x2035d00 1
+0xaaaac50e29b0;0xffff85f2233c;0xffff85f2225c;0xaaaac50e3234;0xaaaac50e4cc8;0xffff8622c57c;0xffff8622bda8;0xaaaac50e4e64;0xffff85f4cc88;0xffff85f570e8;0xffff85f55a98;0xffff85fa3080 2
+0x2b86618;0x265b8a4;0x265b41c;0x265cfd4;0x19c8124;0x11fcb00;0x203a070 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];sp_gc_collect [srv_before];cfree [libc.so.6] 1
+0xaaaac50e29b0;0xffff85f2233c;0xffff85f2225c;0xaaaac50e3234;0xaaaac50e4cc8;0xffff8622c530;0xffff85fee164;0xffff85f8265c 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];sp_build_response [srv_before] 1
+0xaaaac50e29b0;0xffff85f2233c;0xffff85f2225c;0xaaaac50e3234;0xaaaac50e4cc8;0xffff8622c57c;0xaaaac50e4e44 1
+0xaaaac50e29b0;0xffff85f2233c;0xffff85f2225c;0xaaaac50e3234;0xaaaac50e4cc8;0xffff8622c57c;0xffff8622bda8 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];sp_net_read_line [srv_before];0xfffff7dd265c [libc.so.6];0xfffff7dd25d4 [libc.so.6] 2
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];0xfffff7df4128 [libc.so.6] 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before] 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];0xfffff7df3b00 [libc.so.6] 1
+0xaaaac50e29b0;0xffff85f2233c;0xffff85f2225c;0xaaaac50e3234;0xaaaac50e4cc8;0xffff8622c57c;0xffff8622bda8;0xaaaac50e4e64;0xffff85f4cc88;0xffff85f570e8;0xffff85f55834 1
+0x2b86618;0x265b8a4;0x265b41c;0x265cfd4;0x19c8124;0x11fcb00;0x11fe5a8;0x11ea408 1
+0xaaaac50e29b0;0xffff85f2233c;0xffff85f2225c;0xaaaac50e3234;0xaaaac50e4cc8;0xffff8622c530;0xffff85fee164;0xffff85f8265c;0xffff85f8263c 46
+0xaaaac50e29b0;0xffff85f2233c;0xffff85f2225c;0xaaaac50e3234;0xaaaac50e4cc8;0xffff8622c57c;0xffff8622bda8;0xaaaac50e4e74;0xffff85f6f2ac;0xffff85f7d9f0;0xffff85f7d2a8;0xffff85f7c3c0;0xffff85f7e218;0xffff85f8265c;0xffff85f8263c 89
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];sp_net_accept [srv_before];accept [libc.so.6];0xfffff7dd25c0 [libc.so.6] 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];sp_net_read_line [srv_before] 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];close [libc.so.6];0xfffff7dd265c [libc.so.6];0xfffff7dd263c [libc.so.6] 42
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];sp_net_read_line [srv_before];0xfffff7dd2664 [libc.so.6] 1
+0xaaaac50e29b0;0xffff85f2233c;0xffff85f2225c;0xaaaac50e3234;0xaaaac50e4cc8;0xffff8622c57c;0xffff8622bda8;0xaaaac50e4e74;0xffff85f6f2ac;0xffff85f7d9f0;0xffff85f7d2a8;0xffff85f7c3c0;0xffff85fe4620 2
+0x2b86618;0x265b8a4;0x265b41c;0x265cfd4;0x19c8124;0x2b84d34 26
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];close [libc.so.6] 1
+0xaaaac50e29b0;0xffff85f2233c;0xffff85f2225c;0xaaaac50e3234;0xaaaac50e4cc8;0xffff8622c57c;0xffff8622bd94 1
+0x2b86618;0x265b8a4;0x265b41c;0x265cfd4;0x19c8124;0x11fcb00;0x11fe5a8;0x11ea388;0x1fe84c4;0x1fe8074;0x2b8c000 1
+0x2b86618;0x265b8a4;0x265b41c;0x265cfd4;0x19c8124;0x11fcb70;0x1fea654 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];sp_build_response [srv_before] 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];accept [libc.so.6] 1
+0xaaaac50e29b0;0xffff85f2233c;0xffff85f2225c;0xaaaac50e3234;0xaaaac50e4cc8;0xffff8622c57c;0xffff8622bda8;0xaaaac50e4e64;0xffff85f4cc88;0xffff85f570e8;0xffff85f55cd8 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];0x4014f0 [srv_before] 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];sp_net_read_line [srv_before];0xfffff7dd265c [libc.so.6];0xfffff7dd263c [libc.so.6] 152
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];0x4017e4 [srv_before] 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];sp_gc_collect [srv_before];sp_str_sweep [srv_before];cfree [libc.so.6] 1
+0xaaaac50e29b0;0xffff85f2233c;0xffff85f2225c;0xaaaac50e3234;0xaaaac50e4cc8;0xffff8622c57c;0xffff8622bda8;0xaaaac50e4e64;0xffff85f4cc4c 1
+0xaaaac50e29b0;0xffff85f2233c;0xffff85f2225c;0xaaaac50e3234;0xaaaac50e4cc8;0xffff8622c57c;0xffff8622bda8;0xaaaac50e2790 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];sp_net_write_str [srv_before];0xfffff7dd265c [libc.so.6];0xfffff7dd263c [libc.so.6] 257
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before] 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];0x401710 [srv_before] 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];sp_build_response [srv_before] 1
+0xaaaaaaaa2b30;0xfffff7c6233c;0xfffff7c6225c;0xaaaaaaaa3908;0xaaaaaaaa77a0;0xfffff7c8bf34;0xfffff7c970f0;0xfffff7c8d6c8;0xfffff7c8d61c;0xfffff7cbe404;0xfffff7cbc3c0;0xfffff7cbe218;0xfffff7cc265c;0xfffff7cc263c 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];0x401714 [srv_before] 1
+0x2b86618;0x265b8a4;0x265b41c;0x265cfd4;0x19c8124;0x11fca44;0x11fd67c;0x1e635b0;0x1e5a788;0x1ff2b44;0x2001758;0x1ffe038 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];0x401640 [srv_before] 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];0xfffff7df4100 [libc.so.6] 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];sp_build_response [srv_before];__libc_malloc [libc.so.6] 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];sp_net_read_line [srv_before];0xfffff7dd265c [libc.so.6];0xfffff7dd263c [libc.so.6] 74
+0xaaaac50e29b0;0xffff85f2233c;0xffff85f2225c;0xaaaac50e3234;0xaaaac50e4cc8;0xffff8622c57c;0xffff8622bda8;0xaaaac50e4e64;0xffff85f4cc88;0xffff85f570e8;0xffff85f55610 1
+0xaaaac50e29b0;0xffff85f2233c;0xffff85f2225c;0xaaaac50e3234;0xaaaac50e4cc8;0xffff8622c57c;0xffff8622bda8;0xaaaac50e4e64;0xffff85f4cc88;0xffff85f570e8;0xffff85f55830 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];sp_build_response [srv_before] 1
+0x2b86618;0x265b8a4;0x265b41c;0x265cfd4;0x19c8124;0x11fca44;0x11fd67c;0x1e635b0;0x1fdd010 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];0xfffff7df3080 [libc.so.6] 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];sp_gc_collect [srv_before];sp_str_sweep [srv_before];cfree [libc.so.6];0xfffff7de507c [libc.so.6] 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];0xfffff7df30b8 [libc.so.6] 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];sp_net_accept [srv_before];accept [libc.so.6];0xfffff7dd265c [libc.so.6];0xfffff7dd263c [libc.so.6] 43
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];sp_net_read_line [srv_before] 1
+0x2b86618;0x265b8a4;0x265b41c;0x265cfd4;0x19c8124;0x11fca44;0x11fd67c;0x1ce37f4 1
+0xaaaac50e29b0;0xffff85f2233c;0xffff85f2225c;0xaaaac50e3234;0xaaaac50e4cc8;0xffff8622c57c;0xffff8622bda8;0xaaaac50e4e64;0xffff85f4cc88;0xffff85f570e8;0xffff85f557dc 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];__libc_malloc [libc.so.6] 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];sp_build_response [srv_before];snprintf [libc.so.6];0xfffff7dca290 [libc.so.6];0xfffff7da52f8 [libc.so.6] 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];sp_str_length [srv_before] 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];sp_net_read_line [srv_before];0xfffff7dd265c [libc.so.6];0xfffff7dd25d4 [libc.so.6] 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before] 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];sp_build_response [srv_before];snprintf [libc.so.6];0xfffff7dca290 [libc.so.6];0xfffff7da4c40 [libc.so.6] 1
+0x2b86618;0x265b8a4;0x265b41c;0x265cfd4;0x19c8124;0x11fcc28;0x1fea298;0x1fe99b0;0x1fd8bb8 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];__libc_malloc [libc.so.6] 1
+0x2b86618;0x265b8a4;0x265b41c;0x265cfd4;0x19c8280;0x19ca660;0x19b02dc;0x19b0610 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];calloc [libc.so.6];0xfffff7de6838 [libc.so.6] 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];__recv [libc.so.6] 2
+0x2b86618;0x265b8a4;0x265b41c;0x265cfd4;0x19c8124 1
+0x2b86618;0x265b8a4;0x265b41c;0x265cfd4;0x19c8124;0x11fcb00;0x11fe5a8;0x11ebfb8 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];calloc [libc.so.6] 1
+0x2b86618;0x265b8a4;0x265b41c;0x265cfd4;0x19c8124;0x11fcc28;0x2b5a7d0 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];calloc [libc.so.6] 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];sp_build_response [srv_before];snprintf [libc.so.6];0xfffff7dca290 [libc.so.6];0xfffff7da4b68 [libc.so.6] 1
+0x2b86618;0x265b8a4;0x265b41c;0x265cfd4;0x19c8114;0x1fea298;0x1ea67ac 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];sp_gc_collect [srv_before];sp_str_sweep [srv_before];cfree [libc.so.6];0xfffff7de50ec [libc.so.6] 1
+0x2b86618;0x265b8a4;0x265b41c;0x265cfd4;0x19c8124;0x11fcabc 1
+0xaaaac50e29b0;0xffff85f2233c;0xffff85f2225c;0xaaaac50e3234;0xaaaac50e4cc8;0xffff861fb450 2
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];0xfffff7df4110 [libc.so.6] 1
+0xaaaac50e29b0;0xffff85f2233c;0xffff85f2225c;0xaaaac50e3234;0xaaaac50e4cc8;0xffff8622c57c;0xffff8622bda8;0xffff85f4cc00 3
+0x2b86618;0x265b8a4;0x265b41c;0x265cfd4;0x19c8124;0x11fcb00;0x11fe5a8;0x11ea388;0x1fe84c4;0x1fe8074 1
+0x2b86618;0x265b8a4;0x265b41c;0x265cfd4;0x19c8124;0x11fca44;0x11fd67c;0x1e635b0;0x1e5a788;0x1ff2b44;0x2001758;0x2001acc;0x1ffe2b0 1
+0x2b86618;0x265b8a4;0x265b41c;0x265cfd4;0x19c8124;0x11fcb00;0x1fea634 1
+0xaaaaaaaa2b30;0xfffff7c6233c;0xfffff7c6225c;0xaaaaaaaa3908;0xaaaaaaaa7708;0xaaaaaaaa6c84;0xfffff7caf9a4;0xfffff7cbcce8;0xfffff7cbcb58;0xfffff7d232e0;0xfffff7cc265c;0xfffff7cc263c 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before] 2
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before] 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];sp_net_write_str [srv_before];0xfffff7dd265c [libc.so.6] 2
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];__libc_malloc [libc.so.6] 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before];close [libc.so.6];0xfffff7dd265c [libc.so.6];0xfffff7dd2640 [libc.so.6] 1
+_start [srv_before];__libc_start_main [libc.so.6];0xfffff7d7225c [libc.so.6];main [srv_before] 1
+0x2b86618;0x265b8a4;0x265b41c;0x265cfd4;0x19c8280;0x19ca660;0x19b02dc;0x1ccfbe0 2

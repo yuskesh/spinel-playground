@@ -1,0 +1,32 @@
+# Declared frame divergences for DEMO2, in tests/doom/compare.rb's format:
+#
+#   stream	gametic	field	reference-value	candidate-value	reason
+#
+# One file per demo because a gametic is not unique across demos.
+#
+# Values measured 2026-09-11 on macOS arm64 -- the toolchain decision 0006
+# selects -- with the reference built by Clang 23.1.1 at doomgeneric
+# dcb7a8db and the port on pin cad0ad14 with the same --cc.  Extracted from
+# the macOS side's saved logs (build/mac-review-361721b/DEMO2.log, their
+# exec 31602); not regenerated from a failing run here, and nothing in this
+# repository can write this file.
+#
+# The reasons cite the predecessor's records at f8ad13c6 and name the field
+# read.  They do not copy values from those records: the values here are the
+# 2026-09 measurement.  The mechanism itself has NOT been re-confirmed -- the
+# byte-window instrument those records used has not been re-run, and a frame
+# hash cannot see which byte differed.
+#
+# Known fragility, recorded rather than worked around: the bytes these tics
+# depend on are pointers and allocation history, so they are not a function of
+# the WAD and are not guaranteed stable across reference builds.  They are not:
+# a Debian-built reference disagrees with this one at DEMO1 4486 and DEMO2 631.
+# If a value here stops matching, that is the gate working -- a changed
+# discrepancy is for investigation, and the first thing to check is whether the
+# reference build changed.
+frames	631	viewhash	2d35c85ee90dcc0b	fbc00bdc562bb8e5	E054 zone_attribution.txt records the reference reading a next pointer at pixel (135,98) through dc_source[127], which the port's Wad#zone_window zeroes; not a function of the WAD. Mechanism not re-confirmed in 2026-09.
+frames	2325	viewhash	5a23e97f528909c8	7cde110a05a364e7	E054 zone_attribution.txt records the reference reading next and prev pointers at pixels (164,118) and (165,118) through dc_source[127], which the port's Wad#zone_window zeroes; not a function of the WAD. Mechanism not re-confirmed in 2026-09.
+frames	2925	viewhash	eec5f7b509649106	6ad195049e2fe360	E054 zone_attribution.txt records the reference reading next pointers at pixels (271,142) and (272,142) through dc_source[127], which the port's Wad#zone_window zeroes; not a function of the WAD. Mechanism not re-confirmed in 2026-09.
+frames200	631	fullhash	9c754cffd699d173	2c4cd0b4547fb4d9	E054 zone_attribution.txt records the reference reading a next pointer at pixel (135,98) through dc_source[127], which the port's Wad#zone_window zeroes; not a function of the WAD. Mechanism not re-confirmed in 2026-09.
+frames200	2325	fullhash	df2313e1af9601ab	02be8d81ed6cbc38	E054 zone_attribution.txt records the reference reading next and prev pointers at pixels (164,118) and (165,118) through dc_source[127], which the port's Wad#zone_window zeroes; not a function of the WAD. Mechanism not re-confirmed in 2026-09.
+frames200	2925	fullhash	84d5f00bc9848f8a	b746f74a9346a3a0	E054 zone_attribution.txt records the reference reading next pointers at pixels (271,142) and (272,142) through dc_source[127], which the port's Wad#zone_window zeroes; not a function of the WAD. Mechanism not re-confirmed in 2026-09.

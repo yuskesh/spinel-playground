@@ -1,0 +1,13 @@
+leg	check	verdict	detail
+native	whole_loop_rc	PASS	rc=40 (one call, steps=40)
+native	one_call_equals_40_chunks	PASS	F rows == S 40 rows, bitwise
+native	chunk_rcs	PASS	every steps=1 call returned 1
+wasm32	whole_loop_rc	PASS	rc=40 (one call, steps=40)
+wasm32	one_call_equals_40_chunks	PASS	F rows == S 40 rows, bitwise
+wasm32	chunk_rcs	PASS	every steps=1 call returned 1
+m33	whole_loop_rc	PASS	rc=40 (one call, steps=40)
+m33	one_call_equals_40_chunks	PASS	F rows == S 40 rows, bitwise
+m33	chunk_rcs	PASS	every steps=1 call returned 1
+rv32	whole_loop_rc	PASS	rc=40 (one call, steps=40)
+rv32	one_call_equals_40_chunks	PASS	F rows == S 40 rows, bitwise
+rv32	chunk_rcs	PASS	every steps=1 call returned 1

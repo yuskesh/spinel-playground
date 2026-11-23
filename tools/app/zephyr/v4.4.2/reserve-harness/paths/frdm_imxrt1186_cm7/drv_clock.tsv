@@ -1,0 +1,2 @@
+function	source	note
+sys_clock_cycle_get_64	su	https://github.com/zephyrproject-rtos/zephyr/blob/dccb09599635bdff17633fa7e9dab014b91dce90/drivers/timer/cortex_m_systick.c#L564: k_cycle_get_64 -> sys_clock_cycle_get_64 (Clock.cycles); Clock.uptime_us is shallower

@@ -1,0 +1,5 @@
+core-contract 1
+root dc_nested_pre.rb
+entry dc_pre
+result i64
+param a scalar i64

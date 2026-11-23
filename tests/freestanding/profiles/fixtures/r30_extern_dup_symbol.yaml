@@ -1,0 +1,25 @@
+# The base profile of the platform-extern checks: the shipped
+# cortex-m33-zephyr.yaml plus only what those checks need (one scalar and one
+# buffer callable platform extern). Not a shipped profile: an experiment record,
+# like E081's *-e081.yaml and E083's *-e083.yaml. Each reject fixture breaks
+# exactly one place in this file.
+target:
+  triple: thumbv8m.main-none-eabi
+  cpu: cortex-m33
+  data_layout: "e-m:e-p:32:32-Fi8-i64:64-v128:64:128-a:0:32-n32-S64"
+  cflags: [-mcpu=cortex-m33+nodsp, -mfloat-abi=soft, -Os]
+abi:
+  boundary: c-abi
+  int_width: i32-internal
+  overflow: trap
+  trap_hook: spinel_trap
+runtime:
+  libc: none
+  libm: none
+  compiler_rt: allow
+platform:
+  type: zephyr
+  externs:
+    - {name: uptime_ms, params: [], returns: i64}
+    - {name: checksum32, symbol: spinel_zephyr_uptime_ms, params: [i32], returns: i32}
+    - {name: blend, params: [[f64_buf, in], len, [f64_buf, out], len], returns: i32}

@@ -1,0 +1,11 @@
+core-contract 1
+root slots/entries.rb
+entry dc_take
+result i64
+param th_free buffer i64 inout count n_th_free
+param n_th_free scalar u64
+param th_prev buffer i64 inout count n_th_prev
+param n_th_prev scalar u64
+param th_alloc buffer i64 inout count n_th_alloc
+param n_th_alloc scalar u64
+param cap scalar i64

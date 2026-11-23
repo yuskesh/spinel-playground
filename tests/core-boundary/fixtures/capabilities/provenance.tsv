@@ -1,0 +1,13 @@
+# Where the extracted helpers came from, and what they came from.
+#
+# `token` is a string the EXTRACTED source must contain. A record kept only in
+# this table is one a reader of the source never sees, so the check is that the
+# source names its own origin; the token is what makes that checkable without
+# matching a whole sentence.
+#
+#extracted	original	token	upstream
+fixed_to_i32	examples/doom/lib/doom/fixed.rb	DG/m_fixed.c	the fixed_t cast, R007 4.7
+fixed_mul	examples/doom/lib/doom/fixed.rb	DG/m_fixed.c:FixedMul	R007 4.7
+fixed_cdiv	examples/doom/lib/doom/fixed.rb	DG/m_fixed.c	C division semantics, R007 4.7
+fixed_div	examples/doom/lib/doom/fixed.rb	DG/m_fixed.c:FixedDiv	R007 4.7
+fixed_bam	examples/doom/lib/doom/fixed.rb	DG/tables.h	the binary angle measure, R007 4.7

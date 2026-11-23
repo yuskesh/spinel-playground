@@ -1,0 +1,96 @@
+/* generated from tools/app/templates/channel_xcore.c.erb: the put of channel
+ * `<%= c.name %>` (decision 0014 §5), whose consumer is the other core: on a
+ * board whose table names `udp_consumer ocram-ring-v1` (decision 0024's
+ * amendment), a `udp:` channel's messages go into the OCRAM ring of
+ * tools/app/ring/ring_abi.h, and the M33's network firmware
+ * (tools/app/launcher) sends each one verbatim. The put's contract is 0014's:
+ * 1 when queued, 0 when the ring is full and nothing is written; its
+ * arguments are checked by the guards the kernel emits before the call.
+ *
+ * The ring's geometry is this channel's: depth <%= c.depth %>, slot stride
+ * <%= stride %>, at most <%= c.size %> bytes, the slots at <%= offset %>. The
+ * M33 initialises it before it releases this core;
+ * spc_channel_<%= c.name %>_check() reads it back at boot (main.c) and, when
+ * anything differs, every put answers 0 and the console says
+ * SPC_RING_REFUSED. A put reads tail, a barrier, refuses when full, copies
+ * the message and its length into the slot, a barrier, then stores head + 1;
+ * it is this core's only writer of head (one producer context, 0014 §5).
+ *
+ * The labels around the copy and the publication are those of every
+ * channel's put (the plan's "Channels"), so `spinel-core-app labels` finds
+ * them; there is no get on this core. */
+#include <stdint.h>
+#include "ring/ring_abi.h"
+#include "channel_<%= c.name %>.h"
+
+#if defined(__APPLE__)
+#define SPC_SYM(name) "_" name
+#else
+#define SPC_SYM(name) name
+#endif
+#define SPC_LABEL(name) __asm__ volatile(".globl " SPC_SYM(name) "\n" SPC_SYM(name) ":" ::: "memory")
+#define SPC_W ((volatile uint32_t *)SPC_RING_M7_BASE)
+#define SPC_DEPTH <%= c.depth %>u
+#define SPC_STRIDE <%= stride %>u
+#define SPC_MAX_LEN <%= c.size %>u
+#define SPC_OFFSET <%= offset %>u
+
+static uint32_t spc_head;   /* this core's copy: the only writer */
+static uint8_t spc_ready;   /* 1 once the check found the ring this channel's */
+
+/* 0 when the ring is the one this channel was generated for; otherwise the
+ * first word that differs, numbered as ring_abi.h's offsets, plus 1 */
+int32_t spc_channel_<%= c.name %>_check(void)
+{
+	static const uint32_t want[][2] = {
+		{ SPC_RING_W_MAGIC, SPC_RING_MAGIC }, { SPC_RING_W_VERSION, SPC_RING_ABI_VERSION },
+		{ SPC_RING_W_DEPTH, SPC_DEPTH }, { SPC_RING_W_STRIDE, SPC_STRIDE },
+		{ SPC_RING_W_MAX_LEN, SPC_MAX_LEN }, { SPC_RING_W_OFFSET, SPC_OFFSET },
+	};
+
+	for (uint32_t i = 0; i < sizeof want / sizeof want[0]; i++) {
+		uint32_t v = spc_ring_load(SPC_W, want[i][0]);
+
+		spc_ring_dmb(); /* magic first: the rest after it */
+		if (v != want[i][1]) {
+			return (int32_t)want[i][0] + 1;
+		}
+	}
+	if (!spc_ring_geometry_ok(SPC_DEPTH, SPC_STRIDE, SPC_MAX_LEN, SPC_OFFSET)) {
+		return -1;
+	}
+	spc_head = spc_ring_load(SPC_W, SPC_RING_W_HEAD);
+	spc_ring_store(SPC_W, SPC_RING_W_PRODUCER_STATE, SPC_RING_PRODUCER_PUTTING);
+	spc_ready = 1u;
+	return 0;
+}
+
+__attribute__((noinline))
+int32_t spc_channel_<%= c.name %>_put(const uint8_t *data, uint32_t data_len, uint32_t n)
+{
+	uint32_t tail;
+	volatile uint8_t *slot;
+
+	(void)data_len; /* the guards established 1 <= n <= size and n <= data_len before the call */
+	if (!spc_ready) {
+		return 0;
+	}
+	tail = spc_ring_load(SPC_W, SPC_RING_W_TAIL);
+	spc_ring_dmb();
+	if (spc_head - tail >= SPC_DEPTH) {
+		return 0;
+	}
+	slot = spc_ring_slot(SPC_W, SPC_OFFSET, SPC_STRIDE, SPC_DEPTH, spc_head);
+	SPC_LABEL("spc_ring_<%= c.name %>_put_copy_begin");
+	for (uint32_t i = 0; i < n; i++) {
+		slot[4u + i] = data[i];
+	}
+	*(volatile uint32_t *)slot = n;
+	SPC_LABEL("spc_ring_<%= c.name %>_put_copy_end");
+	spc_ring_dmb();
+	SPC_LABEL("spc_ring_<%= c.name %>_put_pub_begin");
+	spc_head++;
+	spc_ring_store(SPC_W, SPC_RING_W_HEAD, spc_head);
+	SPC_LABEL("spc_ring_<%= c.name %>_put_pub_end");
+	return 1;
+}

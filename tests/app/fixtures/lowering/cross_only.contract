@@ -1,0 +1,7 @@
+core-contract 2
+root app.rb
+entry cross_only
+context thread
+result none
+param a buffer u8 inout count const 8 cross
+param b buffer u8 inout count const 8 cross

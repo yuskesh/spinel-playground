@@ -1,0 +1,11 @@
+#!/bin/bash
+# Diagnostic only: preserve the exact initramfs used by virtme, never overwrite it.
+set -euo pipefail
+: "${E062_DIAG_INITRD:?fresh diagnostic initramfs path}"
+if [ -e "$E062_DIAG_INITRD" ] || [ -L "$E062_DIAG_INITRD" ]; then
+ echo 'diagnostic initramfs already exists' >&2
+ exit 1
+fi
+# show-command must fail before QEMU fork/exec if its output cannot be saved.
+export PYTHONUNBUFFERED=1
+exec /usr/bin/virtme-run --show-command --show-boot-console --save-initramfs "$E062_DIAG_INITRD" "$@"

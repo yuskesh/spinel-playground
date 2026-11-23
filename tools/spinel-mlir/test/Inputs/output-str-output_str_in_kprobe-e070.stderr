@@ -1,0 +1,1 @@
+neg_output_str_in_kprobe.rb:9:7: rejected SB028 (TracingKind): `Events.output_str` reads a user string (`ctx.str_arg(n)` in a uprobe or ksyscall program, `ctx.str_field(:f)` in a tracepoint program), or a kernel string (`q.str(:m)` — a :strptr member of a present kernel pointer) (P020 / P026 / E142 / E143) [path: on_poll]

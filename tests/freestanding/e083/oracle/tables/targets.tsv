@@ -1,0 +1,2 @@
+target	primal_sym	grad_sym	wrt	tol	params	returns
+sq_hinge_loss	spinel_sq_hinge_loss	spinel_grad_sq_hinge_loss	w	1e-06	[f64_buf,in],:len,[f64_buf,in],:len	f64

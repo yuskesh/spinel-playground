@@ -1,0 +1,17 @@
+core-contract 1
+root src/draw_fuzz.rb
+entry draw_fuzz
+result i64
+param scr buffer u8 inout count n_scr
+param n_scr scalar u64
+param cmap buffer u8 in count n_cmap
+param n_cmap scalar u64
+param fuzzoffset buffer i32 in count n_fuzzoffset
+param n_fuzzoffset scalar u64
+param yl scalar i64
+param yh scalar i64
+param x scalar i64
+param fz scalar i64
+param width scalar i64
+param viewwindowx scalar i64
+param viewwindowy scalar i64

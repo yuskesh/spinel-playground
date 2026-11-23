@@ -1,0 +1,6 @@
+core-contract 1
+root src/count_value.rb
+entry count_value
+result i64
+param dst buffer u8 in count n_dst
+param n_dst scalar u64

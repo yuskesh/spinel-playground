@@ -1,0 +1,434 @@
+core-contract 1
+root src/packed.rb
+entry doom_core_render
+result i32
+param state buffer i64 inout count n_state
+param n_state scalar u64
+param rx buffer i64 in count n_rx
+param n_rx scalar u64
+param sw buffer u16 in count n_sw
+param n_sw scalar u64
+param sh buffer u8 in count n_sh
+param n_sh scalar u64
+param scr buffer u8 inout count n_scr
+param n_scr scalar u64
+param finesine buffer i32 in count n_finesine
+param n_finesine scalar u64
+param jobmode buffer u8 in count n_jobmode
+param n_jobmode scalar u64
+param zero_slots buffer i64 in count n_zero_slots
+param n_zero_slots scalar u64
+param rv_caps buffer u32 inout count n_rv_caps
+param n_rv_caps scalar u64
+param ss_first buffer i32 inout count n_ss_first
+param n_ss_first scalar u64
+param ss_last buffer i32 inout count n_ss_last
+param n_ss_last scalar u64
+param viewwidth buffer u16 in count n_viewwidth
+param n_viewwidth scalar u64
+param floorclip buffer i16 inout count n_floorclip
+param n_floorclip scalar u64
+param ceilingclip buffer i16 inout count n_ceilingclip
+param n_ceilingclip scalar u64
+param cachedheight buffer u32 inout count n_cachedheight
+param n_cachedheight scalar u64
+param centerxfrac buffer u32 in count n_centerxfrac
+param n_centerxfrac scalar u64
+param viewheight buffer u8 in count n_viewheight
+param n_viewheight scalar u64
+param bsp_stack buffer u16 inout count n_bsp_stack
+param n_bsp_stack scalar u64
+param ss_sector buffer u8 in count n_ss_sector
+param n_ss_sector scalar u64
+param ss_numlines buffer u8 in count n_ss_numlines
+param n_ss_numlines scalar u64
+param ss_firstline buffer u16 in count n_ss_firstline
+param n_ss_firstline scalar u64
+param sector_floorheight buffer i32 inout count n_sector_floorheight
+param n_sector_floorheight scalar u64
+param pl_height buffer i32 inout count n_pl_height
+param n_pl_height scalar u64
+param pl_picnum buffer u8 inout count n_pl_picnum
+param n_pl_picnum scalar u64
+param pl_lightlevel buffer u8 inout count n_pl_lightlevel
+param n_pl_lightlevel scalar u64
+param pl_minx buffer u16 inout count n_pl_minx
+param n_pl_minx scalar u64
+param pl_maxx buffer i16 inout count n_pl_maxx
+param n_pl_maxx scalar u64
+param pl_top buffer u16 inout count n_pl_top
+param n_pl_top scalar u64
+param skyflatnum buffer u8 in count n_skyflatnum
+param n_skyflatnum scalar u64
+param plw buffer u16 in count n_plw
+param n_plw scalar u64
+param plempty buffer u8 in count n_plempty
+param n_plempty scalar u64
+param sector_floorpic buffer u8 inout count n_sector_floorpic
+param n_sector_floorpic scalar u64
+param sector_lightlevel buffer i16 inout count n_sector_lightlevel
+param n_sector_lightlevel scalar u64
+param sector_ceilingheight buffer i32 inout count n_sector_ceilingheight
+param n_sector_ceilingheight scalar u64
+param sector_ceilingpic buffer u8 in count n_sector_ceilingpic
+param n_sector_ceilingpic scalar u64
+param sector_validcount buffer i16 inout count n_sector_validcount
+param n_sector_validcount scalar u64
+param sector_head buffer i16 inout count n_sector_head
+param n_sector_head scalar u64
+param thing_next buffer i16 inout count n_thing_next
+param n_thing_next scalar u64
+param mobj_x buffer i32 inout count n_mobj_x
+param n_mobj_x scalar u64
+param mobj_y buffer i32 inout count n_mobj_y
+param n_mobj_y scalar u64
+param mobj_z buffer i32 inout count n_mobj_z
+param n_mobj_z scalar u64
+param mobj_angle buffer i32 inout count n_mobj_angle
+param n_mobj_angle scalar u64
+param mobj_frame buffer u16 inout count n_mobj_frame
+param n_mobj_frame scalar u64
+param mobj_sprite buffer u8 inout count n_mobj_sprite
+param n_mobj_sprite scalar u64
+param mobj_flags buffer u32 inout count n_mobj_flags
+param n_mobj_flags scalar u64
+param numframes buffer u8 in count n_numframes
+param n_numframes scalar u64
+param rotate buffer u8 in count n_rotate
+param n_rotate scalar u64
+param framebase buffer u16 in count n_framebase
+param n_framebase scalar u64
+param sprlump buffer u16 in count n_sprlump
+param n_sprlump scalar u64
+param sprflip buffer u8 in count n_sprflip
+param n_sprflip scalar u64
+param spriteoffset buffer i32 in count n_spriteoffset
+param n_spriteoffset scalar u64
+param spritewidth buffer u32 in count n_spritewidth
+param n_spritewidth scalar u64
+param spritetopoffset buffer i32 in count n_spritetopoffset
+param n_spritetopoffset scalar u64
+param tantoangle buffer u32 in count n_tantoangle
+param n_tantoangle scalar u64
+param projection buffer u32 in count n_projection
+param n_projection scalar u64
+param scalelight buffer u8 in count n_scalelight
+param n_scalelight scalar u64
+param resscale buffer u8 in count n_resscale
+param n_resscale scalar u64
+param vs_mobjflags buffer u32 inout count n_vs_mobjflags
+param n_vs_mobjflags scalar u64
+param vs_scale buffer u32 inout count n_vs_scale
+param n_vs_scale scalar u64
+param vs_gx buffer i32 inout count n_vs_gx
+param n_vs_gx scalar u64
+param vs_gy buffer i32 inout count n_vs_gy
+param n_vs_gy scalar u64
+param vs_gz buffer i32 inout count n_vs_gz
+param n_vs_gz scalar u64
+param vs_gzt buffer i32 inout count n_vs_gzt
+param n_vs_gzt scalar u64
+param vs_texturemid buffer i32 inout count n_vs_texturemid
+param n_vs_texturemid scalar u64
+param vs_x1 buffer u16 inout count n_vs_x1
+param n_vs_x1 scalar u64
+param vs_x2 buffer u16 inout count n_vs_x2
+param n_vs_x2 scalar u64
+param vs_startfrac buffer u32 inout count n_vs_startfrac
+param n_vs_startfrac scalar u64
+param vs_xiscale buffer i32 inout count n_vs_xiscale
+param n_vs_xiscale scalar u64
+param vs_patch buffer u16 inout count n_vs_patch
+param n_vs_patch scalar u64
+param vs_cmap buffer u8 inout count n_vs_cmap
+param n_vs_cmap scalar u64
+param seg_v1 buffer u16 in count n_seg_v1
+param n_seg_v1 scalar u64
+param seg_v2 buffer u16 in count n_seg_v2
+param n_seg_v2 scalar u64
+param vertex_x buffer i32 in count n_vertex_x
+param n_vertex_x scalar u64
+param vertex_y buffer i32 in count n_vertex_y
+param n_vertex_y scalar u64
+param clipangle buffer u32 in count n_clipangle
+param n_clipangle scalar u64
+param two_clipangle buffer u32 in count n_two_clipangle
+param n_two_clipangle scalar u64
+param viewangletox buffer u16 in count n_viewangletox
+param n_viewangletox scalar u64
+param seg_backsector buffer i16 in count n_seg_backsector
+param n_seg_backsector scalar u64
+param side_midtexture buffer u8 inout count n_side_midtexture
+param n_side_midtexture scalar u64
+param seg_sidedef buffer u16 in count n_seg_sidedef
+param n_seg_sidedef scalar u64
+param seg_linedef buffer u16 in count n_seg_linedef
+param n_seg_linedef scalar u64
+param line_flags buffer u16 inout count n_line_flags
+param n_line_flags scalar u64
+param seg_angle buffer i32 in count n_seg_angle
+param n_seg_angle scalar u64
+param ds_curline buffer u16 inout count n_ds_curline
+param n_ds_curline scalar u64
+param ds_x1 buffer u16 inout count n_ds_x1
+param n_ds_x1 scalar u64
+param ds_x2 buffer u16 inout count n_ds_x2
+param n_ds_x2 scalar u64
+param xtoviewangle buffer i32 in count n_xtoviewangle
+param n_xtoviewangle scalar u64
+param ds_scale1 buffer u32 inout count n_ds_scale1
+param n_ds_scale1 scalar u64
+param ds_scale2 buffer u32 inout count n_ds_scale2
+param n_ds_scale2 scalar u64
+param ds_scalestep buffer i32 inout count n_ds_scalestep
+param n_ds_scalestep scalar u64
+param ds_maskedbase buffer i16 inout count n_ds_maskedbase
+param n_ds_maskedbase scalar u64
+param ds_masked buffer u8 inout count n_ds_masked
+param n_ds_masked scalar u64
+param texturetranslation buffer u8 inout count n_texturetranslation
+param n_texturetranslation scalar u64
+param tex_theight buffer u32 in count n_tex_theight
+param n_tex_theight scalar u64
+param side_rowoffset buffer u32 in count n_side_rowoffset
+param n_side_rowoffset scalar u64
+param ds_silhouette buffer u8 inout count n_ds_silhouette
+param n_ds_silhouette scalar u64
+param ds_topkind buffer u8 inout count n_ds_topkind
+param n_ds_topkind scalar u64
+param ds_botkind buffer u8 inout count n_ds_botkind
+param n_ds_botkind scalar u64
+param ds_bsilheight buffer i32 inout count n_ds_bsilheight
+param n_ds_bsilheight scalar u64
+param ds_tsilheight buffer i32 inout count n_ds_tsilheight
+param n_ds_tsilheight scalar u64
+param side_toptexture buffer u8 inout count n_side_toptexture
+param n_side_toptexture scalar u64
+param side_bottomtexture buffer u8 inout count n_side_bottomtexture
+param n_side_bottomtexture scalar u64
+param maxopenings buffer u16 in count n_maxopenings
+param n_maxopenings scalar u64
+param side_textureoffset buffer i32 inout count n_side_textureoffset
+param n_side_textureoffset scalar u64
+param seg_offset buffer u32 in count n_seg_offset
+param n_seg_offset scalar u64
+param centeryfrac buffer u32 in count n_centeryfrac
+param n_centeryfrac scalar u64
+param pl_bottom buffer u16 inout count n_pl_bottom
+param n_pl_bottom scalar u64
+param openings buffer i16 inout count n_openings
+param n_openings scalar u64
+param finetangent buffer i32 in count n_finetangent
+param n_finetangent scalar u64
+param tex_widthmask buffer u8 in count n_tex_widthmask
+param n_tex_widthmask scalar u64
+param tex_atlas_base buffer u32 in count n_tex_atlas_base
+param n_tex_atlas_base scalar u64
+param cmap buffer u8 in count n_cmap
+param n_cmap scalar u64
+param atlas buffer u8 in count n_atlas
+param n_atlas scalar u64
+param wad buffer u8 in count n_wad
+param n_wad scalar u64
+param zonewin buffer u8 inout count n_zonewin
+param n_zonewin scalar u64
+param centery buffer u8 in count n_centery
+param n_centery scalar u64
+param viewwindowx buffer u8 in count n_viewwindowx
+param n_viewwindowx scalar u64
+param viewwindowy buffer u8 in count n_viewwindowy
+param n_viewwindowy scalar u64
+param wall buffer i32 inout count n_wall
+param n_wall scalar u64
+param sc_kind buffer u8 inout count n_sc_kind
+param n_sc_kind scalar u64
+param sc_idx buffer u16 inout count n_sc_idx
+param n_sc_idx scalar u64
+param cap_wall buffer u16 in count n_cap_wall
+param n_cap_wall scalar u64
+param cap_sched buffer u16 in count n_cap_sched
+param n_cap_sched scalar u64
+param ds_topbase buffer i16 inout count n_ds_topbase
+param n_ds_topbase scalar u64
+param ds_botbase buffer i16 inout count n_ds_botbase
+param n_ds_botbase scalar u64
+param node_x buffer i32 in count n_node_x
+param n_node_x scalar u64
+param node_y buffer i32 in count n_node_y
+param n_node_y scalar u64
+param node_dx buffer i32 in count n_node_dx
+param n_node_dx scalar u64
+param node_dy buffer i32 in count n_node_dy
+param n_node_dy scalar u64
+param node_child0 buffer u16 in count n_node_child0
+param n_node_child0 scalar u64
+param node_child1 buffer u16 in count n_node_child1
+param n_node_child1 scalar u64
+param node_bbox buffer i32 in count n_node_bbox
+param n_node_bbox scalar u64
+param num_nodes buffer u16 in count n_num_nodes
+param n_num_nodes scalar u64
+param spanstart buffer u16 inout count n_spanstart
+param n_spanstart scalar u64
+param cacheddistance buffer u32 inout count n_cacheddistance
+param n_cacheddistance scalar u64
+param cachedxstep buffer i32 inout count n_cachedxstep
+param n_cachedxstep scalar u64
+param cachedystep buffer i32 inout count n_cachedystep
+param n_cachedystep scalar u64
+param yslope buffer u32 in count n_yslope
+param n_yslope scalar u64
+param distscale buffer u32 in count n_distscale
+param n_distscale scalar u64
+param zlight buffer u8 in count n_zlight
+param n_zlight scalar u64
+param flattranslation buffer u8 inout count n_flattranslation
+param n_flattranslation scalar u64
+param span buffer i32 inout count n_span
+param n_span scalar u64
+param cap_span buffer u16 in count n_cap_span
+param n_cap_span scalar u64
+param skytexture buffer u8 in count n_skytexture
+param n_skytexture scalar u64
+param pspriteiscale buffer u32 in count n_pspriteiscale
+param n_pspriteiscale scalar u64
+param skytexturemid buffer u32 in count n_skytexturemid
+param n_skytexturemid scalar u64
+param vs_taken buffer u8 inout count n_vs_taken
+param n_vs_taken scalar u64
+param vs_sorted buffer u8 inout count n_vs_sorted
+param n_vs_sorted scalar u64
+param clipbot buffer i16 inout count n_clipbot
+param n_clipbot scalar u64
+param cliptop buffer i16 inout count n_cliptop
+param n_cliptop scalar u64
+param seg_frontsector buffer u8 in count n_seg_frontsector
+param n_seg_frontsector scalar u64
+param collump buffer i16 in count n_collump
+param n_collump scalar u64
+param col_base buffer u16 in count n_col_base
+param n_col_base scalar u64
+param lump_pos buffer u32 in count n_lump_pos
+param n_lump_pos scalar u64
+param zone_slots buffer u16 in count n_zone_slots
+param n_zone_slots scalar u64
+param lump_size buffer u32 in count n_lump_size
+param n_lump_size scalar u64
+param next_lump buffer i16 in count n_next_lump
+param n_next_lump scalar u64
+param zonebuf buffer u8 inout count n_zonebuf
+param n_zonebuf scalar u64
+param masked buffer i32 inout count n_masked
+param n_masked scalar u64
+param cap_masked buffer u16 in count n_cap_masked
+param n_cap_masked scalar u64
+param fuzzoffset buffer i8 in count n_fuzzoffset
+param n_fuzzoffset scalar u64
+param colofs buffer u16 in count n_colofs
+param n_colofs scalar u64
+param spr_lumppos buffer u32 in count n_spr_lumppos
+param n_spr_lumppos scalar u64
+param spr_lumpnum buffer u16 in count n_spr_lumpnum
+param n_spr_lumpnum scalar u64
+param spr_lumpend buffer u32 in count n_spr_lumpend
+param n_spr_lumpend scalar u64
+param state_sprite buffer u8 in count n_state_sprite
+param n_state_sprite scalar u64
+param state_frame buffer u16 in count n_state_frame
+param n_state_frame scalar u64
+param pspritescale buffer u32 in count n_pspritescale
+param n_pspritescale scalar u64
+param width buffer u16 in count n_width
+param n_width scalar u64
+param height buffer u8 in count n_height
+param n_height scalar u64
+param exec_atlas_size buffer u32 in count n_exec_atlas_size
+param n_exec_atlas_size scalar u64
+param exec_flat_size buffer u32 in count n_exec_flat_size
+param n_exec_flat_size scalar u64
+param xcount buffer u8 inout count n_xcount
+param n_xcount scalar u64
+param xyl buffer u16 inout count n_xyl
+param n_xyl scalar u64
+param xyh buffer u16 inout count n_xyh
+param n_xyh scalar u64
+param ycount buffer u8 inout count n_ycount
+param n_ycount scalar u64
+param yx1 buffer u16 inout count n_yx1
+param n_yx1 scalar u64
+param yx2 buffer u16 inout count n_yx2
+param n_yx2 scalar u64
+param mcount buffer u8 inout count n_mcount
+param n_mcount scalar u64
+param mlo buffer u16 inout count n_mlo
+param n_mlo scalar u64
+param mhi buffer u16 inout count n_mhi
+param n_mhi scalar u64
+param mseq buffer u16 inout count n_mseq
+param n_mseq scalar u64
+param mfz buffer i8 inout count n_mfz
+param n_mfz scalar u64
+param flat buffer u8 in count n_flat
+param n_flat scalar u64
+param exec_width buffer u16 in count n_exec_width
+param n_exec_width scalar u64
+param exec_centery buffer u8 in count n_exec_centery
+param n_exec_centery scalar u64
+param exec_vwx buffer u8 in count n_exec_vwx
+param n_exec_vwx scalar u64
+param exec_vwy buffer u8 in count n_exec_vwy
+param n_exec_vwy scalar u64
+param sb_backing buffer u8 inout count n_sb_backing
+param n_sb_backing scalar u64
+param old_arms buffer i8 inout count n_old_arms
+param n_old_arms scalar u64
+param old_keybox buffer i8 inout count n_old_keybox
+param n_old_keybox scalar u64
+param keyboxes buffer i8 inout count n_keyboxes
+param n_keyboxes scalar u64
+param tallnum buffer u16 in count n_tallnum
+param n_tallnum scalar u64
+param shortnum buffer u16 in count n_shortnum
+param n_shortnum scalar u64
+param armsgray buffer u8 in count n_armsgray
+param n_armsgray scalar u64
+param faces buffer u16 in count n_faces
+param n_faces scalar u64
+param keys buffer u16 in count n_keys
+param n_keys scalar u64
+param tallw buffer u8 in count n_tallw
+param n_tallw scalar u64
+param shortw buffer u8 in count n_shortw
+param n_shortw scalar u64
+param sbar buffer u8 in count n_sbar
+param n_sbar scalar u64
+param tallpercent buffer u16 in count n_tallpercent
+param n_tallpercent scalar u64
+param armsbg buffer u16 in count n_armsbg
+param n_armsbg scalar u64
+param pl_ammo buffer u8 in count n_pl_ammo
+param n_pl_ammo scalar u64
+param pl_maxammo buffer u16 in count n_pl_maxammo
+param n_pl_maxammo scalar u64
+param pl_weaponowned buffer u8 in count n_pl_weaponowned
+param n_pl_weaponowned scalar u64
+param sb_shadow buffer u8 inout count n_sb_shadow
+param n_sb_shadow scalar u64
+param font_lump buffer u16 in count n_font_lump
+param n_font_lump scalar u64
+param hud_texts buffer u8 in count n_hud_texts
+param n_hud_texts scalar u64
+param hud_text_ofs buffer u16 in count n_hud_text_ofs
+param n_hud_text_ofs scalar u64
+param hud_sw buffer u16 in count n_hud_sw
+param n_hud_sw scalar u64
+param hud_scale buffer u8 in count n_hud_scale
+param n_hud_scale scalar u64
+param first scalar i32
+param health scalar i32
+param armorpoints scalar i32
+param ammokind scalar i32
+param viewx scalar i32
+param viewy scalar i32
+param viewz scalar i32
+param viewangle scalar i32

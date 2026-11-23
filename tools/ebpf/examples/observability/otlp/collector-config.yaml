@@ -1,0 +1,42 @@
+# OpenTelemetry Collector 設定 — spinel-ebpf OTLP export 受信用 (ADR-012 / P003 S1)
+#
+# 実 Collector で spinel-ebpf からの OTLP/HTTP+protobuf を受ける最小構成。
+# debug exporter で受信内容を stdout に詳細表示する (動作確認用)。
+#
+# 起動例 (docker):
+#   docker run --rm -p 4318:4318 -p 4317:4317 \
+#     -v "$PWD/examples/observability/otlp/collector-config.yaml:/etc/otelcol/config.yaml" \
+#     otel/opentelemetry-collector-contrib:latest --config /etc/otelcol/config.yaml
+#
+# 送信側 (S1 送信テストを実 Collector に向ける):
+#   OTLP_PORT=4318 OTLP_NO_MOCK=1 sh tests/runtime/run_otlp_send.sh
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  batch: {}
+
+exporters:
+  debug:
+    verbosity: detailed
+
+service:
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug]
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug]
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug]

@@ -1,0 +1,39 @@
+# examples/doom/core/sources.tsv — the packing manifest.
+#
+# Two columns, path and sha256, and THE ORDER IS THE PACKING ORDER.
+# tools/doom/pack-core.rb reads this with `--root examples/doom/core/src`,
+# refuses any .rb under that directory which is not listed, and refuses a
+# digest that does not match the bytes it read.
+#
+# `examples/doom/core/full/` is deliberately NOT under that root: it is Full's
+# side -- the session wrapper, resource preparation and the reference route --
+# and it is not packed into anything CORE compiles.
+#
+#path	sha256
+fixed.rb	de01ccc38fc45e9504f6148bdfb323c3d8301663f8f65457656c3308708e5a9d
+thinkers.rb	4afd2cf221b754d367e5896ac7b183e67adde8cf9378dbc00b1db3a8531c7408
+bspwalk.rb	a606d6a74539ca0b1d4699307a231b61bbe4974631f3ec1bbd021feb5019160a
+random.rb	41fb6f38d6126627f968313b94d5d7b8dbad63988e950b002a003beecdd4c11f
+source.rb	796f4fba9d28920d63601ee81346a5e2b498eb9e7a9b2b800e962521cfdc3da6
+zone.rb	1bf33c2177e488a09ed386f5fcf88125dc06c699c8982ab3600593b4e43b22b7
+executor.rb	cae9060eeb54c7796bd9353b918c491759948105f57ca1e38659473dff7db129
+jobs.rb	d80b9453895bcc0e5e711a3f3502465cdb948e24544b7f415f75cb51e2bfda91
+checks.rb	ccf251b8310b97e5a684c922287137e63467b5a77b2493389a568e41e3f23f1c
+planespan.rb	fc19b103f6b7ef96265d10b085b4227dd86333731bed22d2d36ad04124fbdf66
+planes.rb	de2e189d0a884dfd5c0a1f721d96178cc162a9fda010cf8b6c1bbbbbcb92f452
+statusbar.rb	a3e2d77b400d8d554a35b4cab74773cbb9d6f37723fdff649799a4c498fbb0d4
+hud.rb	0b809cedadeab130024bd2afc424f63c5b1a612ccdd54140821fa88656a730d8
+leaves.rb	11e38d4eae3bab5a05f8bae798e3609619a2ed73d9d8a88356777392569722da
+segs.rb	45dd4d59bd2046e570f0f7a805614c9312201ad2d0cbc1d89b49e5afcd738d7b
+stepcore.rb	0fea3b3866fca28e1280ba2d13084557d4f39632cca0aadd2c17edf58490a9cb
+stepwork.rb	86ecf4900bea28449804be762d0f34c2cb82c5fd9d33923d8eb2fd88fc3a00db
+stepmap.rb	423f9a2b0e280ff6c318e26a715722ae1dc6603d2f8715420ed455a4d5614b9f
+stepspec.rb	a4808bad43b37d7239e1b4363fbb9bc75b003659af2b802b84f2731e96001608
+stepaux.rb	5077892e9f283feeccbd81af21268c32a56251e43dff732880c5927144677f4d
+stepknot.rb	9c034d22f1b6c891663440736a5a345bb2a369f5af43795f626f71fcf47d93ce
+stepplay.rb	1f2d94f6c458c018173464b4a855584c7f1cbc6148b742991f19ee7996103dfe
+rvcopies.rb	fade4d978817de5e3ebe8a785b68d618fe33ce6268df03be0588bc8e633df072
+rview.rb	d13f6215bf603318e44dcde21adfac8498d7f5ae49670e8b0449ce14eaa81e49
+rvgpu.rb	1a11d03dd091b5d748ab49d5e7cf999e2e7b67fdf72fd3a713932e5e3b08e4d3
+inputport.rb	66fd92b3b9ee35e633d9553a9bd9988be8752d6ae2f39646e50871b4c385c33b
+doomentry.rb	e2947b8a398455e548089e722e5686a5de4c310ebc2584f05cab3a8e93e69f9d

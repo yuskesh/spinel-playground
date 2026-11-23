@@ -1,0 +1,8 @@
+gate	run	verdict	detail
+S1	0	OK	0 increase(s) over 2 accepted steps
+S2	0	OK	0 non-negative directional derivative(s)
+S1	1	OK	0 increase(s) over 2 accepted steps
+S2	1	OK	0 non-negative directional derivative(s)
+S1	2	OK	0 increase(s) over 2 accepted steps
+S2	2	OK	0 non-negative directional derivative(s)
+S3	-	OK	search best 0 vs random control best 0.144786

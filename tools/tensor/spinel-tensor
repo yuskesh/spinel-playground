@@ -1,0 +1,83 @@
+#!/bin/sh
+# tools/tensor/spinel-tensor -- the tensor lane's front: the native importer,
+# then one .vmfb per backend.
+#
+#   spinel-tensor SOURCE --tensor [importer options...] \
+#                 [--iree-compile PATH --vmfb NAME]
+#
+# Everything except --iree-compile / --vmfb goes to
+# tools/mlir/native/build/bin/spinel-tensor-import unchanged (its "product
+# spelling": SOURCE --tensor ...). With --vmfb NAME, the module the importer
+# wrote (-o) is then compiled once per backend:
+#
+#   NAME_cpu.vmfb    iree-compile --iree-hal-target-backends=llvm-cpu
+#   NAME_metal.vmfb  iree-compile --iree-hal-target-backends=metal-spirv
+#                                 --iree-metal-compile-to-metallib=false
+#   NAME_cuda.vmfb   iree-compile --iree-hal-target-backends=cuda
+#
+# Why this exists: in spinel-llvm, `spinel-mlirgen --tensor ... --vmfb` did this
+# step in its Python generator. The native importer refuses --vmfb and
+# --iree-compile ("Python options"), and E176 retired the Python, so at
+# 463d49dd the examples that asked for --vmfb no longer built. The commands here
+# are the retired generator's own (spinel-mlirgen.py before 974aded6, the
+# `if args.vmfb:` block), including its rule for sources: a program whose
+# lowering depends on the device (`pad_via: :auto`) gets one module per device
+# profile -- the importer writes OUT.cpu.EXT and OUT.metal.EXT instead of OUT --
+# and each backend is compiled from its own profile's module; otherwise both
+# come from the one device-free module.
+#
+# --iree-metal-compile-to-metallib=false embeds the Metal shader source, which
+# the device compiles at load time; it needs no Metal toolchain on the build
+# machine. spinel-llvm verified both this and the metallib path (E027).
+#
+# The CUDA module takes the GPU profile's source (the `metal` one, when the
+# importer split by device): `pad_via: :auto` picks between two lowerings that
+# compute the same result, and it has not been measured on CUDA. An iree-compile
+# without the cuda backend writes no NAME_cuda.vmfb and says so.
+set -eu
+HERE=$(cd "$(dirname "$0")" && pwd)
+ROOT=$(cd "$HERE/../.." && pwd)
+IMPORT=${SPINEL_TENSOR_IMPORT:-${SPINEL_CORE_BUILD:-$ROOT/tools/mlir/native/build}/bin/spinel-tensor-import}
+[ -x "$IMPORT" ] || { echo "spinel-tensor: no importer at $IMPORT (tools/mlir/native/build.sh)" >&2; exit 2; }
+
+ic=; vmfb=; out=; n=$#
+# Walk the arguments once, keeping everything but the two IREE options, and
+# remembering -o. Re-set as "$@" so that no argument is word-split.
+i=0
+while [ "$i" -lt "$n" ]; do
+  a=$1; shift; i=$((i + 1))
+  case "$a" in
+    --iree-compile) ic=$1; shift; i=$((i + 1)); continue ;;
+    --vmfb)         vmfb=$1; shift; i=$((i + 1)); continue ;;
+    -o)             out=$1; set -- "$@" -o "$1"; shift; i=$((i + 1)); continue ;;
+  esac
+  set -- "$@" "$a"
+done
+
+"$IMPORT" "$@"
+
+[ -n "$vmfb" ] || exit 0
+[ -n "$ic" ] && [ -x "$ic" ] || { echo "spinel-tensor: --vmfb needs --iree-compile <path to iree-compile>" >&2; exit 2; }
+[ -n "$out" ] || { echo "spinel-tensor: --vmfb needs -o, the module the importer writes" >&2; exit 2; }
+# The module for one backend: its own profile's, when the importer split the
+# program by device, else the single one (the retired generator's prof_path).
+src_for() {  # tag
+  root=${out%.*}; ext=${out##*.}
+  if [ -f "$root.$1.$ext" ]; then echo "$root.$1.$ext"
+  elif [ -f "$out" ]; then echo "$out"
+  else echo "spinel-tensor: no module for $1: neither $root.$1.$ext nor $out was written" >&2; exit 2; fi
+}
+src=$(src_for cpu)
+"$ic" --iree-hal-target-backends=llvm-cpu "$src" -o "${vmfb}_cpu.vmfb"
+echo "spinel-tensor: wrote ${vmfb}_cpu.vmfb (from $src)" >&2
+src=$(src_for metal)
+"$ic" --iree-hal-target-backends=metal-spirv --iree-metal-compile-to-metallib=false \
+  "$src" -o "${vmfb}_metal.vmfb"
+echo "spinel-tensor: wrote ${vmfb}_metal.vmfb (from $src)" >&2
+if "$ic" --iree-hal-list-target-backends 2>/dev/null | grep -qx '  *cuda'; then
+  src=$(src_for metal)
+  "$ic" --iree-hal-target-backends=cuda "$src" -o "${vmfb}_cuda.vmfb"
+  echo "spinel-tensor: wrote ${vmfb}_cuda.vmfb (from $src)" >&2
+else
+  echo "spinel-tensor: no ${vmfb}_cuda.vmfb: this iree-compile has no cuda backend" >&2
+fi

@@ -1,0 +1,7 @@
+require 'json';require 'digest';require 'fileutils';require 'open3';require_relative '../../scripts/lib/consumer-sanitizers';require_relative '../../scripts/lib/typing-probe'
+tool,source,bad,out=ARGV;raise 'fresh audit' if File.exist?(out);FileUtils.mkdir_p(out+'/tmp');File.write(out+'/not-dir','x');env=ConsumerSanitizers.environment;rows=[]
+cases=[['success',source,0,{}],['child-failure',bad,1,{}],['temp-failure',source,1,{'TMPDIR'=>out+'/not-dir'}]]
+cases.each do |name,input,expected,extra|
+ argv=['/usr/bin/timeout','--kill-after=5s','60s',tool,'--emit-mlir='+out+'/'+name+'.mlir','--analysis-root=target:obj_Seed','--emit-typing-probe',input];effective=env.merge('TMPDIR'=>out+'/tmp').merge(extra);o,e,st=Open3.capture3(effective,*argv,unsetenv_others:true,rlimit_core:0);File.write(out+'/'+name+'.stdout',o);File.write(out+'/'+name+'.stderr',e);reports=ConsumerSanitizers.classify(e);rows<<{name:name,argv:argv,environment:effective,rc:st.exitstatus,signal:st.termsig,reports:reports};File.write(out+'/ledger.json',JSON.pretty_generate(rows)+"\n");raise 'sanitizer finding '+name unless st.exitstatus==expected&&!st.termsig&&reports.empty?&&o.empty?;TypingProbe.read(out+'/'+name+'.mlir',required:true) if expected==0
+end
+File.write(out+'/summary.json',JSON.pretty_generate({cases:3,reports:0,signals:0,all_expected:true,producer_sha256:Digest::SHA256.file(tool).hexdigest})+"\n");puts File.read(out+'/summary.json')

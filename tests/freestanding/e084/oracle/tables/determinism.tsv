@@ -1,0 +1,15 @@
+check	verdict	detail
+generator_determinism	PASS	the .ll is byte-identical across runs
+gradfs_determinism	PASS	grad.o (adjoint+hvp) byte-identical across runs
+g5_kernel_loop.arm64-host	PASS	0 fast-math sites in the kernel .ll (Newton-CG loop included)
+g5_adjoint_and_hvp.arm64-host	PASS	gradfs reports 0 fast-math sites (reverse AND forward-over-reverse)
+fwd_adjoint_present.arm64-host	PASS	fwddiffediffesp_sq_hinge_loss,fwddiffediffespinel_sq_hinge_l...
+g5_kernel_loop.cortex-m33-zephyr	PASS	0 fast-math sites in the kernel .ll (Newton-CG loop included)
+g5_adjoint_and_hvp.cortex-m33-zephyr	PASS	gradfs reports 0 fast-math sites (reverse AND forward-over-reverse)
+fwd_adjoint_present.cortex-m33-zephyr	PASS	fwddiffediffesp_sq_hinge_loss,fwddiffediffespinel_sq_hinge_l...
+g5_kernel_loop.riscv32-zephyr	PASS	0 fast-math sites in the kernel .ll (Newton-CG loop included)
+g5_adjoint_and_hvp.riscv32-zephyr	PASS	gradfs reports 0 fast-math sites (reverse AND forward-over-reverse)
+fwd_adjoint_present.riscv32-zephyr	PASS	fwddiffediffesp_sq_hinge_loss,fwddiffediffespinel_sq_hinge_l...
+g5_kernel_loop.wasm32-worker	PASS	0 fast-math sites in the kernel .ll (Newton-CG loop included)
+g5_adjoint_and_hvp.wasm32-worker	PASS	gradfs reports 0 fast-math sites (reverse AND forward-over-reverse)
+fwd_adjoint_present.wasm32-worker	PASS	fwddiffediffesp_sq_hinge_loss,fwddiffediffespinel_sq_hinge_l...

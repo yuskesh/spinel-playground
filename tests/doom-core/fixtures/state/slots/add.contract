@@ -1,0 +1,19 @@
+core-contract 1
+root slots/add_entry.rb
+entry dc_add_thinker
+result i64
+param th_free buffer i64 inout count n_th_free
+param n_th_free scalar u64
+param th_prev buffer i64 inout count n_th_prev
+param n_th_prev scalar u64
+param th_alloc buffer i64 inout count n_th_alloc
+param n_th_alloc scalar u64
+param th_func buffer i64 inout count n_th_func
+param n_th_func scalar u64
+param th_data buffer i64 inout count n_th_data
+param n_th_data scalar u64
+param th_next buffer i64 inout count n_th_next
+param n_th_next scalar u64
+param cap scalar i64
+param func scalar i64
+param data scalar i64

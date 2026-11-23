@@ -1,0 +1,1 @@
+// RUN: ruby %src/xdpcount.rb %build %src

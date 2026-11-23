@@ -1,0 +1,7 @@
+core-contract 1
+root refuse/ro_opassign.rb
+entry ro_opassign
+result i64
+param buf buffer i32 in count n_buf
+param n_buf scalar u64
+param i scalar i64

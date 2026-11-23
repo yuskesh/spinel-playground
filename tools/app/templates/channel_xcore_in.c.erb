@@ -1,0 +1,107 @@
+/* generated from tools/app/templates/channel_xcore_in.c.erb: the get of
+ * channel `<%= c.name %>` (decision 0014 §5), whose producer is the other
+ * core: on a board whose table names `udp_consumer ocram-ring-v1`, a `udp:`
+ * :in channel's messages are the datagrams the M33's network firmware
+ * (tools/app/launcher) received and put, verbatim, into the inbound OCRAM
+ * ring of tools/app/ring/ring_abi.h (version 5; decision 0025). The get's
+ * contract is 0014's: the message's length, at least 1, or 0 when the ring
+ * is empty; the buffer holds at least `size` bytes, which the build checked
+ * (the `channel-buffer` static).
+ *
+ * The ring's geometry is this channel's: depth <%= c.depth %>, slot stride
+ * <%= stride %>, at most <%= c.size %> bytes, the slots at <%= offset %>. The
+ * M33 initialises it before it releases this core;
+ * spc_channel_<%= c.name %>_check() reads it back at boot (main.c) and, when
+ * anything differs, every get answers 0 and the console says
+ * SPC_RING_REFUSED. A get reads in_head, a barrier, answers 0 when it equals
+ * this core's tail, checks the slot's length, copies the message out, a
+ * barrier, then stores in_tail + 1; it is this core's only writer of in_tail
+ * (one consumer context, 0014 §5). A length of 0 or above `size` is the
+ * producer's fault: the get answers 0 from then on, and in_consumer_state
+ * says so.
+ *
+ * The labels around the copy and the publication are those of every
+ * channel's get (the plan's "Channels"); there is no put on this core. */
+#include <stdint.h>
+#include "ring/ring_abi.h"
+#include "channel_<%= c.name %>.h"
+
+#if defined(__APPLE__)
+#define SPC_SYM(name) "_" name
+#else
+#define SPC_SYM(name) name
+#endif
+#define SPC_LABEL(name) __asm__ volatile(".globl " SPC_SYM(name) "\n" SPC_SYM(name) ":" ::: "memory")
+#define SPC_W ((volatile uint32_t *)SPC_RING_M7_BASE)
+#define SPC_DEPTH <%= c.depth %>u
+#define SPC_STRIDE <%= stride %>u
+#define SPC_MAX_LEN <%= c.size %>u
+#define SPC_OFFSET <%= offset %>u
+#define SPC_IN_TAKING 1u
+#define SPC_IN_FAULT 3u
+
+static uint32_t spc_tail;   /* this core's copy: the only writer */
+static uint8_t spc_ready;   /* 1 once the check found the ring this channel's; 0 again after a fault */
+
+/* 0 when the inbound ring is the one this channel was generated for;
+ * otherwise the first word that differs, numbered as ring_abi.h's offsets,
+ * plus 1 */
+int32_t spc_channel_<%= c.name %>_check(void)
+{
+	static const uint32_t want[][2] = {
+		{ SPC_RING_W_MAGIC, SPC_RING_MAGIC }, { SPC_RING_W_VERSION, SPC_RING_ABI_VERSION },
+		{ SPC_RING_W_IN_DEPTH, SPC_DEPTH }, { SPC_RING_W_IN_STRIDE, SPC_STRIDE },
+		{ SPC_RING_W_IN_MAX_LEN, SPC_MAX_LEN }, { SPC_RING_W_IN_OFFSET, SPC_OFFSET },
+	};
+
+	for (uint32_t i = 0; i < sizeof want / sizeof want[0]; i++) {
+		uint32_t v = spc_ring_load(SPC_W, want[i][0]);
+
+		spc_ring_dmb(); /* magic first: the rest after it */
+		if (v != want[i][1]) {
+			return (int32_t)want[i][0] + 1;
+		}
+	}
+	if (!spc_ring_geometry_ok(SPC_DEPTH, SPC_STRIDE, SPC_MAX_LEN, SPC_OFFSET)) {
+		return -1;
+	}
+	spc_tail = spc_ring_load(SPC_W, SPC_RING_W_IN_TAIL);
+	spc_ring_store(SPC_W, SPC_RING_W_IN_CONSUMER_STATE, SPC_IN_TAKING);
+	spc_ready = 1u;
+	return 0;
+}
+
+__attribute__((noinline))
+int32_t spc_channel_<%= c.name %>_get(uint8_t *data, uint32_t data_len)
+{
+	uint32_t head, n;
+	volatile uint8_t *slot;
+
+	(void)data_len; /* the build established len(data) >= size */
+	if (!spc_ready) {
+		return 0;
+	}
+	head = spc_ring_load(SPC_W, SPC_RING_W_IN_HEAD);
+	spc_ring_dmb();
+	if (head == spc_tail) {
+		return 0;
+	}
+	slot = spc_ring_slot(SPC_W, SPC_OFFSET, SPC_STRIDE, SPC_DEPTH, spc_tail);
+	n = *(volatile uint32_t *)slot;
+	if (head - spc_tail > SPC_DEPTH || n == 0u || n > SPC_MAX_LEN) {
+		spc_ready = 0u;
+		spc_ring_store(SPC_W, SPC_RING_W_IN_CONSUMER_STATE, SPC_IN_FAULT);
+		return 0;
+	}
+	SPC_LABEL("spc_ring_<%= c.name %>_get_copy_begin");
+	for (uint32_t i = 0; i < n; i++) {
+		data[i] = slot[4u + i];
+	}
+	SPC_LABEL("spc_ring_<%= c.name %>_get_copy_end");
+	spc_ring_dmb();
+	SPC_LABEL("spc_ring_<%= c.name %>_get_pub_begin");
+	spc_tail++;
+	spc_ring_store(SPC_W, SPC_RING_W_IN_TAIL, spc_tail);
+	SPC_LABEL("spc_ring_<%= c.name %>_get_pub_end");
+	return (int32_t)n;
+}

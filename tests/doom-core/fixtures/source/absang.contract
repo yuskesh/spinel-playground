@@ -1,0 +1,5 @@
+core-contract 1
+root src/packed.rb
+entry dc_sp_absang
+result i64
+param u scalar i64

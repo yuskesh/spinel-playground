@@ -1,0 +1,9 @@
+sprnames=138 states=967 mobjinfo=137
+sprname[0]=TROO sprname[3]=PISG sprname[137]=TLP2
+state12=3,0,1,12
+mobj0=-1,149,1048576,3670016,33557510
+mobj1=3004,174,1310720,3670016,4194310
+states_checksum=107414325 mobjinfo_checksum=441506589
+spot packed==linuxdoom: same=3990 diff=10
+spot_packed sample=2304
+spot_linuxdoom sample=2305

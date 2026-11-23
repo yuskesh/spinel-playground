@@ -1,0 +1,11 @@
+core-contract 1
+root src/packed.rb
+entry dc_sp_clipv
+result i64
+param openings buffer i16 in count n_openings
+param n_openings scalar u64
+param viewheight buffer u8 in count n_viewheight
+param n_viewheight scalar u64
+param kind scalar i64
+param base scalar i64
+param x scalar i64

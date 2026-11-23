@@ -1,0 +1,32 @@
+# E083: E079's arm64-host.yaml plus the adjoint as a platform extern with
+# buffer parameters.  The HOST leg of the four-way oracle -- NOT a deployment
+# profile (nothing ships a freestanding kernel to macOS); see E079's file for
+# why `spinel_trap` is allowed in both Mach-O spellings.
+target:
+  triple: arm64-apple-macosx14.0.0
+  data_layout: "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32"
+  cflags:
+    - -O2
+abi:
+  boundary: c-abi
+  int_width: i64-internal
+  overflow: trap
+  trap_hook: spinel_trap
+runtime:
+  libc: none
+  libm: none
+  compiler_rt: allow
+platform:
+  type: none
+  externs:
+    - spinel_trap
+    - _spinel_trap
+    # Mach-O prefixes C identifiers with `_` and undef-check compares raw
+    # strings (E079 Honest boundary) -- the host-only profile carries the
+    # second spelling of the adjoint symbol for the same reason it carries
+    # _spinel_trap.
+    - _spinel_grad_sq_hinge_loss
+    - name: grad_loss
+      symbol: spinel_grad_sq_hinge_loss
+      params: [[f64_buf, in], len, [f64_buf, in], [f64_buf, out], len]
+      returns: f64

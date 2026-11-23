@@ -1,0 +1,6 @@
+core-contract 1
+root refuse/op_assign_short_circuit.rb
+entry short_circuit
+result i64
+param a scalar i64
+param b scalar i64

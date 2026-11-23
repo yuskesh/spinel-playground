@@ -1,0 +1,4 @@
+SELECT	0	0	clock=1000	release=1	skipped_from=0	skipped_to=0
+SELECT	0	1	clock=2500	release=2	skipped_from=1	skipped_to=1
+SELECT	0	0	clock=2500	release=2	skipped_from=0	skipped_to=0
+summary selected 5 skipped 1 cancelled 0 cut 0

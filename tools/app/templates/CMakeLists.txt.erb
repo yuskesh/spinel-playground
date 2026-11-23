@@ -1,0 +1,25 @@
+# generated from tools/app/templates/CMakeLists.txt.erb by spinel-core-app build:
+# the fixed skeleton of decision 0014 §8 step 2. It names the objects the
+# later steps produce and depends on no CORE output; west links them.
+cmake_minimum_required(VERSION 3.20.0)
+find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
+project(<%= app_name %>)
+# one placeholder source, so the app target exists and its compile line is
+# recorded for the clang builds of the glue and the providers
+target_sources(app PRIVATE src/spc_placeholder.c)
+# the objects, from the cache or, in a sysbuild with a launcher (decision
+# 0023), from this image's <image>_SPC_OBJECTS
+zephyr_get(SPC_OBJECTS SYSBUILD LOCAL)
+if(DEFINED SPC_OBJECTS AND NOT SPC_OBJECTS STREQUAL "")
+  # as SOURCES of the app library, not as link items of it: a prebuilt object
+  # listed on the link line after Zephyr's archives cannot pull a member out
+  # of one it is the first to need, and `libapp.a` sits inside the link group
+  # where the archives are rescanned. (Found in Task 12: an application whose
+  # glue was the only caller of k_timer_start failed to link, while one whose
+  # drivers also called it linked, which is ordering and not a difference
+  # between the applications.)
+  target_sources(app PRIVATE ${SPC_OBJECTS})
+endif()
+<% wrap.each do |sym| %># a verification build (Task 11): the recording wrapper of <%= sym %> replaces the symbol at link
+zephyr_link_libraries(-Wl,--wrap=<%= sym %>)
+<% end %>

@@ -1,0 +1,37 @@
+# Cortex-M33 (ARMv8-M mainline, soft-float) with no RTOS: the bm040 lane.
+#
+# The target and ABI are cortex-m33-zephyr.yaml's, so the kernel object is
+# built the same way; only the platform differs. Nothing here is Zephyr's: the
+# lane's own startup code, linker script and UART writer are the platform, and
+# the compiler runtime is compiler-rt's builtins, built from the LLVM 23.1.1
+# sources (docs/toolchains/compiler-rt-23.1.1).
+
+target:
+  triple: thumbv8m.main-none-eabi
+  cpu: cortex-m33
+  data_layout: "e-m:e-p:32:32-Fi8-i64:64-v128:64:128-a:0:32-n32-S64"
+  cflags:
+    - -mcpu=cortex-m33+nodsp
+    - -mfloat-abi=soft
+    - -fshort-enums
+    - -Os
+
+abi:
+  boundary: c-abi
+  int_width: i32-internal
+  overflow: trap
+  trap_hook: spinel_trap
+
+runtime:
+  libc: none
+  libm: none
+  # compiler-rt's builtins: i64 division (__aeabi_ldivmod) is the usual
+  # customer, the standing cost of decision D-1.
+  compiler_rt: allow
+
+platform:
+  type: none
+  # The trap hook is the only thing the kernel may call outside itself; the
+  # lane's driver defines it.
+  externs:
+    - spinel_trap

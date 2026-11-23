@@ -1,0 +1,109 @@
+# tools/platform/arena.yaml -- THE arena-tier name table (arenacheck's ledger).
+# (Puts "the entry fee for a program that declares the arena tier" into one file.)
+#
+# Where menus.yaml is the ledger of "platform -> the set of capabilities it supplies", this file
+# is the ledger of "the names refused under tier arena, and why". They are kept apart
+# because they answer different questions: menus is where capabilities live, this is a property of the tier. Both
+# are read by the one loader in tools/platform/spinel_platform.py, so the build and
+# the gate never read different facts (the same discipline as the platform menus).
+#
+# Rule: refused names are written here, by name. The code of spinel_platform.py / spinel-capcheck
+# holds not one spelling of GC or ObjectSpace (the same reason the platform work did not
+# bake "cloudflare/* => workers only" into code --
+# when the vendor adds a feature, THIS FILE alone should be what changes).
+
+# --------------------------------------------------------------------------
+# (1) Names that depend on GC semantics (property (1) of the arena tier)
+# --------------------------------------------------------------------------
+# Under arena collect() never runs (lib/sp_gc.c: with SP_REQUEST_ARENA,
+# sp_gc_collect returns at once -- the one switch of the arena patch). So
+# these names do not "fail to work"; they **silently mean something else**. Only for a program that
+# declares tier arena, they are refused loudly at build time.
+#
+# The check is "a mention of the constant" (the name of a ConstantReadNode). Method names
+# are not listed because the fact that only GC.start/compact/stat are accepted today
+# is just the state of the vendor's implementation, and whatever is added next must not pass silently
+# (the name table must be closed against future additions).
+gc_semantics:
+  constants:
+    GC:
+      # note: one clause carried on the refusal line (short). why: the reason, for readers of the ledger (long).
+      note: "GC.start/compact are no-ops under arena, GC.stat is a counter with no collections"
+      why: >-
+        GC.start / GC.compact compile to sp_gc_collect_request(), GC.stat
+        to sp_gc_stat() (codegen_call.c). Under arena the former are
+        no-ops and the latter returns a counter with no collections -- measured.
+        Every other GC.* fails today in the vendor as an unsupported call, but
+        the whole constant is in the table so that additions do not pass silently.
+    ObjectSpace:
+      note: "each_object/define_finalizer/count_objects/WeakMap assume a ledger of live objects"
+      why: >-
+        each_object / define_finalizer / count_objects / WeakMap. Today
+        the existing whole-AOT refusal (codegen_call.c, tier-independent) fails them first, so
+        this is not a hole particular to arena, but dropping them from the table would go back to
+        "once the vendor implements it, it passes silently under arena".
+    WeakRef:
+      note: "a weak reference is GC reachability itself (a run-time NameError today; once implemented it cannot mean anything under arena)"
+      why: >-
+        The vendor has no implementation; today **the build passes and it is a run-time NameError**
+        (measured -- not a build-time refusal). A weak reference is GC
+        reachability itself, so once implemented it cannot mean anything under arena.
+  # Names not in the table above but easily mistaken for "dependent on GC semantics" (recorded only,
+  # not refused):
+  #   - Kernel#define_finalizer (no receiver) -- an unsupported call today.
+  #     Its spelling can clash with a user-defined method, so names without a constant
+  #     do not go into this table (a false positive does more harm).
+  #   - Object#object_id -- accepted and works. Uniqueness holds under arena too
+  #     (there is no compaction, so it is even simpler than under full).
+  #   - TracePoint / Continuation -- refused by the whole AOT already, but the reason is not GC;
+  #     it is the absence of an interpreter loop. Not a matter of tiers, so not listed.
+
+# --------------------------------------------------------------------------
+# (2) Escapes that outlive the request (property (2) of the arena tier)
+# --------------------------------------------------------------------------
+escape:
+  # The kinds of scope checked. Today's arena patch is "1 request = 1 process", so
+  # there is no real harm yet (everything vanishes when the process ends). This check guards
+  #   (a) dangling references once isolate reuse (Dynamic Workers) arrives,
+  #   (b) the boundary check of the reserved arena+GC mixed tier
+  # and putting the rule in place first has value (the opposite of Rust relying on declarations
+  # and taking 9 years to reach static checking).
+  scopes:
+    global:
+      action: reject
+      why: >-
+        $gvar is the canonical spelling of "resident mutable state", exactly the subject
+        of the escape case. In the mixed tier it is the first candidate for the resident side, and an arena
+        object reference put there dangles when the arena is freed at once.
+    constant:
+      action: allow
+      why: >-
+        Not refused for now. Three reasons: (i) a constant is the spelling of "an immutable table
+        initialized once", and in the mixed tier it is **a candidate for the resident side**, not the arena
+        side -- the escape goes the other way, (ii) with today's 1 request =
+        1 process a constant is also initialized within the request and has the same
+        lifetime as a global, (iii) refusing it would drastically cut the ordinary programs that can be written under arena,
+        turning the check from "an entry fee" into "a road block".
+        Revisited when the resident side's allocation rule is decided for the mixed tier.
+    class_variable:
+      action: allow
+      why: >-
+        Same as above (@@x). As resident mutable state it has the same shape as a global, but
+        in Spinel it is mostly spelled as an initializer that runs once in a class body,
+        so it is treated like a constant. Refusing globals already closes the escape case's shape.
+        Revisited with the mixed tier.
+  # "Err on the safe side" = pass only types known to be unboxed; everything else (unknown /
+  # poly / heap types) is refused. It is an allow-list, so when the vendor adds a TyKind
+  # the new type falls on the refused side by default.
+  unboxed_types: [int, float, bool, nil]
+  # Handles the runtime owns. The program does not own their lifetime, so they are not
+  # the subject of "storage that outlives the request". Only writes (assignments) are
+  # checked, so a **reference** like $stdout.write never hits it.
+  exempt_globals:
+    - $stdout
+    - $stderr
+    - $stdin
+    - $0
+    - $PROGRAM_NAME
+    - $LOAD_PATH
+    - $LOADED_FEATURES

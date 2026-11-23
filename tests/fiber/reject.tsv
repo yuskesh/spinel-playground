@@ -1,0 +1,34 @@
+# file	line:col	text the spinel-fiber diagnostic must contain (written by hand)
+block.rb	2:3	inside a block passed to `map`
+yieldcall_block.rb	4:17	inside a block passed to `map`
+rescue.rb	2:3	inside begin/rescue/ensure
+multi.rb	1:17	several values
+params.rb	1:15	at most one plain parameter
+send.rb	4:17	reached through send cannot be resolved
+current.rb	1:17	Fiber.current is not supported
+transfer.rb	2:1	Fiber#transfer is not supported
+fraise.rb	4:1	Fiber#raise is not supported
+colon_current.rb	1:19	Fiber.current is not supported
+order.rb	6:14	which Ruby evaluates first
+cond.rb	2:7	inside And is not supported
+merged.rb	2:15	has the name of a local of the enclosing fiber body
+cap_after.rb	3:1	`n` is used by the Enumerator.new block at line 2 and assigned after it
+cap_loop.rb	5:3	`i` is used by the Fiber.new block at line 4 and assigned after it
+cap_assign.rb	3:3	the Enumerator.new block assigns `t`, a local of the scope around it
+yielder_escape.rb	4:31	the yielder `y` may only receive `<<` or `yield`
+yielder_chain.rb	2:3	chained `y << a << b` is not supported
+enum_noblock.rb	1:5	Enumerator.new needs a block
+enum_size.rb	1:5	Enumerator.new with a size argument is not supported
+enum_noparam.rb	1:20	an Enumerator.new block takes exactly one plain parameter
+enum_fiberyield.rb	2:3	Fiber.yield and calls to yielding methods are not supported inside an Enumerator.new block
+enum_block.rb	3:3	inside a block passed to `map`
+cap_proc.rb	4:17	`x` is used by the Enumerator.new block at line 5 and assigned inside a block or lambda before it
+cap_retry_nested.rb	6:5	`x` is used by the Enumerator.new block at line 7 and assigned in a loop, block or retried begin around it
+override_mismatch.rb	8:3	`step` yields in Base but not in Quiet
+module_yield.rb	6:3	neither a top-level def nor an instance method of a top-level class
+mod_override.rb	13:3	this `step` is outside a top-level class and may override the yielding method `step` of C
+include_override.rb	13:3	include in a class that inherits or defines a yielding method
+attr_override.rb	13:3	attr_reader makes `step`, the name of a yielding method of C
+extend_override.rb	15:1	extend may put a module's method in front of a yielding method
+nested_override.rb	14:5	this `step` is outside a top-level class
+define_override.rb	14:3	define_method with a computed name may make the name of a yielding method

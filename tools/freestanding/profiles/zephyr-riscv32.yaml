@@ -1,0 +1,6 @@
+# T-5 canonical form of riscv32-zephyr.yaml (P008 Phase 1, E090).
+# See zephyr-cortex-m33.yaml for the reading; only the arch differs, which is
+# the whole point of the three-layer split the old files demonstrated.
+platform: zephyr
+arch: riscv32
+supplies: trap-only

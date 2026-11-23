@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+[[ ! -e "${E064_INITRD:?}" && ! -L "$E064_INITRD" ]] || exit 1
+exec /usr/bin/virtme-run --show-command --show-boot-console --save-initramfs "$E064_INITRD" "$@"

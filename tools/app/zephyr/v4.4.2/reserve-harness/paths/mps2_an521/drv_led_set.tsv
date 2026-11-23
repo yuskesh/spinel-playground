@@ -1,0 +1,2 @@
+function	source	note
+gpio_mmio32_port_set_masked_raw	su	https://github.com/zephyrproject-rtos/zephyr/blob/dccb09599635bdff17633fa7e9dab014b91dce90/drivers/gpio/gpio_mmio32.c#L99: gpio_pin_set_dt -> gpio_pin_set -> gpio_port_set_masked_raw (inline API, include/zephyr/drivers/gpio.h) -> the driver operation; the adapter's own frames are measured, this is Zephyr's part of Led.set

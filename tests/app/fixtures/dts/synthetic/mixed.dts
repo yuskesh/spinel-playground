@@ -1,0 +1,97 @@
+/dts-v1/;
+
+/* every class in one devicetree: two LEDs (one disabled), two buttons, two
+ * PWM channels, two ADC channels of one controller, with aliases and labels */
+/ {
+	compatible = "synthetic,mixed-board";
+	#address-cells = < 0x1 >;
+	#size-cells = < 0x1 >;
+
+	aliases {
+		led0 = &led_0;
+		sw0 = &button_0;
+		sw1 = &button_1;
+		pwm-led0 = &pwm_led0;
+	};
+
+	zephyr,user {
+		io-channels = < &adc0 0x0 >, < &adc0 0x3 >;
+		io-channel-names = "battery", "light";
+	};
+
+	soc {
+		#address-cells = < 0x1 >;
+		#size-cells = < 0x1 >;
+
+		systick: timer@e000e010 {
+			compatible = "arm,armv8m-systick";
+			reg = < 0xe000e010 0x10 >;
+			status = "okay";
+		};
+
+		gpio0: gpio@40000000 {
+			compatible = "nxp,kinetis-gpio";
+			reg = < 0x40000000 0x1000 >;
+			gpio-controller;
+			#gpio-cells = < 0x2 >;
+			status = "okay";
+		};
+
+		sctimer0: pwm@40030000 {
+			compatible = "nxp,sctimer-pwm";
+			reg = < 0x40030000 0x1000 >;
+			#pwm-cells = < 0x3 >;
+			status = "okay";
+		};
+
+		adc0: adc@40040000 {
+			compatible = "nxp,lpc-lpadc";
+			reg = < 0x40040000 0x1000 >;
+			#io-channel-cells = < 0x1 >;
+			status = "okay";
+		};
+	};
+
+	leds {
+		compatible = "gpio-leds";
+
+		led_0: led_0 {
+			gpios = < &gpio0 0x0 0x0 >;
+			label = "Green LED";
+		};
+
+		led_1: led_1 {
+			gpios = < &gpio0 0x1 0x0 >;
+			label = "Blue LED";
+			status = "disabled";
+		};
+	};
+
+	gpio_keys {
+		compatible = "gpio-keys";
+
+		button_0: button_0 {
+			gpios = < &gpio0 0x10 0x11 >;
+			label = "User SW0";
+		};
+
+		button_1: button_1 {
+			gpios = < &gpio0 0x11 0x11 >;
+			label = "User SW1";
+		};
+	};
+
+	pwmleds {
+		compatible = "pwm-leds";
+
+		pwm_led0: pwm_led_0 {
+			pwms = < &sctimer0 0x0 0x1e8480 0x0 >;
+			label = "PWM LED 0";
+		};
+
+		pwm_led1: pwm_led_1 {
+			pwms = < &sctimer0 0x1 0x1e8480 0x0 >;
+			label = "PWM LED 1";
+		};
+	};
+};

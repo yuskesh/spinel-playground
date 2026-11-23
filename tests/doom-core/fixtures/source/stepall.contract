@@ -1,0 +1,450 @@
+core-contract 1
+root src/packed.rb
+entry dc_sp_stepall
+result i64
+param state buffer i64 inout count n_state
+param n_state scalar u64
+param gx buffer i64 in count n_gx
+param n_gx scalar u64
+param args buffer i64 in count n_args
+param n_args scalar u64
+param activeplats buffer i64 inout count n_activeplats
+param n_activeplats scalar u64
+param anim_basepic buffer i64 inout count n_anim_basepic
+param n_anim_basepic scalar u64
+param anim_istexture buffer i64 inout count n_anim_istexture
+param n_anim_istexture scalar u64
+param anim_numpics buffer i64 inout count n_anim_numpics
+param n_anim_numpics scalar u64
+param anim_speed buffer i64 inout count n_anim_speed
+param n_anim_speed scalar u64
+param blocklinks buffer i64 inout count n_blocklinks
+param n_blocklinks scalar u64
+param blockmap buffer i64 inout count n_blockmap
+param n_blockmap scalar u64
+param blockmap_off buffer i64 inout count n_blockmap_off
+param n_blockmap_off scalar u64
+param bmapheight buffer i64 inout count n_bmapheight
+param n_bmapheight scalar u64
+param bmaporgx buffer i64 inout count n_bmaporgx
+param n_bmaporgx scalar u64
+param bmaporgy buffer i64 inout count n_bmaporgy
+param n_bmaporgy scalar u64
+param bmapwidth buffer i64 inout count n_bmapwidth
+param n_bmapwidth scalar u64
+param button_line buffer i64 inout count n_button_line
+param n_button_line scalar u64
+param button_texture buffer i64 inout count n_button_texture
+param n_button_texture scalar u64
+param button_timer buffer i64 inout count n_button_timer
+param n_button_timer scalar u64
+param button_where buffer i64 inout count n_button_where
+param n_button_where scalar u64
+param dr_direction buffer i64 inout count n_dr_direction
+param n_dr_direction scalar u64
+param dr_sector buffer i64 inout count n_dr_sector
+param n_dr_sector scalar u64
+param dr_speed buffer i64 inout count n_dr_speed
+param n_dr_speed scalar u64
+param dr_th buffer i64 inout count n_dr_th
+param n_dr_th scalar u64
+param dr_topcountdown buffer i64 inout count n_dr_topcountdown
+param n_dr_topcountdown scalar u64
+param dr_topheight buffer i64 inout count n_dr_topheight
+param n_dr_topheight scalar u64
+param dr_topwait buffer i64 inout count n_dr_topwait
+param n_dr_topwait scalar u64
+param dr_type buffer i64 inout count n_dr_type
+param n_dr_type scalar u64
+param ff_count buffer i64 inout count n_ff_count
+param n_ff_count scalar u64
+param ff_maxlight buffer i64 inout count n_ff_maxlight
+param n_ff_maxlight scalar u64
+param ff_minlight buffer i64 inout count n_ff_minlight
+param n_ff_minlight scalar u64
+param ff_sector buffer i64 inout count n_ff_sector
+param n_ff_sector scalar u64
+param finesine buffer i64 inout count n_finesine
+param n_finesine scalar u64
+param fl_crush buffer i64 inout count n_fl_crush
+param n_fl_crush scalar u64
+param fl_dest buffer i64 inout count n_fl_dest
+param n_fl_dest scalar u64
+param fl_direction buffer i64 inout count n_fl_direction
+param n_fl_direction scalar u64
+param fl_sector buffer i64 inout count n_fl_sector
+param n_fl_sector scalar u64
+param fl_speed buffer i64 inout count n_fl_speed
+param n_fl_speed scalar u64
+param fl_th buffer i64 inout count n_fl_th
+param n_fl_th scalar u64
+param fl_type buffer i64 inout count n_fl_type
+param n_fl_type scalar u64
+param flattranslation buffer i64 inout count n_flattranslation
+param n_flattranslation scalar u64
+param gl_direction buffer i64 inout count n_gl_direction
+param n_gl_direction scalar u64
+param gl_maxlight buffer i64 inout count n_gl_maxlight
+param n_gl_maxlight scalar u64
+param gl_minlight buffer i64 inout count n_gl_minlight
+param n_gl_minlight scalar u64
+param gl_sector buffer i64 inout count n_gl_sector
+param n_gl_sector scalar u64
+param ic_frac buffer i64 inout count n_ic_frac
+param n_ic_frac scalar u64
+param ic_isaline buffer i64 inout count n_ic_isaline
+param n_ic_isaline scalar u64
+param ic_thing buffer i64 inout count n_ic_thing
+param n_ic_thing scalar u64
+param info_activesound buffer i64 inout count n_info_activesound
+param n_info_activesound scalar u64
+param info_damage buffer i64 inout count n_info_damage
+param n_info_damage scalar u64
+param info_deathsound buffer i64 inout count n_info_deathsound
+param n_info_deathsound scalar u64
+param info_deathstate buffer i64 inout count n_info_deathstate
+param n_info_deathstate scalar u64
+param info_flags buffer i64 inout count n_info_flags
+param n_info_flags scalar u64
+param info_height buffer i64 inout count n_info_height
+param n_info_height scalar u64
+param info_mass buffer i64 inout count n_info_mass
+param n_info_mass scalar u64
+param info_meleestate buffer i64 inout count n_info_meleestate
+param n_info_meleestate scalar u64
+param info_missilestate buffer i64 inout count n_info_missilestate
+param n_info_missilestate scalar u64
+param info_painchance buffer i64 inout count n_info_painchance
+param n_info_painchance scalar u64
+param info_painstate buffer i64 inout count n_info_painstate
+param n_info_painstate scalar u64
+param info_radius buffer i64 inout count n_info_radius
+param n_info_radius scalar u64
+param info_reactiontime buffer i64 inout count n_info_reactiontime
+param n_info_reactiontime scalar u64
+param info_seesound buffer i64 inout count n_info_seesound
+param n_info_seesound scalar u64
+param info_seestate buffer i64 inout count n_info_seestate
+param n_info_seestate scalar u64
+param info_spawnhealth buffer i64 inout count n_info_spawnhealth
+param n_info_spawnhealth scalar u64
+param info_spawnstate buffer i64 inout count n_info_spawnstate
+param n_info_spawnstate scalar u64
+param info_speed buffer i64 inout count n_info_speed
+param n_info_speed scalar u64
+param info_xdeathstate buffer i64 inout count n_info_xdeathstate
+param n_info_xdeathstate scalar u64
+param kn_caps buffer i64 inout count n_kn_caps
+param n_kn_caps scalar u64
+param lf_count buffer i64 inout count n_lf_count
+param n_lf_count scalar u64
+param lf_maxlight buffer i64 inout count n_lf_maxlight
+param n_lf_maxlight scalar u64
+param lf_maxtime buffer i64 inout count n_lf_maxtime
+param n_lf_maxtime scalar u64
+param lf_minlight buffer i64 inout count n_lf_minlight
+param n_lf_minlight scalar u64
+param lf_mintime buffer i64 inout count n_lf_mintime
+param n_lf_mintime scalar u64
+param lf_sector buffer i64 inout count n_lf_sector
+param n_lf_sector scalar u64
+param line_backsector buffer i64 inout count n_line_backsector
+param n_line_backsector scalar u64
+param line_bbox_bottom buffer i64 inout count n_line_bbox_bottom
+param n_line_bbox_bottom scalar u64
+param line_bbox_left buffer i64 inout count n_line_bbox_left
+param n_line_bbox_left scalar u64
+param line_bbox_right buffer i64 inout count n_line_bbox_right
+param n_line_bbox_right scalar u64
+param line_bbox_top buffer i64 inout count n_line_bbox_top
+param n_line_bbox_top scalar u64
+param line_dx buffer i64 inout count n_line_dx
+param n_line_dx scalar u64
+param line_dy buffer i64 inout count n_line_dy
+param n_line_dy scalar u64
+param line_flags buffer i64 inout count n_line_flags
+param n_line_flags scalar u64
+param line_frontsector buffer i64 inout count n_line_frontsector
+param n_line_frontsector scalar u64
+param line_side0 buffer i64 inout count n_line_side0
+param n_line_side0 scalar u64
+param line_side1 buffer i64 inout count n_line_side1
+param n_line_side1 scalar u64
+param line_slopetype buffer i64 inout count n_line_slopetype
+param n_line_slopetype scalar u64
+param line_special buffer i64 inout count n_line_special
+param n_line_special scalar u64
+param line_tagno buffer i64 inout count n_line_tagno
+param n_line_tagno scalar u64
+param line_v1 buffer i64 inout count n_line_v1
+param n_line_v1 scalar u64
+param line_v2 buffer i64 inout count n_line_v2
+param n_line_v2 scalar u64
+param line_validcount buffer i64 inout count n_line_validcount
+param n_line_validcount scalar u64
+param linespecials buffer i64 inout count n_linespecials
+param n_linespecials scalar u64
+param mobj_angle buffer i64 inout count n_mobj_angle
+param n_mobj_angle scalar u64
+param mobj_bnext buffer i64 inout count n_mobj_bnext
+param n_mobj_bnext scalar u64
+param mobj_bprev buffer i64 inout count n_mobj_bprev
+param n_mobj_bprev scalar u64
+param mobj_ceilingz buffer i64 inout count n_mobj_ceilingz
+param n_mobj_ceilingz scalar u64
+param mobj_flags buffer i64 inout count n_mobj_flags
+param n_mobj_flags scalar u64
+param mobj_floorz buffer i64 inout count n_mobj_floorz
+param n_mobj_floorz scalar u64
+param mobj_frame buffer i64 inout count n_mobj_frame
+param n_mobj_frame scalar u64
+param mobj_health buffer i64 inout count n_mobj_health
+param n_mobj_health scalar u64
+param mobj_height buffer i64 inout count n_mobj_height
+param n_mobj_height scalar u64
+param mobj_lastlook buffer i64 inout count n_mobj_lastlook
+param n_mobj_lastlook scalar u64
+param mobj_momx buffer i64 inout count n_mobj_momx
+param n_mobj_momx scalar u64
+param mobj_momy buffer i64 inout count n_mobj_momy
+param n_mobj_momy scalar u64
+param mobj_momz buffer i64 inout count n_mobj_momz
+param n_mobj_momz scalar u64
+param mobj_movecount buffer i64 inout count n_mobj_movecount
+param n_mobj_movecount scalar u64
+param mobj_movedir buffer i64 inout count n_mobj_movedir
+param n_mobj_movedir scalar u64
+param mobj_player buffer i64 inout count n_mobj_player
+param n_mobj_player scalar u64
+param mobj_radius buffer i64 inout count n_mobj_radius
+param n_mobj_radius scalar u64
+param mobj_reactiontime buffer i64 inout count n_mobj_reactiontime
+param n_mobj_reactiontime scalar u64
+param mobj_sector buffer i64 inout count n_mobj_sector
+param n_mobj_sector scalar u64
+param mobj_sp_options buffer i64 inout count n_mobj_sp_options
+param n_mobj_sp_options scalar u64
+param mobj_sp_type buffer i64 inout count n_mobj_sp_type
+param n_mobj_sp_type scalar u64
+param mobj_sprite buffer i64 inout count n_mobj_sprite
+param n_mobj_sprite scalar u64
+param mobj_state buffer i64 inout count n_mobj_state
+param n_mobj_state scalar u64
+param mobj_subsector buffer i64 inout count n_mobj_subsector
+param n_mobj_subsector scalar u64
+param mobj_target buffer i64 inout count n_mobj_target
+param n_mobj_target scalar u64
+param mobj_th buffer i64 inout count n_mobj_th
+param n_mobj_th scalar u64
+param mobj_threshold buffer i64 inout count n_mobj_threshold
+param n_mobj_threshold scalar u64
+param mobj_tics buffer i64 inout count n_mobj_tics
+param n_mobj_tics scalar u64
+param mobj_tracer buffer i64 inout count n_mobj_tracer
+param n_mobj_tracer scalar u64
+param mobj_type buffer i64 inout count n_mobj_type
+param n_mobj_type scalar u64
+param mobj_x buffer i64 inout count n_mobj_x
+param n_mobj_x scalar u64
+param mobj_y buffer i64 inout count n_mobj_y
+param n_mobj_y scalar u64
+param mobj_z buffer i64 inout count n_mobj_z
+param n_mobj_z scalar u64
+param node_child0 buffer i64 inout count n_node_child0
+param n_node_child0 scalar u64
+param node_child1 buffer i64 inout count n_node_child1
+param n_node_child1 scalar u64
+param node_dx buffer i64 inout count n_node_dx
+param n_node_dx scalar u64
+param node_dy buffer i64 inout count n_node_dy
+param n_node_dy scalar u64
+param node_x buffer i64 inout count n_node_x
+param n_node_x scalar u64
+param node_y buffer i64 inout count n_node_y
+param n_node_y scalar u64
+param num_anims buffer i64 inout count n_num_anims
+param n_num_anims scalar u64
+param num_nodes buffer i64 inout count n_num_nodes
+param n_num_nodes scalar u64
+param num_sectors buffer i64 inout count n_num_sectors
+param n_num_sectors scalar u64
+param numlinespecials buffer i64 inout count n_numlinespecials
+param n_numlinespecials scalar u64
+param pl_ammo buffer i64 inout count n_pl_ammo
+param n_pl_ammo scalar u64
+param pl_cards buffer i64 inout count n_pl_cards
+param n_pl_cards scalar u64
+param pl_count buffer i64 inout count n_pl_count
+param n_pl_count scalar u64
+param pl_crush buffer i64 inout count n_pl_crush
+param n_pl_crush scalar u64
+param pl_high buffer i64 inout count n_pl_high
+param n_pl_high scalar u64
+param pl_low buffer i64 inout count n_pl_low
+param n_pl_low scalar u64
+param pl_maxammo buffer i64 inout count n_pl_maxammo
+param n_pl_maxammo scalar u64
+param pl_powers buffer i64 inout count n_pl_powers
+param n_pl_powers scalar u64
+param pl_sector buffer i64 inout count n_pl_sector
+param n_pl_sector scalar u64
+param pl_speed buffer i64 inout count n_pl_speed
+param n_pl_speed scalar u64
+param pl_status buffer i64 inout count n_pl_status
+param n_pl_status scalar u64
+param pl_tag buffer i64 inout count n_pl_tag
+param n_pl_tag scalar u64
+param pl_th buffer i64 inout count n_pl_th
+param n_pl_th scalar u64
+param pl_type buffer i64 inout count n_pl_type
+param n_pl_type scalar u64
+param pl_wait buffer i64 inout count n_pl_wait
+param n_pl_wait scalar u64
+param pl_weaponowned buffer i64 inout count n_pl_weaponowned
+param n_pl_weaponowned scalar u64
+param player_mo buffer i64 inout count n_player_mo
+param n_player_mo scalar u64
+param psp_state buffer i64 inout count n_psp_state
+param n_psp_state scalar u64
+param psp_sx buffer i64 inout count n_psp_sx
+param n_psp_sx scalar u64
+param psp_sy buffer i64 inout count n_psp_sy
+param n_psp_sy scalar u64
+param psp_tics buffer i64 inout count n_psp_tics
+param n_psp_tics scalar u64
+param reject buffer u8 inout count n_reject
+param n_reject scalar u64
+param sector_blockbox buffer i64 inout count n_sector_blockbox
+param n_sector_blockbox scalar u64
+param sector_ceilingheight buffer i64 inout count n_sector_ceilingheight
+param n_sector_ceilingheight scalar u64
+param sector_ceilingpic buffer i64 inout count n_sector_ceilingpic
+param n_sector_ceilingpic scalar u64
+param sector_floorheight buffer i64 inout count n_sector_floorheight
+param n_sector_floorheight scalar u64
+param sector_floorpic buffer i64 inout count n_sector_floorpic
+param n_sector_floorpic scalar u64
+param sector_head buffer i64 inout count n_sector_head
+param n_sector_head scalar u64
+param sector_lightlevel buffer i64 inout count n_sector_lightlevel
+param n_sector_lightlevel scalar u64
+param sector_linecount buffer i64 inout count n_sector_linecount
+param n_sector_linecount scalar u64
+param sector_lineofs buffer i64 inout count n_sector_lineofs
+param n_sector_lineofs scalar u64
+param sector_lines buffer i64 inout count n_sector_lines
+param n_sector_lines scalar u64
+param sector_soundtarget buffer i64 inout count n_sector_soundtarget
+param n_sector_soundtarget scalar u64
+param sector_soundtraversed buffer i64 inout count n_sector_soundtraversed
+param n_sector_soundtraversed scalar u64
+param sector_special buffer i64 inout count n_sector_special
+param n_sector_special scalar u64
+param sector_specialdata buffer i64 inout count n_sector_specialdata
+param n_sector_specialdata scalar u64
+param sector_tagno buffer i64 inout count n_sector_tagno
+param n_sector_tagno scalar u64
+param sector_validcount buffer i64 inout count n_sector_validcount
+param n_sector_validcount scalar u64
+param seg_backsector buffer i64 inout count n_seg_backsector
+param n_seg_backsector scalar u64
+param seg_frontsector buffer i64 inout count n_seg_frontsector
+param n_seg_frontsector scalar u64
+param seg_linedef buffer i64 inout count n_seg_linedef
+param n_seg_linedef scalar u64
+param side_bottomtexture buffer i64 inout count n_side_bottomtexture
+param n_side_bottomtexture scalar u64
+param side_midtexture buffer i64 inout count n_side_midtexture
+param n_side_midtexture scalar u64
+param side_sector buffer i64 inout count n_side_sector
+param n_side_sector scalar u64
+param side_textureoffset buffer i64 inout count n_side_textureoffset
+param n_side_textureoffset scalar u64
+param side_toptexture buffer i64 inout count n_side_toptexture
+param n_side_toptexture scalar u64
+param sight_stack buffer i64 inout count n_sight_stack
+param n_sight_stack scalar u64
+param skill buffer i64 inout count n_skill
+param n_skill scalar u64
+param skyflatnum buffer i64 inout count n_skyflatnum
+param n_skyflatnum scalar u64
+param sound_stack buffer i64 inout count n_sound_stack
+param n_sound_stack scalar u64
+param spechit buffer i64 inout count n_spechit
+param n_spechit scalar u64
+param ss_firstline buffer i64 inout count n_ss_firstline
+param n_ss_firstline scalar u64
+param ss_numlines buffer i64 inout count n_ss_numlines
+param n_ss_numlines scalar u64
+param ss_sector buffer i64 inout count n_ss_sector
+param n_ss_sector scalar u64
+param st_brighttime buffer i64 inout count n_st_brighttime
+param n_st_brighttime scalar u64
+param st_count buffer i64 inout count n_st_count
+param n_st_count scalar u64
+param st_darktime buffer i64 inout count n_st_darktime
+param n_st_darktime scalar u64
+param st_maxlight buffer i64 inout count n_st_maxlight
+param n_st_maxlight scalar u64
+param st_minlight buffer i64 inout count n_st_minlight
+param n_st_minlight scalar u64
+param st_sector buffer i64 inout count n_st_sector
+param n_st_sector scalar u64
+param state_action buffer i64 inout count n_state_action
+param n_state_action scalar u64
+param state_frame buffer i64 inout count n_state_frame
+param n_state_frame scalar u64
+param state_misc1 buffer i64 inout count n_state_misc1
+param n_state_misc1 scalar u64
+param state_misc2 buffer i64 inout count n_state_misc2
+param n_state_misc2 scalar u64
+param state_nextstate buffer i64 inout count n_state_nextstate
+param n_state_nextstate scalar u64
+param state_sprite buffer i64 inout count n_state_sprite
+param n_state_sprite scalar u64
+param state_tics buffer i64 inout count n_state_tics
+param n_state_tics scalar u64
+param switchlist buffer i64 inout count n_switchlist
+param n_switchlist scalar u64
+param tantoangle buffer i64 inout count n_tantoangle
+param n_tantoangle scalar u64
+param texturetranslation buffer i64 inout count n_texturetranslation
+param n_texturetranslation scalar u64
+param th_data buffer i64 inout count n_th_data
+param n_th_data scalar u64
+param th_func buffer i64 inout count n_th_func
+param n_th_func scalar u64
+param th_next buffer i64 inout count n_th_next
+param n_th_next scalar u64
+param th_prev buffer i64 inout count n_th_prev
+param n_th_prev scalar u64
+param thing_next buffer i64 inout count n_thing_next
+param n_thing_next scalar u64
+param thing_prev buffer i64 inout count n_thing_prev
+param n_thing_prev scalar u64
+param vertex_x buffer i64 inout count n_vertex_x
+param n_vertex_x scalar u64
+param vertex_y buffer i64 inout count n_vertex_y
+param n_vertex_y scalar u64
+param weapon_ammo buffer i64 inout count n_weapon_ammo
+param n_weapon_ammo scalar u64
+param weapon_atkstate buffer i64 inout count n_weapon_atkstate
+param n_weapon_atkstate scalar u64
+param weapon_downstate buffer i64 inout count n_weapon_downstate
+param n_weapon_downstate scalar u64
+param weapon_flashstate buffer i64 inout count n_weapon_flashstate
+param n_weapon_flashstate scalar u64
+param weapon_readystate buffer i64 inout count n_weapon_readystate
+param n_weapon_readystate scalar u64
+param weapon_upstate buffer i64 inout count n_weapon_upstate
+param n_weapon_upstate scalar u64
+param ks buffer i64 inout count n_ks
+param n_ks scalar u64
+param keyboxes buffer i64 inout count n_keyboxes
+param n_keyboxes scalar u64
+param cards buffer i64 inout count n_cards
+param n_cards scalar u64
+param oldweaponsowned buffer i64 inout count n_oldweaponsowned
+param n_oldweaponsowned scalar u64
+param weaponowned buffer i64 inout count n_weaponowned
+param n_weaponowned scalar u64

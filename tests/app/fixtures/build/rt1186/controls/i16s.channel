@@ -1,0 +1,8 @@
+core-channel 1
+# tests/app/core-channel.sh 4: an i16 array, which the application tool has no state for (owner, 2026-10-26)
+channel console
+from cm7
+to cm33
+depth 16
+field tic u32
+field samples i16 count 4

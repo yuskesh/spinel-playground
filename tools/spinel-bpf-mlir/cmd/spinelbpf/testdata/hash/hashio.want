@@ -1,0 +1,24 @@
+A[5]=41 A[min]=9223372036854775807
+A[100]=-7 A[6]=42
+has100=true has7=false
+get A[7] err=SpinelBPF::NotFound
+del100=true del100again=false
+keysA=[-9223372036854775807, 5, 6]
+B[1]=9223372036854775807
+put B[3] err=SpinelBPF::Other e2big=true
+B[2] after replace in a full map=5
+put B value -1 err=SpinelBPF::ValueRange
+put B key 2^32 err=SpinelBPF::ValueRange
+C[3]=[9223372036854775807, -5, 0]
+put C pad 1 err=SpinelBPF::ValueRange
+hash_get on C err=SpinelBPF::MapMismatch
+hash_get_record on A err=SpinelBPF::MapMismatch
+D[6/80]=-5
+D[17/53]=2147483647 has=true hasOther=false
+put D pad 1 err=SpinelBPF::ValueRange
+get D missing err=SpinelBPF::NotFound
+keysD=[[6, 0, 80, 167772161], [17, 0, 53, 16909060]]
+E=[4, -6, 0]
+delE=true delEagain=false
+get E missing err=SpinelBPF::NotFound
+alive

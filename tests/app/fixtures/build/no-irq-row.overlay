@@ -1,0 +1,14 @@
+/* The missing irq-row control of Task 10: an enabled node with an
+ * `interrupts` property and a compatible no row of irq-rows.tsv names. The
+ * inventory of 0014 §9 cannot say whether it connects a handler, lists it
+ * as unknown, and step 6 refuses the build. IRQ 90 is used by no device of
+ * the mps2/an521 devicetree. */
+/ {
+	spinel_unknown: unknown@50000000 {
+		compatible = "spinel,unknown-irq-source";
+		reg = <0x50000000 0x1000>;
+		interrupt-parent = <&nvic>;
+		interrupts = <90 3>;
+		status = "okay";
+	};
+};

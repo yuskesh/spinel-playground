@@ -1,0 +1,1 @@
+4	LOAD	0	1	state=0	index=1	value=-5

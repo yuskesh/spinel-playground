@@ -1,0 +1,20 @@
+# E079's host leg on x86-64 Linux: arm64-host.yaml with this host's triple and
+# the data layout clang emits for it (spinel-fs-grad links the kernel against a
+# shim compiled by that clang and refuses a mismatch). ELF does not prefix C
+# names, so the trap hook needs one spelling. Not a deployment profile.
+target:
+  triple: x86_64-unknown-linux-gnu
+  data_layout: "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128"
+  cflags: [-O2]
+abi:
+  boundary: c-abi
+  int_width: i64-internal
+  overflow: trap
+  trap_hook: spinel_trap
+runtime:
+  libc: none
+  libm: none
+  compiler_rt: allow
+platform:
+  type: none
+  externs: [spinel_trap]

@@ -1,0 +1,8 @@
+# on frdm_mcxn947 the alias led0 is led_3, instance 1: the same source drives a different instance
+XRET	0	0	extern=0	value=0
+XCALL	0	0	extern=4	argc=2	args=1,1
+XRET	0	0	extern=0	value=1
+XCALL	0	0	extern=4	argc=2	args=1,0
+XRET	0	0	extern=0	value=0
+ENDMARK	1	255	quiescent=1	drained=1
+summary selected 3 skipped 0 cancelled 0 cut 0

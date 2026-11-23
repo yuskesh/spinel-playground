@@ -1,0 +1,5 @@
+# several missed releases: a's release 1 costs 5200 us; a's next selection
+# is release 6 with 2..5 skipped, never caught up.
+horizon_us 8000
+drain_us 1000
+cost a 1 5200

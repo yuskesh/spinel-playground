@@ -1,0 +1,1111 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+# tools/shader/spinel-rb2comp -- Ruby compute kernels to WGSL, MSL and PTX through MLIR.
+#
+#   spinel-rb2comp KERNEL.rb --out DIR    build DIR/<unit>/
+#   spinel-rb2comp KERNEL.rb --check      check the subset only
+#   spinel-rb2comp --check-emission FILE  check an emission.mlir against the body rules
+#   spinel-rb2comp --check-msl FILE NBUF  give naga's MSL its bindings, or say why not
+#
+# Exit 0 when built, 3 when the kernel is refused (DIR/reject.tsv says why),
+# 4 on an internal or tool failure. docs/decisions/0031-gpu-compute-route.md has
+# the contract.
+#
+#   kernel.rb -> rewritten copy with typing seeds -> dump-ast + typedump
+#             -> subset check -> emission.mlir (gpu, memref, arith, scf, math)
+#                  |- SPIR-V exit -> spirv-val -> naga -> kernel.wgsl, kernel.metal
+#                  `- NVVM exit -> kernel.ptx
+#
+# There is one body. The exits differ only in how shared memory is reached and,
+# on SPIR-V, in giving signed operations signed operand types for naga.
+
+require "digest"
+require "fileutils"
+require "tmpdir"
+
+load File.join(__dir__, "spinel-rb2spv")
+
+VALUE_IDS = {
+  "gpu_global_id" => :global, "gpu_local_id" => :local,
+  "gpu_group_id" => :group, "gpu_group_size" => :size
+}.freeze
+NAMED = %w[gpu_load gpu_store gpu_shared_load gpu_shared_store gpu_atomic_add].freeze
+BUILTINS = (VALUE_IDS.keys + NAMED + ["gpu_barrier"]).freeze
+NEEDS_N = %w[gpu_local_id gpu_group_id gpu_group_size gpu_barrier
+             gpu_shared_load gpu_shared_store].freeze
+RESERVED = "__sp_gpu_"
+MLIR_TY = { i32: "i32", f32: "f32", atomic: "i32" }.freeze
+INT_MIN = -(2**31)
+INT_MAX = (2**31) - 1
+MAX_BUFFERS = 8
+MAX_N = 256
+MAX_SHARED_BYTES = 16_384
+PLAIN_NAME = /\A[a-z][a-z0-9_]*\z/
+
+Decl = Struct.new(:buffers, :shared, :n, :kernel, :used, keyword_init: true)
+Val = Struct.new(:ssa, :ty)
+
+def refuse(kind, node, why, at: nil)
+  line, col = at || [node[:line], node[:col]]
+  raise Refuse.new(kind, node[:id], line, col, why)
+end
+
+def literal_sym(node) = node && node[:kind] == "SymbolNode" ? node[:s]["value"] : nil
+def literal_int(node) = node && node[:kind] == "IntegerNode" ? node[:i]["value"] : nil
+
+def call_args(ast, node)
+  id = node[:r].fetch("arguments", -1)
+  id.negative? ? [] : ast.arr(ast.n(id), "arguments")
+end
+
+def subtree(ast, node, out = [])
+  return out if node.nil?
+  out << node
+  node[:r].each_value { |i| subtree(ast, ast.n(i), out) if i >= 0 }
+  node[:a].each_value { |l| l.each { |i| subtree(ast, ast.n(i), out) } }
+  out
+end
+
+# ------------------------------------------------------------ declarations
+def read_decls(ast)
+  decl = Decl.new(buffers: {}, shared: {}, n: nil, kernel: nil, used: [])
+  body = ast.ref(ast.n(0), "statements")
+  ast.arr(body, "body").each do |st|
+    case st[:kind]
+    when "CallNode" then read_decl_call(ast, st, decl)
+    when "DefNode" then read_def(ast, st, decl)
+    else refuse("TopLevel", st, "only gpu_buffer, gpu_shared, gpu_workgroup and one kernel def may appear at the top level")
+    end
+  end
+  refuse("NoKernel", ast.n(0), "no kernel: define exactly one method named kernel__<name>") unless decl.kernel
+  refuse("NoBuffers", decl.kernel, "a kernel needs at least one gpu_buffer") if decl.buffers.empty?
+  slots = decl.buffers.values.map { |b| b[:slot] }.sort
+  refuse("BufferDecl", decl.kernel, "buffer slots must be contiguous from 0, got #{slots.join(', ')}") unless slots == (0...slots.size).to_a
+  total = decl.shared.values.sum { |s| s[:len] * 4 }
+  refuse("SharedTooLarge", decl.kernel, "gpu_shared totals #{total} bytes, over the limit of #{MAX_SHARED_BYTES}") if total > MAX_SHARED_BYTES
+  decl
+end
+
+def read_decl_call(ast, st, decl)
+  name = st[:s]["name"]
+  refuse("TopLevel", st, "#{name}: a declaration has no receiver and no block") unless st[:r].fetch("receiver", -1).negative? && st[:r].fetch("block", -1).negative?
+  args = call_args(ast, st)
+  case name
+  when "gpu_workgroup"
+    v = args.size == 1 ? literal_int(args[0]) : nil
+    refuse("WorkgroupSize", st, "gpu_workgroup takes one integer literal") if v.nil?
+    refuse("WorkgroupSize", st, "gpu_workgroup #{v} is outside 1..#{MAX_N}") unless v.between?(1, MAX_N)
+    refuse("WorkgroupSize", st, "gpu_workgroup is declared twice") if decl.n
+    decl.n = v
+  when "gpu_buffer"
+    refuse("BufferDecl", st, "gpu_buffer :name, :f32|:i32|:atomic, slot") unless args.size == 3
+    nm = literal_sym(args[0])
+    ty = literal_sym(args[1])
+    slot = literal_int(args[2])
+    refuse("BufferDecl", st, "gpu_buffer :name, :f32|:i32|:atomic, slot takes literals") if nm.nil? || ty.nil? || slot.nil?
+    refuse("BufferDecl", st, ":#{nm} is not a plain lower-case name") unless nm.match?(PLAIN_NAME)
+    refuse_old_type(st, ty)
+    refuse("BufferDecl", st, "unknown buffer type :#{ty} (use :f32, :i32 or :atomic)") unless %w[f32 i32 atomic].include?(ty)
+    refuse("BufferDecl", st, "buffer :#{nm} is declared twice") if decl.buffers.key?(nm)
+    refuse("BufferDecl", st, "slot #{slot} is used twice") if decl.buffers.values.any? { |b| b[:slot] == slot }
+    refuse("BufferDecl", st, "slot #{slot} is outside 0..#{MAX_BUFFERS - 1}") unless slot.between?(0, MAX_BUFFERS - 1)
+    decl.buffers[nm] = { type: ty.to_sym, slot: slot }
+  when "gpu_shared"
+    refuse("SharedDecl", st, "gpu_shared :name, :f32|:i32, length takes literals") unless args.size == 3
+    nm = literal_sym(args[0])
+    ty = literal_sym(args[1])
+    len = literal_int(args[2])
+    refuse("SharedDecl", st, "gpu_shared :name, :f32|:i32, length takes literals") if nm.nil? || ty.nil? || len.nil?
+    refuse("SharedDecl", st, ":#{nm} is not a plain lower-case name") unless nm.match?(PLAIN_NAME)
+    refuse_old_type(st, ty)
+    refuse("SharedDecl", st, "gpu_shared is :f32 or :i32, not :#{ty}") unless %w[f32 i32].include?(ty)
+    refuse("SharedDecl", st, "gpu_shared length must be positive") unless len.positive?
+    refuse("SharedDecl", st, "shared :#{nm} is declared twice") if decl.shared.key?(nm)
+    decl.shared[nm] = { type: ty.to_sym, len: len, index: decl.shared.size }
+  else
+    refuse("TopLevel", st, "#{name} is not a declaration of this lane")
+  end
+end
+
+def refuse_old_type(node, ty)
+  return unless %w[float int].include?(ty)
+  refuse("OldBufferType", node, ":#{ty} is the Metal route's type (:int is 64-bit there). Write :f32 or :i32; this lane does not change a width silently")
+end
+
+def read_def(ast, st, decl)
+  name = st[:s]["name"]
+  refuse("ReservedName", st, "names starting with #{RESERVED} are reserved") if name.start_with?(RESERVED)
+  refuse("HelperMethod", st, "#{name}: only one kernel__<name> method is accepted in v1") unless name.start_with?("kernel__")
+  refuse("OneKernel", st, "a file holds exactly one kernel") if decl.kernel
+  refuse("KernelParams", st, "a kernel takes no parameters") unless st[:r].fetch("parameters", -1).negative?
+  refuse("KernelReceiver", st, "a kernel is a plain def, not a method of an object") unless st[:r].fetch("receiver", -1).negative?
+  decl.kernel = st
+end
+
+# ------------------------------------------------- section 4: rewrite and seeds
+class Rewrite
+  attr_reader :text, :names
+
+  def initialize(src, ast, decl)
+    @src = src
+    @ast = ast
+    @decl = decl
+    @names = {}
+    @edits = []
+    @starts = [0]
+    src.each_byte.with_index { |b, i| @starts << i + 1 if b == 10 }
+    build
+  end
+
+  # A position in the rewritten text, as the position in the original.
+  def origin(line, col)
+    off = new_starts[line - 1].to_i + col
+    delta = 0
+    @edits.each do |e|
+      new_start = e[:start] + delta
+      return loc(e[:start]) if off >= new_start && off < new_start + e[:text].bytesize
+      break if off < new_start
+      delta += e[:text].bytesize - (e[:stop] - e[:start])
+    end
+    loc(off - delta)
+  end
+
+  private
+
+  def loc(off)
+    i = @starts.rindex { |s| s <= off } || 0
+    [i + 1, off - @starts[i]]
+  end
+
+  def new_starts
+    @new_starts ||= begin
+      s = [0]
+      @text.each_byte.with_index { |b, i| s << i + 1 if b == 10 }
+      s
+    end
+  end
+
+  def offset(node) = @starts[node[:line] - 1] + node[:col]
+
+  def build
+    calls = subtree(@ast, @decl.kernel).select do |n|
+      n[:kind] == "CallNode" && BUILTINS.include?(n[:s]["name"]) && n[:r].fetch("receiver", -1).negative?
+    end
+    calls.each { |c| plan(c) }
+    @decl.used = calls.map { |c| c[:s]["name"] }.uniq
+    @edits.sort_by! { |e| e[:start] }
+    t = @src.b
+    @edits.reverse_each { |e| t[e[:start]...e[:stop]] = e[:text].b }
+    @text = t.force_encoding("UTF-8")
+  end
+
+  def plan(call)
+    name = call[:s]["name"]
+    refuse("BuiltinBlock", call, "#{name} takes no block") unless call[:r].fetch("block", -1).negative?
+    start = offset(call)
+    args = call_args(@ast, call)
+    if VALUE_IDS.key?(name) || name == "gpu_barrier"
+      refuse("BuiltinArgs", call, "#{name} takes no arguments") unless args.empty?
+      new_name = "__sp_#{name}"
+      @names[new_name] = [name, nil]
+      @edits << { start: start, stop: start + name.bytesize, text: new_name }
+      return
+    end
+    want = %w[gpu_load gpu_shared_load].include?(name) ? 2 : 3
+    refuse("BuiltinArgs", call, "#{name} takes #{want} arguments") unless args.size == want
+    refuse("BuiltinParens", call, "#{name} needs parentheses") unless @src.getbyte(start + name.bytesize) == 40
+    target = literal_sym(args[0])
+    refuse("BuiltinArgs", call, "#{name}: the first argument is a literal symbol") if target.nil?
+    check_target(call, name, target)
+    new_name = "__sp_#{name}_#{target}"
+    @names[new_name] = [name, target]
+    @edits << { start: start, stop: offset(args[1]), text: "#{new_name}(" }
+  end
+
+  def check_target(call, name, target)
+    if name.start_with?("gpu_shared")
+      refuse("UnknownShared", call, "no gpu_shared :#{target}") unless @decl.shared.key?(target)
+      return
+    end
+    buf = @decl.buffers[target]
+    refuse("UnknownBuffer", call, "no gpu_buffer :#{target}") if buf.nil?
+    if name == "gpu_atomic_add"
+      refuse("NotAtomic", call, "gpu_atomic_add needs an :atomic buffer; :#{target} is :#{buf[:type]}") unless buf[:type] == :atomic
+    elsif buf[:type] == :atomic
+      refuse("AtomicAccess", call, "#{name} on :atomic buffer :#{target}: use gpu_atomic_add")
+    end
+  end
+end
+
+def literal_of(ty) = ty == :f32 ? "0.5" : "1"
+
+def seed_text(decl)
+  d = []
+  c = []
+  VALUE_IDS.each_key { |k| d << "def __sp_#{k}; 1; end" }
+  d << "def __sp_gpu_barrier; nil; end"
+  (VALUE_IDS.keys + ["gpu_barrier"]).each { |k| c << "__sp_#{k}" }
+  decl.buffers.each do |nm, b|
+    if b[:type] == :atomic
+      d << "def __sp_gpu_atomic_add_#{nm}(i, v); nil; end"
+      c << "__sp_gpu_atomic_add_#{nm}(1, 1)"
+    else
+      lit = literal_of(b[:type])
+      d << "def __sp_gpu_load_#{nm}(i); #{lit}; end"
+      d << "def __sp_gpu_store_#{nm}(i, v); nil; end"
+      c << "print __sp_gpu_load_#{nm}(1)"
+      c << "__sp_gpu_store_#{nm}(1, #{lit})"
+    end
+  end
+  decl.shared.each do |nm, s|
+    lit = literal_of(s[:type])
+    d << "def __sp_gpu_shared_load_#{nm}(i); #{lit}; end"
+    d << "def __sp_gpu_shared_store_#{nm}(i, v); nil; end"
+    c << "print __sp_gpu_shared_load_#{nm}(1)"
+    c << "__sp_gpu_shared_store_#{nm}(1, #{lit})"
+  end
+  c << decl.kernel[:s]["name"]
+  "\n#{d.join("\n")}\n#{c.join("\n")}\n"
+end
+
+# ---------------------------------------------- sections 3 and 5: the emission
+class Emit
+  attr_reader :lines
+
+  def initialize(ast, types, decl, rewrite)
+    @ast = ast
+    @t = types
+    @d = decl
+    @rw = rewrite
+    @lines = []
+    @n = 0
+    @if_depth = 0
+    @nonliteral_times = 0
+  end
+
+  def body(kernel)
+    env = {}
+    statements(@ast.ref(kernel, "body"), env)
+  end
+
+  private
+
+  def bad(kind, node, why) = refuse(kind, node, why, at: @rw.origin(node[:line], node[:col]))
+  def tmp = "%v#{@n += 1}"
+  def op(text) = @lines << text
+
+  def emit_val(rhs, ty)
+    t = tmp
+    op("#{t} = #{rhs}")
+    Val.new(t, ty)
+  end
+
+  def int_const(v) = emit_val("arith.constant #{v} : i32", :int)
+  def m(ty) = ty == :float ? "f32" : "i32"
+
+  def statements(node, env)
+    return if node.nil?
+    # A body with rescue or ensure is a BeginNode, which has no "body" list.
+    bad("Statements", node, "#{node[:kind]} is outside the subset; a kernel body is a plain list of statements") unless node[:kind] == "StatementsNode"
+    @ast.arr(node, "body").each { |s| statement(s, env) }
+  end
+
+  def statement(s, env)
+    case s[:kind]
+    when "LocalVariableWriteNode" then assign(s, env)
+    when "IfNode" then if_stmt(s, env)
+    when "CallNode" then call_stmt(s, env)
+    when "LocalVariableOperatorWriteNode"
+      bad("OperatorAssign", s, "write x = x + y; compound assignment is outside the subset")
+    when "ReturnNode" then bad("EarlyReturn", s, "a kernel has no early return")
+    else bad("Statement", s, "#{s[:kind]} is outside the subset")
+    end
+  end
+
+  def assign(s, env)
+    name = s[:s]["name"]
+    bad("ReservedName", s, "names starting with #{RESERVED} are reserved") if name.start_with?(RESERVED)
+    v = expr(@ast.ref(s, "value"), env)
+    old = env[name]
+    bad("LocalType", s, "#{name} changes type from #{old.ty} to #{v.ty}") if old && old.ty != v.ty
+    env[name] = v
+  end
+
+  def call_stmt(s, env)
+    name = s[:s]["name"]
+    if name == "times" then return times_stmt(s, env) end
+    origin = @rw.names[name]
+    case origin && origin[0]
+    when "gpu_store" then store(s, env, origin[1])
+    when "gpu_shared_store" then shared_store(s, env, origin[1])
+    when "gpu_atomic_add" then atomic(s, env, origin[1])
+    when "gpu_barrier" then barrier(s)
+    else bad("Statement", s, "the value of this expression is not used; only assignments, if, times and gpu_* statements are accepted")
+    end
+  end
+
+  def assigned(node, out = [])
+    subtree(@ast, node).each { |n| out << n[:s]["name"] if n[:kind] == "LocalVariableWriteNode" }
+    out.uniq
+  end
+
+  def result_refs(base, count) = count == 1 ? [base] : (0...count).map { |i| "#{base}##{i}" }
+  def lhs(base, count) = count == 1 ? base : "#{base}:#{count}"
+
+  def if_stmt(s, env)
+    cnd = cond(@ast.ref(s, "predicate"), env)
+    then_node = @ast.ref(s, "statements")
+    sub = s[:r].fetch("subsequent", -1)
+    else_stmts = nil
+    if sub >= 0
+      sn = @ast.n(sub)
+      bad("Elsif", sn, "elsif is outside the subset; nest an if inside else") unless sn[:kind] == "ElseNode"
+      else_stmts = @ast.ref(sn, "statements")
+    end
+    carried = (assigned(then_node) + (else_stmts ? assigned(else_stmts) : [])).uniq.select { |k| env.key?(k) }
+    tys = carried.map { |k| m(env[k].ty) }
+    base = tmp
+    head = carried.empty? ? "scf.if #{cnd} {" : "#{lhs(base, carried.size)} = scf.if #{cnd} -> (#{tys.join(', ')}) {"
+    op(head)
+    @if_depth += 1
+    branch(then_node, env, carried, tys)
+    if else_stmts || !carried.empty?
+      op("} else {")
+      branch(else_stmts, env, carried, tys)
+    end
+    @if_depth -= 1
+    op("}")
+    refs = result_refs(base, carried.size)
+    carried.each_with_index { |k, i| env[k] = Val.new(refs[i], env[k].ty) }
+  end
+
+  def branch(stmts, env, carried, tys)
+    inner = env.dup
+    statements(stmts, inner)
+    return if carried.empty?
+    op("scf.yield #{carried.map { |k| inner[k].ssa }.join(', ')} : #{tys.join(', ')}")
+  end
+
+  def times_stmt(s, env)
+    recv = @ast.ref(s, "receiver")
+    bad("Statement", s, "times needs an Integer receiver") if recv.nil?
+    block = @ast.ref(s, "block")
+    bad("Times", s, "times needs a literal block") unless block && block[:kind] == "BlockNode"
+    bad("Times", s, "times takes no arguments") unless call_args(@ast, s).empty?
+    literal = recv[:kind] == "IntegerNode"
+    count = expr(recv, env)
+    bad("Times", s, "the receiver of times must be an Integer") unless count.ty == :int
+    param = block_param(block, s)
+    body = @ast.ref(block, "body")
+    carried = assigned(body).select { |k| env.key?(k) && k != param }
+    tys = carried.map { |k| m(env[k].ty) }
+    lb = emit_val("arith.constant 0 : index", :idx).ssa
+    ub = emit_val("arith.index_cast #{count.ssa} : i32 to index", :idx).ssa
+    st = emit_val("arith.constant 1 : index", :idx).ssa
+    iv = tmp
+    inits = carried.map { tmp }
+    base = tmp
+    iters = carried.each_with_index.map { |k, i| "#{inits[i]} = #{env[k].ssa}" }.join(", ")
+    header = "scf.for #{iv} = #{lb} to #{ub} step #{st}"
+    header = "#{lhs(base, carried.size)} = #{header} iter_args(#{iters}) -> (#{tys.join(', ')})" unless carried.empty?
+    op("#{header} {")
+    @nonliteral_times += 1 unless literal
+    inner = env.dup
+    carried.each_with_index { |k, i| inner[k] = Val.new(inits[i], env[k].ty) }
+    inner[param] = emit_val("arith.index_cast #{iv} : index to i32", :int) if param
+    statements(body, inner)
+    op("scf.yield #{carried.map { |k| inner[k].ssa }.join(', ')} : #{tys.join(', ')}") unless carried.empty?
+    @nonliteral_times -= 1 unless literal
+    op("}")
+    refs = result_refs(base, carried.size)
+    carried.each_with_index { |k, i| env[k] = Val.new(refs[i], env[k].ty) }
+  end
+
+  def block_param(block, s)
+    id = block[:r].fetch("parameters", -1)
+    return nil if id.negative?
+    bp = @ast.n(id)
+    pn = bp[:kind] == "BlockParametersNode" ? @ast.ref(bp, "parameters") : nil
+    req = pn ? @ast.arr(pn, "requireds") : []
+    others = pn ? (pn[:r].reject { |_k, v| v.negative? }.keys + pn[:a].reject { |k, v| k == "requireds" || v.empty? }.keys) : []
+    unless req.size == 1 && others.empty? && req[0][:kind] == "RequiredParameterNode" && @ast.arr(bp, "locals").empty?
+      bad("Times", s, "times takes one plain block parameter")
+    end
+    req[0][:s]["name"]
+  end
+
+  def typed(node)
+    t = @t.ty[node[:id]]
+    bad("NoType", node, "typedump has no type for this expression") if t.nil?
+    case t
+    when "int" then :int
+    when "float" then :float
+    else bad("Type", node, "the inferred type is #{t}; this lane has Integer (i32) and Float (f32) values only")
+    end
+  end
+
+  def expr(node, env)
+    case node[:kind]
+    when "IntegerNode"
+      v = node[:i]["value"]
+      bad("IntegerRange", node, "#{v} does not fit in i32") unless v.between?(INT_MIN, INT_MAX)
+      int_const(v)
+    when "FloatNode" then float_literal(node)
+    when "LocalVariableReadNode"
+      nm = node[:s]["name"]
+      env[nm] || bad("UnboundLocal", node, "#{nm} is not bound here; a local assigned only inside an if or times is not visible after it, so assign it before")
+    when "ParenthesesNode" then paren(node, env, :expr)
+    when "CallNode" then call_expr(node, env)
+    when "AndNode", "OrNode" then bad("BoolValue", node, "a Boolean is accepted only as the condition of an if")
+    else bad("Expression", node, "#{node[:kind]} is outside the subset")
+    end
+  end
+
+  def float_literal(node)
+    typed(node)
+    x = node[:f]["value"]
+    single = [x].pack("f").unpack1("f")
+    bad("FloatRange", node, "#{x} does not fit in f32") unless single.finite?
+    emit_val("arith.constant #{f32_lit(x)} : f32", :float)
+  end
+
+  def paren(node, env, how)
+    body = @ast.ref(node, "body")
+    list = body ? @ast.arr(body, "body") : []
+    bad("Expression", node, "parentheses hold exactly one expression") unless list.size == 1
+    how == :expr ? expr(list[0], env) : cond(list[0], env)
+  end
+
+  ARITH = { "+" => %w[addi addf], "-" => %w[subi subf], "*" => %w[muli mulf] }.freeze
+  BITS = { "&" => "andi", "|" => "ori", "^" => "xori" }.freeze
+  CMPI = { "==" => "eq", "!=" => "ne", "<" => "slt", "<=" => "sle", ">" => "sgt", ">=" => "sge" }.freeze
+  CMPF = { "==" => "oeq", "!=" => "une", "<" => "olt", "<=" => "ole", ">" => "ogt", ">=" => "oge" }.freeze
+
+  def call_expr(node, env)
+    name = op_name(node)
+    origin = @rw.names[name]
+    return builtin_value(node, env, origin) if origin
+    bad("Block", node, "a call with a block is not a value") unless node[:r].fetch("block", -1).negative?
+    recv = @ast.ref(node, "receiver")
+    args = call_args(@ast, node)
+    return sqrt(node, args, env) if name == "sqrt" && recv && recv[:kind] == "ConstantReadNode" && recv[:s]["name"] == "Math"
+    bad("Call", node, "#{name} is outside the subset") if recv.nil?
+    return unary(node, recv, env) if name == "-@"
+    bad("BoolValue", node, "a Boolean is accepted only as the condition of an if") if name == "!" || CMPI.key?(name)
+    bad("Call", node, "#{name} is outside the subset") unless args.size == 1
+    binary(node, name, expr(recv, env), expr(args[0], env))
+  end
+
+  # The AST dump percent-escapes `%` in a method name.
+  def op_name(node) = node[:s]["name"].gsub(/%([0-9A-Fa-f]{2})/) { Regexp.last_match(1).hex.chr }
+
+  def unary(node, recv, env)
+    v = expr(recv, env)
+    return emit_val("arith.negf #{v.ssa} : f32", :float) if v.ty == :float
+    zero = int_const(0)
+    emit_val("arith.subi #{zero.ssa}, #{v.ssa} : i32", :int)
+  end
+
+  def sqrt(node, args, env)
+    bad("Call", node, "Math.sqrt takes one argument") unless args.size == 1
+    v = expr(args[0], env)
+    bad("Operand", node, "Math.sqrt takes a Float") unless v.ty == :float
+    emit_val("math.sqrt #{v.ssa} : f32", :float)
+  end
+
+  def binary(node, name, a, b)
+    bad("MixedArith", node, "#{name} mixes Integer and Float; v1 has no conversions") if a.ty != b.ty
+    if a.ty == :float
+      return emit_val("arith.divf #{a.ssa}, #{b.ssa} : f32", :float) if name == "/"
+      bad("Operand", node, "#{name} is not defined on Float in this lane") unless ARITH.key?(name)
+      return emit_val("arith.#{ARITH[name][1]} #{a.ssa}, #{b.ssa} : f32", :float)
+    end
+    case name
+    when "+", "-", "*" then emit_val("arith.#{ARITH[name][0]} #{a.ssa}, #{b.ssa} : i32", :int)
+    when "/" then division(a, b)[0]
+    when "%" then division(a, b)[1]
+    when "<<", ">>" then shift(name, a, b)
+    else
+      bad("Operand", node, "#{name} is not defined on Integer in this lane") unless BITS.key?(name)
+      emit_val("arith.#{BITS[name]} #{a.ssa}, #{b.ssa} : i32", :int)
+    end
+  end
+
+  # The division must not see 0 or -1 as its divisor: arith.select does not
+  # branch, so the unsafe divisor is replaced before the division.
+  def division(a, b)
+    zero = int_const(0)
+    one = int_const(1)
+    mone = int_const(-1)
+    is0 = emit_val("arith.cmpi eq, #{b.ssa}, #{zero.ssa} : i32", :bool)
+    ism1 = emit_val("arith.cmpi eq, #{b.ssa}, #{mone.ssa} : i32", :bool)
+    special = emit_val("arith.ori #{is0.ssa}, #{ism1.ssa} : i1", :bool)
+    safe = emit_val("arith.select #{special.ssa}, #{one.ssa}, #{b.ssa} : i32", :int)
+    q0 = emit_val("arith.floordivsi #{a.ssa}, #{safe.ssa} : i32", :int)
+    neg = emit_val("arith.subi #{zero.ssa}, #{a.ssa} : i32", :int)
+    q1 = emit_val("arith.select #{ism1.ssa}, #{neg.ssa}, #{q0.ssa} : i32", :int)
+    q = emit_val("arith.select #{is0.ssa}, #{zero.ssa}, #{q1.ssa} : i32", :int)
+    prod = emit_val("arith.muli #{q0.ssa}, #{safe.ssa} : i32", :int)
+    r0 = emit_val("arith.subi #{a.ssa}, #{prod.ssa} : i32", :int)
+    r = emit_val("arith.select #{special.ssa}, #{zero.ssa}, #{r0.ssa} : i32", :int)
+    [q, r]
+  end
+
+  def shift(name, a, b)
+    mask = int_const(31)
+    s = emit_val("arith.andi #{b.ssa}, #{mask.ssa} : i32", :int)
+    kind = name == "<<" ? "shli" : "shrsi"
+    emit_val("arith.#{kind} #{a.ssa}, #{s.ssa} : i32", :int)
+  end
+
+  def cond(node, env)
+    case node[:kind]
+    when "ParenthesesNode" then paren(node, env, :cond)
+    when "AndNode", "OrNode" then short_circuit(node, env)
+    when "CallNode"
+      name = node[:s]["name"]
+      recv = @ast.ref(node, "receiver")
+      bad("Condition", node, "a condition is a comparison, or && || ! of comparisons") if recv.nil? || !node[:r].fetch("block", -1).negative?
+      if name == "!"
+        v = cond(recv, env)
+        t = emit_val("arith.constant true", :bool)
+        return emit_val("arith.xori #{v}, #{t.ssa} : i1", :bool).ssa
+      end
+      args = call_args(@ast, node)
+      bad("Condition", node, "a condition is a comparison, or && || ! of comparisons") unless CMPI.key?(name) && args.size == 1
+      compare(node, name, expr(recv, env), expr(args[0], env))
+    else bad("Condition", node, "a condition is a comparison, or && || ! of comparisons")
+    end
+  end
+
+  def compare(node, name, a, b)
+    bad("MixedArith", node, "#{name} mixes Integer and Float; v1 has no conversions") if a.ty != b.ty
+    if a.ty == :float
+      return emit_val("arith.cmpf #{CMPF[name]}, #{a.ssa}, #{b.ssa} : f32", :bool).ssa
+    end
+    emit_val("arith.cmpi #{CMPI[name]}, #{a.ssa}, #{b.ssa} : i32", :bool).ssa
+  end
+
+  # && and || keep Ruby's short circuit: the right side often guards an index.
+  def short_circuit(node, env)
+    left = cond(@ast.ref(node, "left"), env)
+    is_and = node[:kind] == "AndNode"
+    r = tmp
+    op("#{r} = scf.if #{left} -> (i1) {")
+    if is_and
+      v = cond(@ast.ref(node, "right"), env)
+      op("scf.yield #{v} : i1")
+      op("} else {")
+      f = emit_val("arith.constant false", :bool)
+      op("scf.yield #{f.ssa} : i1")
+    else
+      t = emit_val("arith.constant true", :bool)
+      op("scf.yield #{t.ssa} : i1")
+      op("} else {")
+      v = cond(@ast.ref(node, "right"), env)
+      op("scf.yield #{v} : i1")
+    end
+    op("}")
+    r
+  end
+
+  def builtin_value(node, env, origin)
+    name, target = origin
+    case name
+    when "gpu_global_id" then id_value("gpu.global_id x")
+    when "gpu_local_id" then id_value("gpu.thread_id x")
+    when "gpu_group_id" then id_value("gpu.block_id x")
+    when "gpu_group_size" then int_const(@d.n || 1)
+    when "gpu_load" then load(node, env, target)
+    when "gpu_shared_load" then shared_load(node, env, target)
+    else bad("StatementOnly", node, "#{name} is a statement; its value cannot be used")
+    end
+  end
+
+  def id_value(text)
+    i = emit_val(text, :idx)
+    emit_val("arith.index_cast #{i.ssa} : index to i32", :int)
+  end
+
+  def index_arg(node, env, arg)
+    v = expr(arg, env)
+    bad("Operand", node, "the index must be an Integer") unless v.ty == :int
+    v
+  end
+
+  def to_index(v) = emit_val("arith.index_cast #{v.ssa} : i32 to index", :idx).ssa
+
+  def buf_mem(target)
+    ty = MLIR_TY[@d.buffers[target][:type]]
+    ["%buf_#{target}", "memref<?x#{ty}>", ty]
+  end
+
+  def val_ty(sym) = sym == :f32 ? :float : :int
+
+  def load(node, env, target)
+    args = call_args(@ast, node)
+    i = index_arg(node, env, args[0])
+    mem, mt, = buf_mem(target)
+    ix = to_index(i)
+    emit_val("memref.load #{mem}[#{ix}] : #{mt}", val_ty(@d.buffers[target][:type]))
+  end
+
+  def store(node, env, target)
+    args = call_args(@ast, node)
+    i = index_arg(node, env, args[0])
+    v = expr(args[1], env)
+    want = val_ty(@d.buffers[target][:type])
+    bad("Operand", node, "buffer :#{target} holds #{want} values, this is #{v.ty}") unless v.ty == want
+    mem, mt, = buf_mem(target)
+    ix = to_index(i)
+    op("memref.store #{v.ssa}, #{mem}[#{ix}] : #{mt}")
+  end
+
+  def atomic(node, env, target)
+    args = call_args(@ast, node)
+    i = index_arg(node, env, args[0])
+    v = expr(args[1], env)
+    bad("Operand", node, "gpu_atomic_add adds an Integer") unless v.ty == :int
+    mem, mt, = buf_mem(target)
+    ix = to_index(i)
+    emit_val("memref.atomic_rmw addi #{v.ssa}, #{mem}[#{ix}] : (i32, #{mt}) -> i32", :int)
+  end
+
+  def shared_load(node, env, target)
+    args = call_args(@ast, node)
+    i = index_arg(node, env, args[0])
+    ty = MLIR_TY[@d.shared[target][:type]]
+    emit_val("func.call @__sp_shared_load_#{target}(#{i.ssa}) : (i32) -> #{ty}", val_ty(@d.shared[target][:type]))
+  end
+
+  def shared_store(node, env, target)
+    args = call_args(@ast, node)
+    i = index_arg(node, env, args[0])
+    v = expr(args[1], env)
+    want = val_ty(@d.shared[target][:type])
+    bad("Operand", node, "shared :#{target} holds #{want} values, this is #{v.ty}") unless v.ty == want
+    ty = MLIR_TY[@d.shared[target][:type]]
+    op("func.call @__sp_shared_store_#{target}(#{i.ssa}, #{v.ssa}) : (i32, #{ty}) -> ()")
+  end
+
+  def barrier(node)
+    bad("BarrierPlace", node, "gpu_barrier inside an if: every invocation must reach it the same number of times") if @if_depth.positive?
+    bad("BarrierPlace", node, "gpu_barrier inside a times whose count is not a literal") if @nonliteral_times.positive?
+    op("gpu.barrier")
+  end
+end
+
+def emission_text(decl, body)
+  name = decl.kernel[:s]["name"]
+  n = decl.n || 1
+  params = decl.buffers.sort_by { |_k, b| b[:slot] }.map do |nm, b|
+    "%buf_#{nm}: memref<?x#{MLIR_TY[b[:type]]}> {spirv.interface_var_abi = #spirv.interface_var_abi<(0, #{b[:slot]})>}"
+  end
+  stubs = decl.shared.flat_map do |nm, s|
+    t = MLIR_TY[s[:type]]
+    zero = t == "f32" ? "0.0" : "0"
+    ["    func.func private @__sp_shared_load_#{nm}(%i: i32) -> #{t} {",
+     "      %z = arith.constant #{zero} : #{t}",
+     "      return %z : #{t}",
+     "    }",
+     "    func.func private @__sp_shared_store_#{nm}(%i: i32, %v: #{t}) {",
+     "      return",
+     "    }"]
+  end
+  env = "spirv.target_env = #spirv.target_env<#spirv.vce<v1.3, [Shader], [SPV_KHR_storage_buffer_storage_class]>, #spirv.resource_limits<>>"
+  (["module attributes {gpu.container_module, #{env}} {",
+    "  gpu.module @kernels {"] + stubs +
+   ["    gpu.func @#{name}(#{params.join(', ')}) kernel attributes {spirv.entry_point_abi = #spirv.entry_point_abi<workgroup_size = [#{n}, 1, 1]>} {"] +
+   body.map { |l| "      #{l}" } +
+   ["      gpu.return", "    }", "  }", "}", ""]).join("\n")
+end
+
+# Section 6: the body is built from an allowlist of dialects.
+BODY_DIALECTS = %w[gpu memref arith scf math func].freeze
+
+def check_emission_text(text)
+  bad = []
+  text.each_line.with_index(1) do |l, i|
+    s = l.strip
+    next if s.empty? || s.start_with?("module attributes") || s == "}" || s.start_with?("} else")
+    next if s =~ /\Areturn( %z : \w+)?\z/ # the stub bodies of the shared functions
+    op = s.sub(/\A%\S+ = /, "")
+    d = op[/\A([a-z_]+)\./, 1]
+    if d.nil? || !BODY_DIALECTS.include?(d)
+      bad << "#{i}: #{s}"
+      next
+    end
+    next unless (callee = op[/\Afunc\.(?:call|func private) @([A-Za-z0-9_]+)/, 1]) || op.start_with?("func.func")
+    bad << "#{i}: #{s}" unless callee&.start_with?("__sp_shared_")
+  end
+  bad
+end
+
+# ---------------------------------------------------------------- SPIR-V exit
+def spirv_pre(text, decl)
+  s = text.gsub(/^\s*func\.func private @__sp_shared_\w+\(.*?\{\n.*?^\s*\}\n/m, "")
+  marks = decl.shared.sort_by { |_k, v| v[:index] }.map do |nm, sh|
+    ", %mark_#{nm}: memref<?x#{MLIR_TY[sh[:type]]}> {spirv.interface_var_abi = #spirv.interface_var_abi<(1, #{sh[:index]})>}"
+  end
+  s.sub!(") kernel attributes", "#{marks.join}) kernel attributes") || die("no kernel signature in the emission")
+  n = 0
+  s.gsub!(/^(\s*)(%\w+) = func\.call @__sp_shared_load_(\w+)\((%\w+)\) : \(i32\) -> (\w+)$/) do
+    i = Regexp.last_match
+    n += 1
+    "#{i[1]}%mix#{n} = arith.index_cast #{i[4]} : i32 to index\n#{i[1]}#{i[2]} = memref.load %mark_#{i[3]}[%mix#{n}] : memref<?x#{i[5]}>"
+  end
+  s.gsub!(/^(\s*)func\.call @__sp_shared_store_(\w+)\((%\w+), (%\w+)\) : \(i32, (\w+)\) -> \(\)$/) do
+    i = Regexp.last_match
+    n += 1
+    "#{i[1]}%mix#{n} = arith.index_cast #{i[3]} : i32 to index\n#{i[1]}memref.store #{i[4]}, %mark_#{i[2]}[%mix#{n}] : memref<?x#{i[5]}>"
+  end
+  die("a shared call was not mapped to its marker") if s.include?("__sp_shared_")
+  s
+end
+
+def spirv_post(text, decl, kernel)
+  s = text.dup
+  inserts_g = +""
+  inserts_a = +""
+  decl.shared.each do |nm, sh|
+    t = MLIR_TY[sh[:type]]
+    wg = "!spirv.ptr<!spirv.array<#{sh[:len]} x #{t}>, Workgroup>"
+    sb = "!spirv.ptr<!spirv.struct<(!spirv.rtarray<#{t}, stride=4> [0])>, StorageBuffer>"
+    m = s.match(/, %(arg\d+): #{Regexp.escape(sb)} \{spirv\.interface_var_abi = #spirv\.interface_var_abi<\(1, #{sh[:index]}\)>\}/) || die("no marker argument for shared :#{nm}")
+    arg = m[1]
+    s.sub!(m[0], "")
+    ids = []
+    s.gsub!(/^(\s*)(%\w+) = spirv\.AccessChain %#{arg}\[%\w+, (%\w+)\] : #{Regexp.escape(sb)}, i32, i32 -> !spirv\.ptr<#{t}, StorageBuffer>$/) do
+      r = Regexp.last_match
+      ids << r[2]
+      "#{r[1]}#{r[2]} = spirv.AccessChain %__sp_addr_#{nm}[#{r[3]}] : #{wg}, i32 -> !spirv.ptr<#{t}, Workgroup>"
+    end
+    ids.each do |id|
+      s.gsub!(/spirv\.Load "StorageBuffer" #{id} /, %(spirv.Load "Workgroup" #{id} ))
+      s.gsub!(/spirv\.Store "StorageBuffer" #{id},/, %(spirv.Store "Workgroup" #{id},))
+    end
+    die("the marker of shared :#{nm} is still used") if s =~ /%#{arg}\b/
+    inserts_g << "    spirv.GlobalVariable @__sp_mem_#{nm} : #{wg}\n"
+    inserts_a << "      %__sp_addr_#{nm} = spirv.mlir.addressof @__sp_mem_#{nm} : #{wg}\n"
+  end
+  unless decl.shared.empty?
+    s.sub!(/^\s*spirv\.func @#{kernel}\(/) { "#{inserts_g}#{Regexp.last_match(0)}" } || die("no spirv.func")
+    s.sub!(/(spirv\.func @#{kernel}\(.*?\{\n)/m) { "#{Regexp.last_match(1)}#{inserts_a}" } || die("no spirv.func body")
+  end
+  signed_ops(s)
+end
+
+# naga turns signless SDiv and ShiftRightArithmetic into u32 operations, which
+# changes the result on negative values. Signed operand types make them signed.
+def signed_ops(text)
+  n = 0
+  s = text.gsub(/^(\s*)(%\w+) = spirv\.SDiv (%\w+), (%\w+) : i32$/) do
+    r = Regexp.last_match
+    n += 1
+    i = r[1]
+    "#{i}%sa#{n} = spirv.Bitcast #{r[3]} : i32 to si32\n#{i}%sb#{n} = spirv.Bitcast #{r[4]} : i32 to si32\n" \
+      "#{i}%sr#{n} = spirv.SDiv %sa#{n}, %sb#{n} : si32\n#{i}#{r[2]} = spirv.Bitcast %sr#{n} : si32 to i32"
+  end
+  s.gsub(/^(\s*)(%\w+) = spirv\.ShiftRightArithmetic (%\w+), (%\w+) : i32, i32$/) do
+    r = Regexp.last_match
+    n += 1
+    i = r[1]
+    "#{i}%sa#{n} = spirv.Bitcast #{r[3]} : i32 to si32\n" \
+      "#{i}%sr#{n} = spirv.ShiftRightArithmetic %sa#{n}, #{r[4]} : si32, i32\n#{i}#{r[2]} = spirv.Bitcast %sr#{n} : si32 to i32"
+  end
+end
+
+def exit_compute_spirv(dir, decl, emission)
+  kernel = decl.kernel[:s]["name"]
+  pre = File.join(dir, "spirv_pre.mlir")
+  File.write(pre, spirv_pre(emission, decl))
+  low = run!([MLIR_OPT, "--arith-expand", "--convert-math-to-spirv", "--map-memref-spirv-storage-class=client-api=vulkan",
+              "--convert-gpu-to-spirv", pre], "mlir-opt (SPIR-V exit)")
+  a = low.index(/^\s*spirv\.module/) || die("no spirv.module in the lowering")
+  b = low.index(/^\s*gpu\.module @kernels/, a) || die("no gpu.module after spirv.module")
+  env = low[/spirv\.target_env = #spirv\.target_env<.*?resource_limits<>>/] || die("no target env")
+  mod = "module attributes {#{env}} {\n#{low[a...b]}\n}\n"
+  stage = File.join(dir, "spirv_module.mlir")
+  File.write(stage, spirv_post(mod, decl, kernel))
+  fin = run!([MLIR_OPT, stage, "--pass-pipeline=builtin.module(spirv.module(spirv-lower-abi-attrs,spirv-update-vce))"],
+             "mlir-opt (SPIR-V ABI)")
+  sa = fin.index("spirv.module") || die("no spirv.module after ABI lowering")
+  ser = File.join(dir, "shader.mlir")
+  File.write(ser, fin[sa...fin.rindex("}")])
+  spv = File.join(dir, "shader.spv")
+  wgsl = File.join(dir, "kernel.wgsl")
+  run!([MLIR_TR, "--no-implicit-module", "--serialize-spirv", ser, "-o", spv], "mlir-translate")
+  run!(["spirv-val", "--target-env", "vulkan1.1", spv], "spirv-val")
+  run!(["naga", "--keep-coordinate-space", spv, wgsl], "naga")
+  metal = File.join(dir, "kernel.metal")
+  run!(["naga", "--keep-coordinate-space", spv, metal], "naga")
+  File.write(metal, msl_with_bindings(File.read(metal), decl.buffers.size))
+  FileUtils.rm_f([pre, stage, ser])
+  [spv, wgsl, metal]
+end
+
+# naga's CLI cannot choose Metal bindings: it marks each argument [[user(fakeN)]],
+# which Metal ignores, numbering what is left. naga also drops a buffer the kernel
+# never uses, so that numbering moves the later buffers. Only the entry's argument
+# list is rewritten, and anything unexpected in it stops the build rather than
+# pairing a buffer with the wrong slot.
+def msl_with_bindings(text, nbuf)
+  entries = text.scan(/^kernel void (\w+)\(/).flatten
+  die("expected one kernel in naga's MSL, found #{entries.size}") unless entries.size == 1
+  head = text.index(/^kernel void /)
+  stop = text.index(/^\) {$/, head) || die("no end to the kernel's argument list in naga's MSL")
+  seen = {}
+  shared = -1
+  list = text[head...stop].lines.map do |line|
+    case line
+    when /\A(.*_arg_(\d+)_) \[\[user\(fake\d+\)\]\]$/
+      head_of_line = $1
+      k = $2.to_i
+      die("naga's MSL has a buffer argument #{k}, but the kernel has #{nbuf} buffers") unless k < nbuf
+      die("naga's MSL has buffer argument #{k} twice") if seen[k]
+      seen[k] = true
+      "#{head_of_line} [[buffer(#{k})]]\n"
+    when /\A(.*\b_buffer_sizes) \[\[user\(fake\d+\)\]\]$/
+      "#{$1} [[buffer(#{nbuf})]]\n"
+    when /\A(?:, |  )threadgroup [^\[]*$/
+      shared += 1
+      "#{line.chomp} [[threadgroup(#{shared})]]\n"
+    else
+      line
+    end
+  end.join
+  die("an argument in naga's MSL has no known binding:\n#{list}") if list.include?("[[user(")
+  # naga passes _buffer_sizes along to its helpers; only reading a field needs a binding,
+  # and the host does not bind it.
+  rest = text[0...head] + text[stop..]
+  die("naga's MSL reads the buffer sizes, which the Metal host does not bind") if rest.match?(/\b_buffer_sizes\.|\barrayLength\b/)
+  text[0...head] + list + text[stop..]
+end
+
+# ------------------------------------------------------------------ NVVM exit
+def nvvm_link(text, decl)
+  out = []
+  src = text.lines
+  i = 0
+  globals = decl.shared.map do |nm, sh|
+    la = "!llvm.array<#{sh[:len]} x #{MLIR_TY[sh[:type]]}>"
+    "    llvm.mlir.global internal @__sp_mem_#{nm}() {addr_space = 3 : i32} : #{la} {\n" \
+      "      %u = llvm.mlir.undef : #{la}\n      llvm.return %u : #{la}\n    }\n"
+  end
+  inserted = false
+  replaced = 0
+  while i < src.size
+    l = src[i]
+    if (m = l.match(/^(\s*)llvm\.func (?:private )?@__sp_shared_(load|store)_(\w+)\(/))
+      ind, which, nm = m[1], m[2], m[3]
+      out.concat(globals) unless inserted
+      inserted = true
+      out << nvvm_fn(which, nm, decl.shared[nm])
+      replaced += 1
+      i += 1 until src[i] =~ /^#{ind}\}\s*$/
+    else
+      out << l
+    end
+    i += 1
+  end
+  die("shared functions replaced: #{replaced}, want #{decl.shared.size * 2}") unless replaced == decl.shared.size * 2
+  out.join
+end
+
+# The lowering calls __nv_sqrtf, which only NVIDIA's libdevice defines; nothing
+# here links that library. The intrinsic is the PTX sqrt instruction itself.
+def nvvm_sqrt(text)
+  s = text.gsub(/llvm\.call @__nv_sqrtf\((%\w+)\) : \(f32\) -> f32/) { "llvm.intr.sqrt(#{Regexp.last_match(1)}) : (f32) -> f32" }
+  s.gsub(/^\s*llvm\.func @__nv_sqrtf\(.*\n/, "")
+end
+
+def nvvm_fn(which, nm, sh)
+  t = MLIR_TY[sh[:type]]
+  la = "!llvm.array<#{sh[:len]} x #{t}>"
+  gep = "%b = llvm.mlir.addressof @__sp_mem_#{nm} : !llvm.ptr<3>\n      " \
+        "%e = llvm.getelementptr %b[0, %i] : (!llvm.ptr<3>, i32) -> !llvm.ptr<3>, #{la}\n      "
+  if which == "load"
+    "    llvm.func @__sp_shared_load_#{nm}(%i: i32) -> #{t} {\n      #{gep}" \
+      "%v = llvm.load %e : !llvm.ptr<3> -> #{t}\n      llvm.return %v : #{t}\n    }\n"
+  else
+    "    llvm.func @__sp_shared_store_#{nm}(%i: i32, %v: #{t}) {\n      #{gep}" \
+      "llvm.store %v, %e : #{t}, !llvm.ptr<3>\n      llvm.return\n    }\n"
+  end
+end
+
+def exit_compute_nvvm(dir, decl)
+  low = run!([MLIR_OPT, File.join(dir, "emission.mlir"),
+              "--pass-pipeline=builtin.module(arith-expand,convert-scf-to-cf,gpu.module(convert-gpu-to-nvvm))"],
+             "mlir-opt (NVVM exit)")
+  stage = File.join(dir, "nvvm_linked.mlir")
+  File.write(stage, nvvm_link(nvvm_sqrt(low), decl))
+  bin = run!([MLIR_OPT, stage,
+              "--pass-pipeline=builtin.module(nvvm-attach-target{chip=sm_70},gpu-to-llvm,gpu-module-to-binary{format=assembly})"],
+             "mlir-opt (PTX)")
+  asm = bin[/assembly = "(.*?)"\s*>/m, 1] || die("no PTX assembly in the binary")
+  ptx = File.join(dir, "kernel.ptx")
+  File.binwrite(ptx, asm.gsub(/\\([0-9A-Fa-f]{2})/) { Regexp.last_match(1).hex.chr }.gsub("\\\\", "\\"))
+  FileUtils.rm_f(stage)
+  ptx
+end
+
+# --------------------------------------------------------------- the Ruby host
+def ruby_string(text) = %("#{text.gsub(/[\\"#]/) { "\\#{$&}" }.gsub("\n", "\\n")}")
+
+def directions(decl, names)
+  out = Hash.new { |h, k| h[k] = [] }
+  names.each_value do |builtin, target|
+    next unless target && decl.buffers.key?(target)
+    case builtin
+    when "gpu_load" then out[target] << :write
+    when "gpu_store" then out[target] << :read
+    when "gpu_atomic_add" then out[target] += %i[write read]
+    end
+  end
+  out
+end
+
+# The artifact is embedded, so a stale PTX or WGSL cannot be paired with this file.
+def host_source(unit, decl, names, source, target, entry)
+  mod = unit.split("_").map(&:capitalize).join
+  dirs = directions(decl, names)
+  slots = decl.buffers.sort_by { |_k, b| b[:slot] }
+  l = ["# generated by spinel-rb2comp; do not edit", "module #{mod}"]
+  if target == "cuda"
+    cuda = ENV["CUDA_PATH"] || die("CUDA_PATH is required for --host cuda")
+    l << %(  ffi_cflags "#{File.join(__dir__, 'sp_cuda_compute.c')} -I#{File.join(cuda, 'targets/x86_64-linux/include')}")
+    l << %(  ffi_lib "cuda")
+  elsif target == "metal"
+    l << %(  ffi_cflags "#{File.join(__dir__, 'sp_metal_compute.m')} -fobjc-arc -framework Foundation -framework Metal")
+  end
+  l += ["  ffi_func :sp_comp_open, [:str, :str, :int, :int, :int], :int",
+        "  ffi_func :sp_comp_write, [:int, :ptr, :int], :int",
+        "  ffi_func :sp_comp_dispatch, [:int], :int",
+        "  ffi_func :sp_comp_read, [:int, :ptr, :int], :int",
+        "  ffi_func :sp_comp_close, [], :int",
+        "  ffi_func :sp_comp_last_error, [], :str",
+        "  def self.sp_check(rc)",
+        %(    raise #{mod}.sp_comp_last_error if rc != 0),
+        "  end",
+        "  def self.open(n)",
+        "    sp_check(#{mod}.sp_comp_open(#{ruby_string(source)}, #{ruby_string(entry)}, #{slots.size}, #{decl.n || 1}, n))",
+        "  end",
+        "  def self.dispatch(n)", "    sp_check(#{mod}.sp_comp_dispatch(n))", "  end",
+        "  def self.close", "    sp_check(#{mod}.sp_comp_close)", "  end"]
+  slots.each_with_index do |(nm, _b), k|
+    if dirs[nm].include?(:write)
+      l += ["  def self.#{nm}_write(buffer)", "    sp_check(#{mod}.sp_comp_write(#{k}, buffer, buffer.size))", "  end"]
+    end
+    if dirs[nm].include?(:read)
+      l += ["  def self.#{nm}_read(buffer)", "    sp_check(#{mod}.sp_comp_read(#{k}, buffer, buffer.size))", "  end"]
+    end
+  end
+  (l + ["end", ""]).join("\n")
+end
+
+# ----------------------------------------------------------------- the driver
+if __FILE__ == $PROGRAM_NAME
+  def usage
+    warn "usage: spinel-rb2comp KERNEL.rb (--out DIR | --check) [--host webgpu|cuda|metal]\n       spinel-rb2comp --check-emission FILE\n       spinel-rb2comp --check-msl FILE NBUF"
+    exit 2
+  end
+
+  if ARGV[0] == "--check-emission"
+    usage unless ARGV.size == 2
+    bad = check_emission_text(File.read(ARGV[1]))
+    if bad.empty?
+      puts "emission check: pass"
+      exit 0
+    end
+    warn "spinel-rb2comp: the body is outside the allowlist:"
+    bad.first(10).each { |b| warn "  #{b}" }
+    exit 1
+  end
+
+  if ARGV[0] == "--check-msl"
+    usage unless ARGV.size == 3
+    print msl_with_bindings(File.read(ARGV[1]), Integer(ARGV[2]))
+    exit 0
+  end
+
+  src = nil
+  outdir = nil
+  host = "webgpu"
+  mode = :build
+  i = 0
+  while i < ARGV.size
+    case ARGV[i]
+    when "--out" then outdir = ARGV[i + 1]; i += 2
+    when "--check" then mode = :check; i += 1
+    when "--host" then host = ARGV[i + 1]; i += 2
+    else
+      usage if ARGV[i].start_with?("-") || src
+      src = ARGV[i]
+      i += 1
+    end
+  end
+  usage if src.nil? || (mode == :build && outdir.nil?) || !%w[webgpu cuda metal].include?(host)
+  die("no input: #{src}") unless File.exist?(src)
+  die("bin/spinel is missing: #{SPINEL}") unless File.executable?(SPINEL)
+  die("spinel-typedump is missing: #{TYPEDUMP}") unless File.executable?(TYPEDUMP)
+
+  unit = File.basename(src, ".rb")
+  die("the file name #{unit} must be a plain lower-case name: it names the Ruby module") unless unit.match?(PLAIN_NAME)
+  begin
+    original = File.read(src)
+    ast0 = Ast.new(src)
+    decl = read_decls(ast0)
+    rewrite = Rewrite.new(original, ast0, decl)
+    if decl.n.nil? && (missing = decl.used & NEEDS_N).any?
+      refuse("WorkgroupRequired", decl.kernel, "#{missing.join(', ')} need a gpu_workgroup declaration")
+    end
+    seeded = File.join(Dir.tmpdir, "sp_rb2comp_#{Process.pid}.rb")
+    at_exit { FileUtils.rm_f(seeded) }
+    File.write(seeded, rewrite.text + seed_text(decl))
+    ast = Ast.new(seeded)
+    types = Types.new(seeded)
+    types.cross_check!(ast)
+    kernel = ast.nodes.values.find { |n| n[:kind] == "DefNode" && n[:s]["name"] == decl.kernel[:s]["name"] }
+    emit = Emit.new(ast, types, decl, rewrite)
+    emit.body(kernel)
+  rescue Refuse => e
+    warn "spinel-rb2comp: #{e.message}"
+    if outdir
+      FileUtils.mkdir_p(outdir)
+      File.write(File.join(outdir, "reject.tsv"), "kind\tnode\tat\twhy\n#{e.tsv_row}\n")
+    end
+    exit 3
+  end
+
+  if mode == :check
+    puts "#{unit}: passed the compute subset"
+    exit 0
+  end
+
+  dir = File.join(outdir, unit)
+  FileUtils.mkdir_p(dir)
+  emission = emission_text(decl, emit.lines)
+  bad = check_emission_text(emission)
+  die("the generated body is outside the allowlist:\n  #{bad.first(5).join("\n  ")}") unless bad.empty?
+  File.write(File.join(dir, "emission.mlir"), emission)
+  spv, wgsl, metal = exit_compute_spirv(dir, decl, emission)
+  ptx = exit_compute_nvvm(dir, decl)
+
+  artifacts = [File.join(dir, "emission.mlir"), spv, wgsl, metal, ptx]
+  layout = decl.buffers.sort_by { |_k, b| b[:slot] }.map { |k, b| "#{k}:#{b[:type]}:#{b[:slot]}" }.join(",")
+  shared = decl.shared.map { |k, s| "#{k}:#{s[:type]}:#{s[:len]}" }.join(",")
+  sig = Digest::SHA256.hexdigest([layout, shared, decl.n || 1, decl.kernel[:s]["name"],
+                                  *artifacts.map { |f| Digest::SHA256.file(f).hexdigest }].join("\n"))
+  File.write(File.join(dir, "sig.txt"), "#{sig}\n")
+  File.write(File.join(dir, "layout.tsv"),
+             "kernel\t#{decl.kernel[:s]['name']}\nworkgroup\t#{decl.n || 1}\nentry_abi\tmemref-expanded-5\n" +
+             decl.buffers.sort_by { |_k, b| b[:slot] }.map { |k, b| "buffer\t#{k}\t#{b[:type]}\t#{b[:slot]}\n" }.join)
+  # naga renames identifiers, so the WGSL and MSL entry points are read back from its output.
+  wgsl_entry = File.read(wgsl)[/@compute[^\n]*\n\s*fn (\w+)/, 1] || die("no @compute entry point in kernel.wgsl")
+  metal_entry = File.read(metal)[/^kernel void (\w+)\(/, 1]
+  artifact, entry = { "cuda" => [ptx, decl.kernel[:s]["name"]], "metal" => [metal, metal_entry],
+                      "webgpu" => [wgsl, wgsl_entry] }.fetch(host)
+  File.write(File.join(dir, "#{unit}_host.rb"),
+             host_source(unit, decl, rewrite.names, File.read(artifact), host, entry))
+  puts "built #{unit}  sig=#{sig[0, 16]}  spv=#{File.size(spv)}B  wgsl=#{File.size(wgsl)}B  metal=#{File.size(metal)}B  ptx=#{File.size(ptx)}B"
+end

@@ -1,0 +1,7 @@
+core-contract 1
+root refuse/bool_result.rb
+entry bool_result
+result i64
+param data buffer i32 in count n_data
+param n_data scalar u64
+param i scalar i64

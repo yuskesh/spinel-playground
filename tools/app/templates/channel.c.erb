@@ -1,0 +1,139 @@
+/* generated from tools/app/templates/channel.c.erb: the <%= op %> operation of
+ * channel `<%= c.name %>`, alone in this translation unit (decision 0014 §5;
+ * the plan's "Channels"). Built without link-time optimisation; noinline,
+ * and the labels below are global, so any second copy of this body would
+ * define them twice and fail to link. */
+#include "channel_<%= c.name %>.h"
+#if defined(SPC_VERIFY)
+/* 0014 §10 (a): the operation and its record inside one critical section */
+#include "recorder.h"
+#define SPC_SECTION_BEGIN() uint32_t spc_pm = spc_rec_section_enter()
+#define SPC_SECTION_END() spc_rec_section_leave(spc_pm)
+#define SPC_REC_ENQ(id, res, data, n) spc_tr_ENQ(spc_rec_ctx, spc_rec_entry, <%= app.channels.index(c) %>u, (id), (res), (data), (n))
+#define SPC_REC_DEQ(id, res, data, n) spc_tr_DEQ(spc_rec_ctx, spc_rec_entry, <%= app.channels.index(c) %>u, (id), (res), (data), (n))
+/* the extern's number in the trace: the board's members, then the channels' in generation order */
+#define SPC_XI <%= xi %>u
+#else
+#define SPC_SECTION_BEGIN() ((void)0)
+#define SPC_SECTION_END() ((void)0)
+#define SPC_REC_ENQ(id, res, data, n) ((void)0)
+#define SPC_REC_DEQ(id, res, data, n) ((void)0)
+#endif
+
+#if defined(__APPLE__)
+#define SPC_SYM(name) "_" name
+#else
+#define SPC_SYM(name) name
+#endif
+#define SPC_LABEL(name) __asm__ volatile(".globl " SPC_SYM(name) "\n" SPC_SYM(name) ":" ::: "memory")
+
+/* a byte copy of the ring's own, always inlined so the copy span holds it: no libc symbol, so the object depends on
+ * nothing (0014 §6, the undefined set) */
+__attribute__((always_inline)) static inline void spc_copy_<%= c.name %>_<%= op %>(uint8_t *dst, const uint8_t *src, uint32_t n)
+{
+	for (uint32_t i = 0; i < n; i++) {
+		dst[i] = src[i];
+	}
+}
+<% if op == "put" %>
+__attribute__((noinline))
+int32_t spc_channel_<%= c.name %>_put(const uint8_t *data, uint32_t data_len, uint32_t n)
+{
+#if defined(SPC_VERIFY)
+	/* the entry's extern call, as the host records it: the whole buffer and n;
+	 * the transport's own puts (an inbound channel) are not extern calls */
+	struct spc_rec_arg a[2] = { { 1u, 0, data, data_len }, { 0u, (int64_t)n, 0, 0u } };
+	uint8_t from_entry = spc_rec_entry != SPC_NO_ENTRY;
+
+	if (from_entry) {
+		spc_tr_XCALL(spc_rec_ctx, spc_rec_entry, SPC_XI, 2u, a);
+	}
+	{
+#endif
+	uint32_t head, tail, slot;
+
+	/* the reads that decide the operation are inside the section too, so the
+	 * decision, the publication and the record are one (0014 §10 (a)) */
+	SPC_SECTION_BEGIN();
+	head = atomic_load_explicit(&spc_channel_<%= c.name %>_head, memory_order_relaxed);
+	tail = atomic_load_explicit(&spc_channel_<%= c.name %>_tail, memory_order_acquire);
+	(void)data_len; /* the guards established n <= data_len before the call */
+	if (head - tail >= SPC_CHANNEL_<%= c.name.upcase %>_DEPTH) {
+		SPC_REC_ENQ(0u, SPC_ENQ_RESULT_FULL, data, n);
+		SPC_SECTION_END();
+#if defined(SPC_VERIFY)
+		if (from_entry) {
+			spc_tr_XRET(spc_rec_ctx, spc_rec_entry, SPC_XI, 0);
+		}
+#endif
+		return 0;
+	}
+	slot = head % SPC_CHANNEL_<%= c.name.upcase %>_DEPTH;
+	SPC_LABEL("spc_ring_<%= c.name %>_put_copy_begin");
+	spc_copy_<%= c.name %>_put(spc_channel_<%= c.name %>_slots[slot], data, n);
+	spc_channel_<%= c.name %>_lens[slot] = n;
+	SPC_LABEL("spc_ring_<%= c.name %>_put_copy_end");
+	SPC_LABEL("spc_ring_<%= c.name %>_put_pub_begin");
+	atomic_store_explicit(&spc_channel_<%= c.name %>_head, head + 1u, memory_order_release);
+	SPC_LABEL("spc_ring_<%= c.name %>_put_pub_end");
+	SPC_REC_ENQ(head + 1u, SPC_ENQ_RESULT_QUEUED, data, n);
+	SPC_SECTION_END();
+#if defined(SPC_VERIFY)
+	if (from_entry) {
+		spc_tr_XRET(spc_rec_ctx, spc_rec_entry, SPC_XI, 1);
+	}
+	}
+#endif
+	return 1;
+}
+<% else %>
+__attribute__((noinline))
+int32_t spc_channel_<%= c.name %>_get(uint8_t *data, uint32_t data_len)
+{
+#if defined(SPC_VERIFY)
+	/* the transport's own gets are not an entry's extern calls: DEQ only */
+	struct spc_rec_arg a[1] = { { 1u, 0, data, data_len } };
+	uint8_t from_entry = spc_rec_entry != SPC_NO_ENTRY;
+
+	if (from_entry) {
+		spc_tr_XCALL(spc_rec_ctx, spc_rec_entry, SPC_XI, 1u, a);
+	}
+	{
+#endif
+	uint32_t tail, head, slot, n;
+
+	SPC_SECTION_BEGIN();
+	tail = atomic_load_explicit(&spc_channel_<%= c.name %>_tail, memory_order_relaxed);
+	head = atomic_load_explicit(&spc_channel_<%= c.name %>_head, memory_order_acquire);
+	(void)data_len; /* the static requirement established data_len >= size at build */
+	if (head == tail) {
+		SPC_REC_DEQ(0u, SPC_DEQ_RESULT_EMPTY, data, 0u);
+		SPC_SECTION_END();
+#if defined(SPC_VERIFY)
+		if (from_entry) {
+			spc_tr_XRET(spc_rec_ctx, spc_rec_entry, SPC_XI, 0);
+		}
+#endif
+		return 0;
+	}
+	slot = tail % SPC_CHANNEL_<%= c.name.upcase %>_DEPTH;
+	SPC_LABEL("spc_ring_<%= c.name %>_get_copy_begin");
+	n = spc_channel_<%= c.name %>_lens[slot];
+	spc_copy_<%= c.name %>_get(data, spc_channel_<%= c.name %>_slots[slot], n);
+	SPC_LABEL("spc_ring_<%= c.name %>_get_copy_end");
+	SPC_LABEL("spc_ring_<%= c.name %>_get_pub_begin");
+	atomic_store_explicit(&spc_channel_<%= c.name %>_tail, tail + 1u, memory_order_release);
+	SPC_LABEL("spc_ring_<%= c.name %>_get_pub_end");
+	SPC_REC_DEQ(tail + 1u, SPC_DEQ_RESULT_DEQUEUED, data, n);
+	SPC_SECTION_END();
+#if defined(SPC_VERIFY)
+	if (from_entry) {
+		spc_tr_XRET(spc_rec_ctx, spc_rec_entry, SPC_XI, (int64_t)n);
+	}
+	return (int32_t)n;
+	}
+#else
+	return (int32_t)n;
+#endif
+}
+<% end %>

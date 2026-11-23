@@ -1,0 +1,44 @@
+# x86-64 Linux host: the native leg of the core slice.
+#
+# The MCU profiles describe somebody else's board. This one describes the
+# machine the checks run on, so a core object can be linked into an ordinary C
+# harness and executed. It states the same three layers as the others -- target,
+# ABI, platform -- and changes none of the contract:
+#
+#   abi.overflow    trap, exactly as P003 decision record D-2 fixed it
+#   abi.int_width   i64 bodies, boundary widths from the freestanding_def
+#   platform        one extern, the trap hook; nothing else is reachable
+#
+# Written in the pre-T5 form. That is not a legacy choice: the native profile
+# reader refuses the platform-first (T-5) form outright, because expanding it
+# needs the P008 capability ledger, which this slice does not import.
+#
+# `cpu:` is deliberately absent. The generator passes it on as -mcpu=, which
+# clang rejected for x86-64 ("unsupported option '-mcpu=' for target
+# 'x86_64-unknown-linux-gnu'") and the in-process code generation refuses as
+# well; with the key omitted the data layout is asked of the target machine,
+# which is what the MCU profiles document as the fallback.
+
+target:
+  triple: x86_64-unknown-linux-gnu
+  cflags:
+    - -O2
+
+abi:
+  boundary: c-abi
+  int_width: i64-internal
+  overflow: trap
+  trap_hook: spinel_trap
+
+runtime:
+  # A core object links no libc and no libm. The compiler runtime is allowed
+  # because a 64-bit division can lower to a builtin; the undefined-symbol gate
+  # is what reports whatever actually survives.
+  libc: none
+  libm: none
+  compiler_rt: allow
+
+platform:
+  type: none
+  externs:
+    - spinel_trap

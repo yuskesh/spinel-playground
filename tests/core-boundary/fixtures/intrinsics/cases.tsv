@@ -1,0 +1,73 @@
+# Decision 0022's acceptance values for the word intrinsics, hand-computed
+# from the decision's own statements (MIN = -2147483648, MAX = 2147483647).
+#
+# Columns, tab-separated:
+#   id      unique; names the case in output
+#   width   the body's Integer width: 32, or 64 (the host's, as an int64 body)
+#   entry   the method in src/words.rb
+#   args    comma-separated arguments, in order, passed at run time
+#   status  ok | arithmetic
+#   value   the expected result for ok; `-` otherwise
+#
+# Every ok case is listed at both widths: a 64-bit body computes the same
+# answers as the board's 32-bit one. The operand-range cases are at 64 only:
+# there an out-of-i32 operand reaches the intrinsic at run time, which is the
+# guard under test, not a 32-bit literal's refusal at parse time.
+#id	width	entry	args	status	value
+add_max_1_32	32	w_add	2147483647,1	ok	-2147483648
+add_max_1_64	64	w_add	2147483647,1	ok	-2147483648
+same_body_wrap_32	32	w_add_or_plain	2147483647,1,0	ok	-2147483648
+same_body_plain_32	32	w_add_or_plain	2147483647,1,1	arithmetic	-
+sub_min_1_32	32	w_sub	-2147483648,1	ok	2147483647
+sub_min_1_64	64	w_sub	-2147483648,1	ok	2147483647
+neg_min_32	32	w_neg	-2147483648	ok	-2147483648
+neg_min_64	64	w_neg	-2147483648	ok	-2147483648
+mul_min_min_32	32	w_mul	-2147483648,-2147483648	ok	0
+mul_min_min_64	64	w_mul	-2147483648,-2147483648	ok	0
+lt_0_min_32	32	u_lt	0,-2147483648	ok	1
+lt_0_min_64	64	u_lt	0,-2147483648	ok	1
+lt_min_0_32	32	u_lt	-2147483648,0	ok	0
+lt_min_0_64	64	u_lt	-2147483648,0	ok	0
+le_min_min_32	32	u_le	-2147483648,-2147483648	ok	1
+le_min_min_64	64	u_le	-2147483648,-2147483648	ok	1
+gt_min_0_32	32	u_gt	-2147483648,0	ok	1
+gt_min_0_64	64	u_gt	-2147483648,0	ok	1
+ge_0_min_32	32	u_ge	0,-2147483648	ok	0
+ge_0_min_64	64	u_ge	0,-2147483648	ok	0
+shr_m1_0_32	32	u_shr	-1,0	ok	-1
+shr_m1_0_64	64	u_shr	-1,0	ok	-1
+shr_m1_31_32	32	u_shr	-1,31	ok	1
+shr_m1_31_64	64	u_shr	-1,31	ok	1
+shr_count_m1_32	32	u_shr	-1,-1	arithmetic	-
+shr_count_m1_64	64	u_shr	-1,-1	arithmetic	-
+shr_count_32_32	32	u_shr	-1,32	arithmetic	-
+shr_count_32_64	64	u_shr	-1,32	arithmetic	-
+fmul_m1_1_32	32	f_mul	-1,1	ok	-1
+fmul_m1_1_64	64	f_mul	-1,1	ok	-1
+fmul_min_min_32	32	f_mul	-2147483648,-2147483648	ok	0
+fmul_min_min_64	64	f_mul	-2147483648,-2147483648	ok	0
+fdiv_16383_32	32	f_div	16383,1	ok	1073676288
+fdiv_16383_64	64	f_div	16383,1	ok	1073676288
+fdiv_m16383_32	32	f_div	-16383,1	ok	-1073676288
+fdiv_m16383_64	64	f_div	-16383,1	ok	-1073676288
+fdiv_16384_32	32	f_div	16384,1	ok	2147483647
+fdiv_16384_64	64	f_div	16384,1	ok	2147483647
+fdiv_m16384_32	32	f_div	-16384,1	ok	-2147483648
+fdiv_m16384_64	64	f_div	-16384,1	ok	-2147483648
+fdiv_min_min_32	32	f_div	-2147483648,-2147483648	ok	65536
+fdiv_min_min_64	64	f_div	-2147483648,-2147483648	ok	65536
+fdiv_m1_3_32	32	f_div	-1,3	ok	-21845
+fdiv_m1_3_64	64	f_div	-1,3	ok	-21845
+fdiv_0_0_32	32	f_div	0,0	ok	2147483647
+fdiv_0_0_64	64	f_div	0,0	ok	2147483647
+fdiv_1_0_32	32	f_div	1,0	ok	2147483647
+fdiv_1_0_64	64	f_div	1,0	ok	2147483647
+fdiv_m1_0_32	32	f_div	-1,0	ok	-2147483648
+fdiv_m1_0_64	64	f_div	-1,0	ok	-2147483648
+inlined_32	32	w_add_inlined	2147483647,1	ok	-2147483648
+inlined_64	64	w_add_inlined	2147483647,1	ok	-2147483648
+range_add_64	64	w_add	2147483648,0	arithmetic	-
+range_add_low_64	64	w_add	0,-2147483649	arithmetic	-
+range_lt_64	64	u_lt	-2147483649,0	arithmetic	-
+range_shr_64	64	u_shr	4294967295,1	arithmetic	-
+range_fdiv_64	64	f_div	2147483648,0	arithmetic	-

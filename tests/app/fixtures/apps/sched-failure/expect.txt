@@ -1,0 +1,4 @@
+FAIL	3	0	status=3	release=2
+CANCEL	3	0	entry=0	from=3	to=9	fail_seq=9
+STATUS	0	1	status=0
+summary selected 6 skipped 0 cancelled 7 cut 0

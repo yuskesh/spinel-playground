@@ -1,0 +1,16 @@
+gate	target	wrt	index	probe	enzyme	fd	rel	verdict
+G1	oint	x	-	-	-	-	O2	REFUSED-BUT-FORCED
+G1	oint_arg	-	-	-	-	-	O2	REFUSED
+G1	opoly	-	-	-	-	-	O4/O6	REFUSED
+G1	odecay	-	-	-	-	-	O4/O6	REFUSED
+G1	oconst	-	-	-	-	-	O7	REFUSED
+G1	oalloc	x	-	-	-	-	-	OK
+G1	ostr	-	-	-	-	-	subset	REFUSED
+G1	ohash	-	-	-	-	-	subset	REFUSED
+G1	owrt	-	-	-	-	-	decl	REFUSED
+G1	ofwd	-	-	-	-	-	mode	REFUSED
+G1	onoprobe	-	-	-	-	-	-	REFUSED
+G2	oint	-	-	-	-	-	PROVEN-MODULO-ABORT	OK
+G2	oalloc	-	-	-	-	-	REJECT	REFUSED
+G3	oint	x	0	0	0.000000000000000e+00	3.333333333333333e+05	1.000e+00	MISMATCH
+G4	oint	x	-	-	0.000000000000000e+00	-	-	IDENTICALLY-ZERO

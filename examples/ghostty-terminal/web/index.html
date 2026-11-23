@@ -1,0 +1,14 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Spinel terminal</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #000; color: #ddd; font: 14px system-ui, sans-serif; }
+  #term { display: block; margin: 8px; outline: none; }
+  #status { position: fixed; right: 16px; bottom: 8px; background: #000; }
+  #scrollbar { position: fixed; top: 0; bottom: 0; right: 1px; width: 5px; pointer-events: none; }
+  #thumb { position: absolute; left: 0; right: 0; display: none; border-radius: 3px; background: #777; }
+</style>
+<canvas id="term" tabindex="0"></canvas>
+<div id="status"></div>
+<div id="scrollbar"><div id="thumb"></div></div>
+<script type="module" src="main.mjs"></script>

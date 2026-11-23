@@ -1,0 +1,3 @@
+function	source	note
+mcux_lpuart_poll_in	su	https://github.com/zephyrproject-rtos/zephyr/blob/dccb09599635bdff17633fa7e9dab014b91dce90/drivers/serial/uart_mcux_lpuart.c: the transport's inbound uart_poll_in on the console LPUART; under CONFIG_UART_INTERRUPT_DRIVEN the outbound bytes go to a ring the interrupt drains, so the thread's other call is uart_irq_tx_enable (mcux_lpuart_irq_tx_enable 0 + LPUART_EnableInterrupts 8), the smaller of the two
+LPUART_GetStatusFlags	su	the NXP HAL's status read (fsl_lpuart.c), which mcux_lpuart_poll_in calls; a leaf

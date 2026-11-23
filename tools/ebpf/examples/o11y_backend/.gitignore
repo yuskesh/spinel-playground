@@ -1,0 +1,17 @@
+# 取得物・実行時生成物 (再現: scripts/fetch-duckdb.sh、実行手順は README.md)
+vendor/
+build*/
+data*/
+nohup.out
+# spinel が吐く binary / 生成 C (basename = .rb と同名)
+ingestd
+ingestd.c
+queryd
+queryd.c
+# steps/ は .rb と README だけ track (コンパイル生成物を除外)
+steps/*
+!steps/*.rb
+!steps/README.md
+tests/*.bin
+tests/*.parquet
+tests/certs/

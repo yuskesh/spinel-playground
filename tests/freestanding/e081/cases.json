@@ -1,0 +1,275 @@
+{
+ "cases": [
+  {
+   "name": "toggle0",
+   "sym": "spinel_toggle_count",
+   "args": [
+    {
+     "v": "0",
+     "t": "i32"
+    }
+   ],
+   "ret": "i32",
+   "kind": "int",
+   "expect": "same"
+  },
+  {
+   "name": "toggle7",
+   "sym": "spinel_toggle_count",
+   "args": [
+    {
+     "v": "7",
+     "t": "i32"
+    }
+   ],
+   "ret": "i32",
+   "kind": "int",
+   "expect": "same"
+  },
+  {
+   "name": "toggle100",
+   "sym": "spinel_toggle_count",
+   "args": [
+    {
+     "v": "100",
+     "t": "i32"
+    }
+   ],
+   "ret": "i32",
+   "kind": "int",
+   "expect": "same"
+  },
+  {
+   "name": "pin_ok",
+   "sym": "spinel_pin_probe",
+   "args": [
+    {
+     "v": "3",
+     "t": "i64"
+    }
+   ],
+   "ret": "i32",
+   "kind": "int",
+   "expect": "same"
+  },
+  {
+   "name": "pin_rangehigh",
+   "sym": "spinel_pin_probe",
+   "args": [
+    {
+     "v": "99",
+     "t": "i64"
+    }
+   ],
+   "ret": "i32",
+   "kind": "int",
+   "expect": "same"
+  },
+  {
+   "name": "pin_big",
+   "sym": "spinel_pin_probe",
+   "args": [
+    {
+     "v": "4294967301",
+     "t": "i64"
+    }
+   ],
+   "ret": "i32",
+   "kind": "int",
+   "expect": "diverge"
+  },
+  {
+   "name": "pin_neg",
+   "sym": "spinel_pin_probe",
+   "args": [
+    {
+     "v": "-4294967291",
+     "t": "i64"
+    }
+   ],
+   "ret": "i32",
+   "kind": "int",
+   "expect": "diverge"
+  },
+  {
+   "name": "pin_wrap_big",
+   "sym": "spinel_pin_wrap",
+   "args": [
+    {
+     "v": "4294967301",
+     "t": "i64"
+    }
+   ],
+   "ret": "i32",
+   "kind": "int",
+   "expect": "diverge"
+  },
+  {
+   "name": "pin_wrap_neg",
+   "sym": "spinel_pin_wrap",
+   "args": [
+    {
+     "v": "-4294967291",
+     "t": "i64"
+    }
+   ],
+   "ret": "i32",
+   "kind": "int",
+   "expect": "diverge"
+  },
+  {
+   "name": "wait5",
+   "sym": "spinel_wait_check",
+   "args": [
+    {
+     "v": "5",
+     "t": "i32"
+    }
+   ],
+   "ret": "i32",
+   "kind": "int",
+   "expect": "same"
+  },
+  {
+   "name": "chirp",
+   "sym": "spinel_chirp",
+   "args": [
+    {
+     "v": "42",
+     "t": "i32"
+    },
+    {
+     "v": "23",
+     "t": "i32"
+    }
+   ],
+   "ret": "i64",
+   "kind": "int",
+   "expect": "same"
+  },
+  {
+   "name": "fsense_dyadic",
+   "sym": "spinel_fsense",
+   "args": [
+    {
+     "v": "0.25",
+     "t": "f64"
+    },
+    {
+     "v": "1.5",
+     "t": "f64"
+    }
+   ],
+   "ret": "f64",
+   "kind": "float",
+   "expect": "same"
+  },
+  {
+   "name": "fsense_inexact",
+   "sym": "spinel_fsense",
+   "args": [
+    {
+     "v": "0.1",
+     "t": "f64"
+    },
+    {
+     "v": "0.0",
+     "t": "f64"
+    }
+   ],
+   "ret": "f64",
+   "kind": "float",
+   "expect": "diverge"
+  },
+  {
+   "name": "csum_ok",
+   "sym": "spinel_csum",
+   "args": [
+    {
+     "v": "305419896",
+     "t": "i64"
+    }
+   ],
+   "ret": "i64",
+   "kind": "int",
+   "expect": "same"
+  },
+  {
+   "name": "csum_neg",
+   "sym": "spinel_csum",
+   "args": [
+    {
+     "v": "-1",
+     "t": "i64"
+    }
+   ],
+   "ret": "i64",
+   "kind": "int",
+   "expect": "diverge"
+  },
+  {
+   "name": "csum_big",
+   "sym": "spinel_csum",
+   "args": [
+    {
+     "v": "4294967297",
+     "t": "i64"
+    }
+   ],
+   "ret": "i64",
+   "kind": "int",
+   "expect": "diverge"
+  },
+  {
+   "name": "mix_neg",
+   "sym": "spinel_mix",
+   "args": [
+    {
+     "v": "-7",
+     "t": "i32"
+    },
+    {
+     "v": "2",
+     "t": "i32"
+    }
+   ],
+   "ret": "i64",
+   "kind": "int",
+   "expect": "same"
+  },
+  {
+   "name": "mix_pos",
+   "sym": "spinel_mix",
+   "args": [
+    {
+     "v": "7",
+     "t": "i32"
+    },
+    {
+     "v": "2",
+     "t": "i32"
+    }
+   ],
+   "ret": "i64",
+   "kind": "int",
+   "expect": "same"
+  },
+  {
+   "name": "mix_div0",
+   "sym": "spinel_mix",
+   "args": [
+    {
+     "v": "1",
+     "t": "i32"
+    },
+    {
+     "v": "0",
+     "t": "i32"
+    }
+   ],
+   "ret": "i64",
+   "kind": "int",
+   "expect": "diverge"
+  }
+ ]
+}

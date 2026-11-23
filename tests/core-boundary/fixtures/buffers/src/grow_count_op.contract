@@ -1,0 +1,6 @@
+core-contract 1
+root src/grow_count_op.rb
+entry grow_count_op
+result i64
+param dst buffer u8 inout count n_dst
+param n_dst scalar u64

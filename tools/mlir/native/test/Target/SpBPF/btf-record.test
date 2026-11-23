@@ -1,0 +1,45 @@
+# BTF contains map definitions and record layout.
+#
+# Feature-gate bpftool: absent from the macOS Homebrew keg; the observed Debian setup built it from
+# kernel sources into /usr/local/bin.
+# REQUIRES: bpftool
+#
+# RUN: spbpf-compile %S/Inputs/prog.mlir --schema %S/schema-roundtrip.json -o %t.bpf.o
+# Separate FileCheck prefixes by kind rather than depending on BTF type-id order.
+# RUN: bpftool btf dump file %t.bpf.o format raw | FileCheck --check-prefix=REC %s
+# RUN: bpftool btf dump file %t.bpf.o format raw | FileCheck --check-prefix=MAP %s
+# RUN: bpftool btf dump file %t.bpf.o format raw | FileCheck --check-prefix=INT %s
+# RUN: bpftool btf dump file %t.bpf.o format raw | FileCheck --check-prefix=SEC %s
+
+# Match schema layout: event size 48, hdr@0, comm@16, pid@32, duration_ns@40.
+# REC: STRUCT 'event' size=48 vlen=4
+# REC-NEXT: 'hdr' type_id={{[0-9]+}} bits_offset=0
+# REC-NEXT: 'comm' type_id={{[0-9]+}} bits_offset=128
+# REC-NEXT: 'pid' type_id={{[0-9]+}} bits_offset=256
+# REC-NEXT: 'duration_ns' type_id={{[0-9]+}} bits_offset=320
+# Nested structs must stay named, not anonymous copies.
+# REC: STRUCT 'hdr' size=16 vlen=2
+# REC-NEXT: 'kind' type_id={{[0-9]+}} bits_offset=0
+# REC-NEXT: 'ts' type_id={{[0-9]+}} bits_offset=64
+
+# Use libbpf BTF-defined map form. Only the emitter owns ids (hash=1/ringbuf=27); retain max_entries
+# too.
+# MAP-DAG: ARRAY '(anon)' type_id={{[0-9]+}} index_type_id={{[0-9]+}} nr_elems=1
+# MAP-DAG: ARRAY '(anon)' type_id={{[0-9]+}} index_type_id={{[0-9]+}} nr_elems=1024
+# MAP-DAG: ARRAY '(anon)' type_id={{[0-9]+}} index_type_id={{[0-9]+}} nr_elems=27
+# MAP-DAG: ARRAY '(anon)' type_id={{[0-9]+}} index_type_id={{[0-9]+}} nr_elems=262144
+# MAP-DAG: VAR 'counts'
+# MAP-DAG: VAR 'events'
+# Ringbuf has no key/value; the schema distinction must reach BTF.
+# MAP-DAG: STRUCT '(anon)' size=16 vlen=2
+
+# Signedness must reach BTF, beyond the former width-only comparison.
+# INT-DAG: INT 'u32' size=4 {{.*}} encoding=(none)
+# INT-DAG: INT 'u64' size=8 {{.*}} encoding=(none)
+# INT-DAG: INT 's8' size=1 {{.*}} encoding=SIGNED
+
+# Witnesses form a dedicated DATASEC, a machine-readable record index using generic .spbpf_records
+# spelling.
+# SEC: DATASEC '.spbpf_records'
+# SEC-DAG: VAR '__spbpf_record_event'
+# SEC-DAG: VAR '__spbpf_record_hdr'

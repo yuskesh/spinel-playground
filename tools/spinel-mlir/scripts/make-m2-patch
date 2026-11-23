@@ -1,0 +1,56 @@
+#!/usr/bin/env ruby
+require 'fileutils'
+require 'open3'
+root=File.expand_path('..',__dir__)
+source,destination=ARGV
+abort 'usage: make-m2-patch M1-patched-source new-overlay' unless destination
+abort 'output exists' if File.exist?(destination)
+edits={}
+insert=lambda do |file,anchor,addition|
+  body=edits.fetch(file){File.binread(File.join(source,file))}
+  abort "anchor not unique: #{file}: #{anchor}" unless body.scan(anchor).length==1
+  edits[file]=body.sub(anchor,addition+anchor)
+end
+insert.call('src/main.c','int sp_emit_mlir_enabled = 0;',"const char *sp_analysis_root_spec = 0;\n")
+insert.call('src/main.c','#include "codegen.h"',"#include \"analysis_root.h\"\n")
+insert.call('src/main.c','    else if (sp_streq(a, "--dump-ast"))',<<~C)
+      else if (!strncmp(a, "--analysis-root=", 16) && a[16]) {
+        if (!facts_queue_root_request(a+16)) return 2;
+        sp_analysis_root_spec=a+16; i++;
+      }
+      else if (sp_streq(a,"--analysis-root") || sp_streq(a,"--analysis-root=")) {
+        fprintf(stderr,"spinel: analysis root requires METHOD:TYPE[,TYPE...]\\n"); return 2;
+      }
+  C
+insert.call('src/main.c','  char *text = sp_parse_file_to_text(source, argv[0]);',<<~C)
+    if (sp_analysis_root_spec && (!sp_emit_mlir_enabled || !facts_parse_root_request(sp_analysis_root_spec))) {
+      fprintf(stderr,"spinel: analysis root requires emit-mlir and valid METHOD:TYPE[,TYPE...]\\n"); return 2;
+    }
+  C
+insert.call('src/analyze.c','#include "analyze_internal.h"',"#include \"analysis_root.h\"\n")
+insert.call('src/analyze.c','static void apply_rbs_seeds(Compiler *c, const char *path) {',"#include \"analysis_root.inc\"\n")
+insert.call('src/analyze.c','    if (is_root) { sc->reachable = 1; queue[qtail++] = s; }',"    if (facts_scope_is_root(s)) is_root=1;\n")
+insert.call('src/analyze.c','  /* Scope shape (count, class_id, name, is_cmethod) is fixed from here on, so',"  if (sp_analysis_root_spec) facts_seed_root(c);\n")
+insert.call('src/analyze.c','  if (disable)' + "\n" + '    for (int k = 0; k < c->nclasses; k++) c->classes[k].instantiated = 1;',"  if (sp_analysis_root_spec) facts_root_census(c);\n")
+insert.call('src/emit_mlir.inc','/* M1: generic MLIR transport, included after existing metadata helpers. */',"#include \"analysis_root.h\"\n")
+insert.call('src/emit_mlir.inc','static int mlir_emit(Compiler *c) {',"#include \"analysis_root_emit.inc\"\n")
+insert.call('src/emit_mlir.inc','  buf_puts(&b,"module attributes {spinel_facts.version = 1 : i64, spinel_facts.producer = \\"spinel\\", "',<<~C)
+    if (sp_analysis_root_spec) { mlir_root_header(&b,c); goto mlir_root_header_done; }
+  C
+insert.call('src/emit_mlir.inc','  if (g_ndiags) for (int i=0;i<g_ndiags;++i) {',"mlir_root_header_done: ;\n")
+%w[analysis_root.h analysis_root.inc analysis_root_emit.inc].each do |name|
+  edits["src/#{name}"]=File.binread(File.join(root,'patches/m2',name))
+end
+FileUtils.mkdir_p(destination)
+patch=String.new
+edits.each do |name,body|
+  target=File.join(destination,name)
+  FileUtils.mkdir_p(File.dirname(target)); File.binwrite(target,body)
+  old=File.join(source,name); old='/dev/null' unless File.exist?(old)
+  diff,status=Open3.capture2('diff','-u','--label',"a/#{name}",'--label',"b/#{name}",old,target)
+  abort 'diff failed' unless [0,1].include?(status.exitstatus)
+  abort "non-additive patch #{name}" if diff.lines.any?{|l|l.start_with?('-') && !l.start_with?('---')}
+  patch<<diff
+end
+File.binwrite(File.join(root,'patches/M2-analysis-root.patch'),patch)
+puts "M2: #{patch.lines.count{|l|l.start_with?('+')&&!l.start_with?('+++')}} additions"

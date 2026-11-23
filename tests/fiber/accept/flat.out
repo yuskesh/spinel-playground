@@ -1,0 +1,12 @@
+:first
+total 15
+:a
+:b
+sum 3
+:q
+[1, :two, 3]
+:cond
+yes
+0
+1
+1

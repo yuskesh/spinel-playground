@@ -1,0 +1,18 @@
+device	metal
+image	64x64
+pixels	4096
+ky	0.25000000000000294	0.49999999999999417	0.25000000000000294
+kx	0.2499999999999974	0.5000000000000053	0.2499999999999974
+hash	17694367483062141900
+h2d	5
+d2h_before_readback	0
+invoke	2
+alloc	7
+readback_bytes	4096
+ndiff_vs_f64ref	97
+nd_near	97
+nd_far	0
+max_abs_diff	1
+ties	226
+min_margin	0.0
+out	./out_metal.pgm

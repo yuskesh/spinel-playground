@@ -1,0 +1,13 @@
+gate	target	wrt	index	probe	enzyme	fd	rel	verdict
+G1	oint	-	-	-	-	-	O2	REFUSED
+G1	oint_arg	-	-	-	-	-	O2	REFUSED
+G1	opoly	-	-	-	-	-	O4/O6	REFUSED
+G1	odecay	-	-	-	-	-	O4/O6	REFUSED
+G1	oconst	-	-	-	-	-	O7	REFUSED
+G1	oalloc	x	-	-	-	-	-	OK
+G1	ostr	-	-	-	-	-	subset	REFUSED
+G1	ohash	-	-	-	-	-	subset	REFUSED
+G1	owrt	-	-	-	-	-	decl	REFUSED
+G1	ofwd	-	-	-	-	-	mode	REFUSED
+G1	onoprobe	-	-	-	-	-	-	REFUSED
+G2	oalloc	-	-	-	-	-	REJECT	REFUSED

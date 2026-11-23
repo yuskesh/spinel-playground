@@ -1,0 +1,7 @@
+core-contract 2
+root counts.rb
+entry c_loops
+context thread
+result none
+param out buffer i32 inout count const 4
+extern Adc.latest symbol spc_board_adc_latest arg ch u32 returns i32 isr_ok guard ch < 1 else bounds bound iterations 1 evidence e/adc.json

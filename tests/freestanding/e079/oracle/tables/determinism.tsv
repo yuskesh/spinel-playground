@@ -1,0 +1,6 @@
+check	verdict	detail
+generator_determinism	PASS	the .ll is byte-identical across runs
+grad_decl_inert.arm64	PASS	same .ll with and without freestanding_grad_def
+grad_decl_inert.cortex-m33-zephyr	PASS	same .ll with and without freestanding_grad_def
+grad_decl_inert.riscv32-zephyr	PASS	same .ll with and without freestanding_grad_def
+grad_decl_inert.wasm32-worker	PASS	same .ll with and without freestanding_grad_def

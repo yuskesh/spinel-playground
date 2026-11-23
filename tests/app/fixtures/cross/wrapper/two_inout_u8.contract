@@ -1,0 +1,8 @@
+core-contract 1
+root two_inout_u8.rb
+entry two_inout_u8
+result i32
+param a buffer u8 inout count n_a
+param n_a scalar u64
+param b buffer u8 inout count n_b
+param n_b scalar u64

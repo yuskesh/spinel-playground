@@ -1,0 +1,6 @@
+core-contract 1
+root refuse/readonly_write.rb
+entry readonly_write
+result i64
+param src buffer u8 in count n_src
+param n_src scalar u64

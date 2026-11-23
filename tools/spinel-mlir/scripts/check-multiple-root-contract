@@ -1,0 +1,59 @@
+#!/usr/bin/env ruby
+require_relative 'compare-root-facts'
+require 'fileutils'
+require 'digest'
+compiler,tool,baseline,output=ARGV
+abort 'usage: check-multiple-root-contract compiler pinned-tool E007-scratch new-output' unless output
+abort 'output exists' if File.exist?(output)
+abort 'missing tool/producer' unless [compiler,tool].all?{|p|File.executable?(p)}
+FileUtils.mkdir_p(output)
+fixture=File.join(output,'roots.rb')
+File.write(fixture,(0...17).map{|i|"def r#{i}(ctx); ctx; end\n"}.join)
+log=File.open(File.join(output,'observations.jsonl'),'w')
+run=lambda do |name,requests,expected,diagnostic=nil|
+  target=File.join(output,"#{name}.mlir")
+  system('/usr/bin/timeout','--kill-after=5s','60s',compiler,"--emit-mlir=#{target}",*requests.map{|r|"--analysis-root=#{r}"},fixture,out:File.join(output,"#{name}.stdout"),err:File.join(output,"#{name}.stderr"))
+  status=$?;text=File.file?(target)?File.binread(target):''
+  named=!diagnostic || File.read(File.join(output,"#{name}.stderr")).include?(diagnostic)
+  row={name:name,requests:requests,rc:status.exitstatus,signal:status.termsig,artifact_bytes:text.bytesize,stdout_bytes:File.size(File.join(output,"#{name}.stdout")),named_observation:named,diagnostic:diagnostic}
+  log.puts(JSON.generate(row));log.flush
+  abort "STOP #{name}" unless status.exitstatus==expected && !status.signaled? && named && row[:stdout_bytes]==0
+  if expected==2
+    abort "STOP #{name} usage artifact" unless text.empty? && !File.exist?(target)
+  else
+    abort "STOP #{name} empty facts" if text.empty?
+    header=FactsAttrs.new(text.lines.first.delete_prefix('module attributes ')).value
+    roots=header.fetch('spinel_facts.analysis_roots')
+    abort "STOP #{name} request order" unless roots.map{|r|r.fetch('method')}==requests.map{|r|r.split(':',2).first}
+    if expected==1
+      abort "STOP #{name} resolved metadata in rejection" unless header.fetch('spinel_facts.status')=='rejected' && roots.all?{|r|!r.key?('def_node_id') && !r.key?('resolved_arg_types')} && !text.include?('"spinel_facts.table"')
+    end
+    system(tool,'--verify-only',target,out:File.join(output,"#{name}.verify.stdout"),err:File.join(output,"#{name}.verify.stderr"))
+    verify=$?.exitstatus;log.puts(JSON.generate({name:"#{name}-verify",rc:verify}));log.flush
+    abort "STOP #{name} verifier" unless verify==0
+  end
+end
+run.call('duplicate-same',['r0:int','r0:int'],2,'duplicate analysis root method')
+run.call('duplicate-conflict',['r0:int','r0:string'],2,'duplicate analysis root method')
+run.call('limit16',(0...16).map{|i|"r#{i}:int"},0)
+run.call('limit17',(0...17).map{|i|"r#{i}:int"},2,'analysis root limit is 16')
+run.call('unknown-second-method',['r0:int','missing:int'],1,'analysis root: unknown top-level method')
+run.call('unknown-second-class',['r0:int','r1:obj_NoSuchClass'],1,'analysis root: unknown argument class')
+# Original absolute source/library spelling is part of the saved-byte comparison.
+oracle=File.join(File.dirname(baseline),'oracle')
+source=File.join(oracle,'examples/xdpcount/xdpcount.rb')
+[['one-root',true,'actual-v3/xdpcount.mlir'],['no-root',false,'producer-check/new-v1.mlir']].each do |name,request,old|
+  target=File.join(output,"#{name}.mlir")
+  args=[compiler,'-I',File.join(oracle,'ruby/lib'),"--emit-mlir=#{target}"]
+  args<<'--analysis-root=count_pkts:obj_BPF::XdpMd' if request
+  system(*args,source,chdir:oracle,out:File.join(output,"#{name}.stdout"),err:File.join(output,"#{name}.stderr"))
+  status=$?;bytes=File.file?(target)?File.binread(target):'';equal=bytes==File.binread(File.join(baseline,old))
+  row={name:name,rc:status.exitstatus,artifact_bytes:bytes.bytesize,stdout_bytes:File.size(File.join(output,"#{name}.stdout")),raw_equal:equal,sha256:Digest::SHA256.hexdigest(bytes)}
+  log.puts(JSON.generate(row));log.flush
+  abort "STOP #{name} bytes/status" unless status.success? && !bytes.empty? && row[:stdout_bytes]==0 && equal
+  system(tool,'--verify-only',target,out:File.join(output,"#{name}.verify.stdout"),err:File.join(output,"#{name}.verify.stderr"))
+  verify=$?.exitstatus;log.puts(JSON.generate({name:"#{name}-verify",rc:verify}));log.flush
+  abort "STOP #{name} verifier" unless verify==0
+end
+log.close
+puts 'GREEN duplicates/limits/rejected provenance/one-root-v1 byte equality'

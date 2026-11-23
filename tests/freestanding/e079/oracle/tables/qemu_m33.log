@@ -1,0 +1,485 @@
+-- west build: running target run
+[1/8] Building C object CMakeFiles/app.dir/src/main.c.obj
+[2/8] Linking C static library app/libapp.a
+[3/8] Linking C executable zephyr/zephyr_pre0.elf; Logical command for additional byproducts on target: zephyr_pre0
+[4/8] Generating linker.cmd
+[5/8] Generating isr_tables.c, isr_tables_vt.ld, isr_tables_swi.ld
+[6/8] Building C object zephyr/CMakeFiles/zephyr_final.dir/isr_tables.c.obj
+[7/8] Linking C executable zephyr/zephyr.elf
+Memory region         Used Size  Region Size  %age Used
+           FLASH:       22652 B         4 MB      0.54%
+             RAM:       16104 B         4 MB      0.38%
+          SSRAM1:           0 B         4 MB      0.00%
+        SSRAM2_3:           0 B         4 MB      0.00%
+        IDT_LIST:           0 B        32 KB      0.00%
+Generating files from /tmp/spinel-llvm-scratch/session-a/e079/work/build_m33/zephyr/zephyr.elf for board: mps2/an521/cpu0
+[7/8] To exit from QEMU enter: 'CTRL+a, x'[QEMU] CPU: cortex-m33
+char device redirected to /dev/ttys006 (label hostS0)
+qemu-system-arm: warning: nic lan9118.0 has no peer
+*** Booting Zephyr OS build v4.4.0-3236-g7fd932b9357e ***
+#kern 79
+#rows 64
+#steps 40
+#nw 5
+V0 0 1
+V0 1 1
+V0 2 1
+V0 3 3
+V0 4 3
+V0 5 1
+V0 6 1
+V0 7 1
+V0 8 1
+V0 9 3
+V0 10 1
+V0 11 3
+V0 12 1
+V0 13 3
+V0 14 3
+V0 15 1
+V0 16 1
+V0 17 1
+V0 18 1
+V0 19 3
+V0 20 3
+V0 21 1
+V0 22 1
+V0 23 3
+V0 24 3
+V0 25 3
+V0 26 3
+V0 27 1
+V0 28 1
+V0 29 3
+V0 30 1
+V0 31 3
+V0 32 1
+V0 33 3
+V0 34 3
+V0 35 1
+V0 36 3
+V0 37 1
+V0 38 1
+V0 39 3
+V0 40 1
+V0 41 1
+V0 42 1
+V0 43 3
+V0 44 3
+V0 45 3
+V0 46 3
+V0 47 1
+V0 48 1
+V0 49 3
+V0 50 1
+V0 51 3
+V0 52 1
+V0 53 1
+V0 54 3
+V0 55 1
+V0 56 3
+V0 57 1
+V0 58 1
+V0 59 1
+V0 60 1
+V0 61 1
+V0 62 1
+V0 63 3
+C0 0 37 0 27
+P 0 3ff7ec9ac5be909f
+G 0 0 bfe0854de7ea5f87
+G 0 1 bfd9b2a355dafde6
+G 0 2 3fe4a534a29efbd7
+G 0 3 3fd126b0a3a15a57
+G 0 4 3ff525460aa64c2e
+P 1 3ff0000000000000
+G 1 0 bfe5b95810624dd3
+G 1 1 bfd5cbc6a7ef9daf
+G 1 2 3fdee147ae147ae0
+G 1 3 3fcc020c49ba5e36
+G 1 4 3fd4000000000000
+P 2 3fcb4df773947748
+G 2 0 bfade3675ddd2af0
+G 2 1 bfb5c5015c209244
+G 2 2 3f90f1b51951e0a3
+G 2 3 3fbcf90696f2f630
+G 2 4 3fc61d97f62b6ae8
+L 0 3ff7ec9ac5be909f
+K 1 5
+L 1 3ff3fd0e2660fd17
+S 1 0 3fd01aa92e62131b
+S 1 1 bfaea44a21b734e2
+S 1 2 3fce2451588d34dc
+S 1 3 bf9b711a9f68908c
+S 1 4 3fd78ab0c88a47ee
+K 2 5
+L 2 3ff120f2dab3cc02
+S 2 0 3fd33c127eaa1342
+S 2 1 bf962fb985937598
+S 2 2 3fc6706fbb081671
+S 2 3 bfa90a69592f71ba
+S 2 4 3fd0be431bb3b2ea
+K 3 5
+L 3 3fee00f130bde08a
+S 3 0 3fd63163be2e3923
+S 3 1 3f8de728c6754de0
+S 3 2 3fbe8364e9549782
+S 3 3 bfb125e68816aad2
+S 3 4 3fc68b6eb304b8f4
+K 4 5
+L 4 3feac3ca786c47de
+S 4 0 3fd8fb8ef25e2ebe
+S 4 1 3fa91926c2995fca
+S 4 2 3fb11ed1f1bc9289
+S 4 3 bfb4e32596ae4f61
+S 4 4 3fbb748a0e555619
+K 5 5
+L 5 3fe83de58b939145
+S 5 0 3fdb9bf0911399cd
+S 5 1 3fb4e79c257350c6
+S 5 2 3f928a5d8f012e92
+S 5 3 bfb7dc70011ca5bc
+S 5 4 3faa71f53198f36a
+K 6 5
+L 6 3fe63bf853074855
+S 6 0 3fde142d24488a25
+S 6 1 3fbcd2a637029bd7
+S 6 2 bf9c03f0f7a10982
+S 6 3 bfba2cd178f23a1e
+S 6 4 3f7b6b0ef5d3ff10
+K 7 5
+L 7 3fe49b33a65b0114
+S 7 0 3fe0330b7d5c948d
+S 7 1 3fc229356486b52c
+S 7 2 bfb1dab7d68a1106
+S 7 3 bfbbeb95b8b6667c
+S 7 4 bf9e73f1133ff98c
+K 8 5
+L 8 3fe3439b07bd229d
+S 8 0 3fe149cd16434e7d
+S 8 1 3fc5b5d2a4d9494a
+S 8 2 bfbbf887d6c4e65a
+S 8 3 bfbd2cdbf94983dc
+S 8 4 bfae61c5c9d19442
+K 9 5
+L 9 3fe2245c5992a186
+S 9 0 3fe24f56cb06c427
+S 9 1 3fc91183767dde6c
+S 9 2 bfc2b3bd0c125235
+S 9 3 bfbe0211273eacad
+S 9 4 bfb55d9dd8ef2292
+K 10 5
+L 10 3fe1317035fdbe9a
+S 10 0 3fe344a3d9d8cb66
+S 10 1 3fcc3e9695d927f1
+S 10 2 bfc719e22e5722c0
+S 10 3 bfbe7a55833aa185
+S 10 4 bfba6a0558594502
+K 11 5
+L 11 3fe0620d99e5555d
+S 11 0 3fe42aab4190fe81
+S 11 1 3fcf3f4d4f1c8bb2
+S 11 2 bfcb34664ffb03a2
+S 11 3 bfbea2d171a26ac7
+S 11 4 bfbe8ec0fc50c15b
+K 12 5
+L 12 3fdf5f3f2429641e
+S 12 0 3fe5025cde47d7a6
+S 12 1 3fd10aec6e56252b
+S 12 2 bfcf08994c14bf22
+S 12 3 bfbe86fc84ad92f9
+S 12 4 bfc0fc90f6ee3461
+K 13 5
+L 13 3fde2844ce770664
+S 13 0 3fe5cce82e3c00f2
+S 13 1 3fd262cb4a33beb9
+S 13 2 bfd14e2c948e7a00
+S 13 3 bfbe2fd875fed732
+S 13 4 bfc2681db45999e8
+K 14 5
+L 14 3fdd157144429689
+S 14 0 3fe68c46f1bd1650
+S 14 1 3fd3aab711b0e402
+S 14 2 bfd2fbed418be2f5
+S 14 3 bfbda2262227c8df
+S 14 4 bfc39ddcfb5ffabd
+K 15 5
+L 15 3fdc21a321a37ca9
+S 15 0 3fe74122d3a9e58f
+S 15 1 3fd4e34b8196f6a6
+S 15 2 bfd48f69f3812f7b
+S 15 3 bfbce5cd7020c4a2
+S 15 4 bfc4a7b93b8f8287
+K 16 5
+L 16 3fdb485eeaf10604
+S 16 0 3fe7ec1d942bb74f
+S 16 1 3fd60d248007f8b0
+S 16 2 bfd60a5e9960cf02
+S 16 3 bfbc01c6d1155a08
+S 16 4 bfc58dacf9862cd0
+K 17 5
+L 17 3fda8504bca84882
+S 17 0 3fe88e913ee1f37f
+S 17 1 3fd728816707a351
+S 17 2 bfd76fe8e62c4706
+S 17 3 bfbafaffcc315fd9
+S 17 4 bfc659938365e899
+K 18 5
+L 18 3fd9d4432f20ffce
+S 18 0 3fe92928c1de31a6
+S 18 1 3fd835f6775a7f29
+S 18 2 bfd8c1bb4d390ee2
+S 18 3 bfb9d6804d72f35a
+S 18 4 bfc7109fc482e80d
+K 19 5
+L 19 3fd9323c264d9c88
+S 19 0 3fe9bd5d5d800673
+S 19 1 3fd937306c086da9
+S 19 2 bfda034eac9b8ab0
+S 19 3 bfb899198d73eae2
+S 19 4 bfc7bcef2166ce14
+K 20 5
+L 20 3fd89d03177b6d37
+S 20 0 3fea4b94df90050f
+S 20 1 3fda2cef5a67b40c
+S 20 2 bfdb35b4af970a3f
+S 20 3 bfb746d5f8f52a82
+S 20 4 bfc86021956cf0df
+K 21 5
+L 21 3fd811b6577c28a2
+S 21 0 3fead54441ef3b5a
+S 21 1 3fdb1a4f06771d82
+S 21 2 bfdc5b7af53ba854
+S 21 3 bfb5eb5c3c7d250e
+S 21 4 bfc8fa71673fdd42
+K 22 5
+L 22 3fd78f12e603952f
+S 22 0 3feb5b00cf7f4700
+S 22 1 3fdc00449130aed0
+S 22 2 bfdd75c2ab1bfe79
+S 22 3 bfb48b1adc1b8994
+S 22 4 bfc98d3b4f27a704
+K 23 5
+L 23 3fd713a4fd7b14be
+S 23 0 3febdd6853e27170
+S 23 1 3fdcdeddc0512e90
+S 23 2 bfde868e92e0558c
+S 23 3 bfb3275070e1f9fd
+S 23 4 bfca1b2070a0ac7e
+K 24 5
+L 24 3fd69e968da08bdd
+S 24 0 3fec5ccf6b63352b
+S 24 1 3fddb73fab0bfc52
+S 24 2 bfdf8f1910665115
+S 24 3 bfb1c3360b77dc6d
+S 24 4 bfcaa2ca202211be
+K 25 5
+L 25 3fd62f436b529a0d
+S 25 0 3fecd9b372bf95fe
+S 25 1 3fde89c183f143ac
+S 25 2 bfe047e2372eaca9
+S 25 3 bfb062758051fb22
+S 25 4 bfcb2579ec19b7de
+K 26 5
+L 26 3fd5c5422a9d73bb
+S 26 0 3fed5455ad8cf26a
+S 26 1 3fdf56c10eb78095
+S 26 2 bfe0c48b845c1875
+S 26 3 bfae0df95cd8cd2c
+S 26 4 bfcba2973b25222e
+K 27 5
+L 27 3fd5604e94fef936
+S 27 0 3fedccb7a5a6cc5f
+S 27 1 3fe00f3361ed8b78
+S 27 2 bfe13da6f417bc8e
+S 27 3 bfab61d1adb1ff0e
+S 27 4 bfcc1ab8e2b3844a
+K 28 5
+L 28 3fd50028621ada56
+S 28 0 3fee42dbf93c92d5
+S 28 1 3fe0706ce83b22a7
+S 28 2 bfe1b351fd75f8d0
+S 28 3 bfa8c09fd9447e1a
+S 28 4 bfcc8e5e0b39e313
+K 29 5
+L 29 3fd4a492e2183998
+S 29 0 3feeb6c630cc383e
+S 29 1 3fe0cf2010803fb3
+S 29 2 bfe225a910097405
+S 29 3 bfa62a835558e8d8
+S 29 4 bfccfdf2226c8db0
+K 30 5
+L 30 3fd44d54b5aea2d0
+S 30 0 3fef287a9b62edb4
+S 30 1 3fe12b5f35f45d2c
+S 30 2 bfe294c79a6c6c9d
+S 30 3 bfa39f90fd4d8e1c
+S 30 4 bfcd69d024753c8e
+K 31 5
+L 31 3fd3fa3661c7f12e
+S 31 0 3fef97fe30250feb
+S 31 1 3fe1853c1dff90c6
+S 31 2 bfe300c81156fd3f
+S 31 3 bfa11fd49ffa5674
+S 31 4 bfcdd2455864e7ee
+K 32 5
+L 32 3fd3aaf64d5610b1
+S 32 0 3ff002b578bfea8e
+S 32 1 3fe1dccedd9b4f2c
+S 32 2 bfe369be90842df0
+S 32 3 bf9d593365462852
+S 32 4 bfce3802f206ce5f
+K 33 5
+L 33 3fd35f5c71c30d30
+S 33 0 3ff0387004bd5a89
+S 33 1 3fe23230cfb4a29b
+S 33 2 bfe3cfbd5df5f96f
+S 33 3 bf988ebae91f26f1
+S 33 4 bfce9bbafda24cf3
+K 34 5
+L 34 3fd3173c570bb421
+S 34 0 3ff06d30f3c03c6a
+S 34 1 3fe28571f9981acb
+S 34 2 bfe432dd5c94ce69
+S 34 3 bf93dfa462702ef7
+S 34 4 bfcefd7471f36c85
+K 35 5
+L 35 3fd2d25f271ebdca
+S 35 0 3ff0a0faa03d37e5
+S 35 1 3fe2d6a1cea53626
+S 35 2 bfe493367ba056ca
+S 35 3 bf8e96afa29dcf0a
+S 35 4 bfcf5d3681e0feb3
+K 36 5
+L 36 3fd290656d450056
+S 36 0 3ff0d3d1ca5c77e9
+S 36 1 3fe32613b7ef457a
+S 36 2 bfe4f106b118e983
+S 36 3 bf85a01205631e52
+S 36 4 bfcfbc7476012a91
+K 37 5
+L 37 3fd251130af14c33
+S 37 0 3ff105d1f51836b2
+S 37 1 3fe373df2edf23ea
+S 37 2 bfe54c907c5ebcfa
+S 37 3 bf79ca4a0855d104
+S 37 4 bfd00d270b96d40c
+K 38 5
+L 38 3fd21449209b05ab
+S 38 0 3ff13701ea04a46c
+S 38 1 3fe3c00e6b2a1b15
+S 38 2 bfe5a5ec4b711c52
+S 38 3 bf6198eb42096ea8
+S 38 4 bfd03b4384a0ef0f
+K 39 5
+L 39 3fd1d9ed01b166c5
+S 39 0 3ff1676369b6592f
+S 39 1 3fe40aab62f40e05
+S 39 2 bfe5fd2992b65fc9
+S 39 3 3f5ef5c8d7926e1c
+S 39 4 bfd0688f8630d0c5
+K 40 5
+L 40 3fd1a1e52d2975be
+S 40 0 3ff196f849c70690
+S 40 1 3fe453bfb2e97da1
+S 40 2 bfe65257443d3b85
+S 40 3 3f77d755c2e5ce3c
+S 40 4 bfd0950b95fb7c14
+A 0 -1
+W 0 0 3ff196f849c70690
+W 0 1 3fe453bfb2e97da1
+W 0 2 bfe65257443d3b85
+W 0 3 3f77d755c2e5ce3c
+W 0 4 bfd0950b95fb7c14
+A 1 -1
+W 1 0 3ff196f849c70690
+W 1 1 3fe453bfb2e97da1
+W 1 2 bfe65257443d3b85
+W 1 3 3f77d755c2e5ce3c
+W 1 4 bfd0950b95fb7c14
+A 2 -1
+W 2 0 3ff196f849c70690
+W 2 1 3fe453bfb2e97da1
+W 2 2 bfe65257443d3b85
+W 2 3 3f77d755c2e5ce3c
+W 2 4 bfd0950b95fb7c14
+A 3 -1
+W 3 0 3ff196f849c70690
+W 3 1 3fe453bfb2e97da1
+W 3 2 bfe65257443d3b85
+W 3 3 3f77d755c2e5ce3c
+W 3 4 bfd0950b95fb7c14
+A 4 5
+W 4 0 3ff1c5c2734f5d77
+W 4 1 3fe49b54a331e774
+W 4 2 bfe6a583d4b63770
+W 4 3 3f83c277db0a2523
+W 4 4 bfd0c0b8c25fa71f
+V1 0 0
+V1 1 0
+V1 2 0
+V1 3 3
+V1 4 3
+V1 5 0
+V1 6 1
+V1 7 0
+V1 8 0
+V1 9 3
+V1 10 0
+V1 11 3
+V1 12 0
+V1 13 3
+V1 14 3
+V1 15 0
+V1 16 0
+V1 17 0
+V1 18 0
+V1 19 3
+V1 20 3
+V1 21 0
+V1 22 0
+V1 23 2
+V1 24 3
+V1 25 3
+V1 26 3
+V1 27 0
+V1 28 0
+V1 29 3
+V1 30 0
+V1 31 3
+V1 32 0
+V1 33 3
+V1 34 3
+V1 35 0
+V1 36 3
+V1 37 0
+V1 38 0
+V1 39 3
+V1 40 0
+V1 41 0
+V1 42 0
+V1 43 3
+V1 44 3
+V1 45 3
+V1 46 3
+V1 47 0
+V1 48 0
+V1 49 3
+V1 50 0
+V1 51 3
+V1 52 0
+V1 53 0
+V1 54 3
+V1 55 0
+V1 56 3
+V1 57 0
+V1 58 0
+V1 59 0
+V1 60 0
+V1 61 0
+V1 62 0
+V1 63 3
+C1 36 1 1 26
+#final 3ff196f849c70690 3fe453bfb2e97da1 bfe65257443d3b85 3f77d755c2e5ce3c bfd0950b95fb7c14
+#done
+qemu-system-arm: terminating on signal 15 from pid 61107 (<unknown process>)

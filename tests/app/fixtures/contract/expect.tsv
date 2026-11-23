@@ -1,0 +1,51 @@
+# fixture	expected	(a parser category, an eligibility reason, or `admitted`)
+# ---- the parser: one refusal per malformed line kind ----
+accepted-thread	admitted
+accepted-interrupt	admitted
+v1-with-extern	version-mismatch
+v2-without-context	missing-field
+v2-scalar-result	bad-type
+v2-scalar-param	bad-field
+v2-bad-count	bad-count
+v2-bad-cross	bad-field
+extern-no-symbol	bad-field
+extern-bad-module	bad-name
+extern-bad-arg	bad-type
+extern-no-bound	missing-field
+extern-no-evidence	missing-field
+# decision 0021 (owner, 2026-10-20): an unknown bound names its reason
+accepted-unknown-bound	admitted
+extern-unknown-bound-empty	bad-field
+extern-unknown-clause	bad-field
+extern-duplicate	duplicate-extern
+guard-malformed	bad-condition
+guard-bad-status	bad-condition
+guard-unknown-name	bad-condition
+static-malformed	bad-condition
+static-len-of-scalar	bad-condition
+# ---- eligibility: one per refusal code, and the accepted forms ----
+elig/ok-thread	admitted
+elig/ok-interrupt	admitted
+elig/extern-context	extern-context
+elig/cross-to-extern	cross-to-extern
+elig/cross-via-helper	cross-to-extern
+elig/extern-arity	extern-arity
+elig/extern-domain	extern-domain
+elig/extern-mode	extern-mode
+elig/writes-on-in-literal	writes-on-in
+elig/writes-on-in-buffer	writes-on-in
+elig/literal-position	literal-position
+elig/literal-to-helper-int	buffer-arithmetic
+elig/channel-buffer	channel-buffer
+elig/undeclared-extern	unresolved-call
+elig/unknown-module	unresolved-constant
+elig/loop-unbounded-thread	loop-unbounded
+elig/loop-unbounded-interrupt	loop-unbounded
+elig/guards-in-source	guards-in-source
+elig/v1-loop	admitted
+elig/board-const	admitted
+elig/const-path-deep	unresolved-constant
+elig/const-path-unknown-module	unresolved-constant
+elig/const-path-unknown-name	unresolved-constant
+elig/const-module-nonint	unresolved-constant
+elig/const-module-redefined	constant-redefinition

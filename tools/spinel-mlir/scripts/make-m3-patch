@@ -1,0 +1,54 @@
+#!/usr/bin/env ruby
+require 'fileutils'
+require 'open3'
+root=File.expand_path('..',__dir__)
+source,destination=ARGV
+abort 'usage: make-m3-patch M1+M2-patched-source new-overlay' unless destination
+abort 'output exists' if File.exist?(destination)
+edits={}
+place=lambda do |file,anchor,addition,after|
+  body=edits.fetch(file){File.binread(File.join(source,file))}
+  abort "anchor not unique: #{file}: #{anchor}" unless body.scan(anchor).length==1
+  edits[file]=body.sub(anchor){after ? anchor+addition : addition+anchor}
+end
+before=->(file,anchor,addition){place.call(file,anchor,addition,false)}
+after=->(file,anchor,addition){place.call(file,anchor,addition,true)}
+parse='src/spinel_parse.c'
+after.call(parse,"static char **sp_file_table;   /* id -> path; defined with the map builder below */\n","#include \"source_map_decl.inc\"\n")
+before.call(parse,"/* Lexically collapse \".\" and \"..\" path segments","#include \"source_map.inc\"\n")
+before.call(parse,"    emit_int(id, \"node_line\", (long long)orig);\n","    if (sp_m3_active()) sp_m3_fix_start(id, bl, &orig, &fid);\n")
+before.call(parse,"      emit_int(id, \"node_end_line\", (long long)eorig);\n","      if (sp_m3_active()) sp_m3_fix_end(id, el, fid, &eorig);\n")
+{'set'=>'set','io/buffer'=>'io_buffer'}.each do |name,origin|
+  after.call(parse,"    const char *head = \"require \\\"#{name}\\\"\\n\";\n"\
+    "    size_t sl = strlen(source), hl = strlen(head), off = (size_t)(ins - source);\n"\
+    "    char *ns = (char *)malloc(sl + hl + 1);\n",
+    "    if (ns && sp_m3_active()) sp_m3_note(\"#{name}\", \"#{origin}\", source, off);\n")
+end
+tail="  size_t sl = strlen(source), hl = strlen(head);\n  char *ns = (char *)malloc(sl + hl + 1);\n  if (!ns) return source;\n"
+after.call(parse,"  const char *head = \"require \\\"builtins/enumerable\\\"\\n\";\n"+tail,
+  "  if (sp_m3_active()) sp_m3_note(\"builtins/enumerable\", \"enumerable\", NULL, 0);\n")
+after.call(parse,"  const char *head = \"require \\\"builtins/enumerator\\\"\\n\";\n"+tail,
+  "  if (sp_m3_active()) sp_m3_note(\"builtins/enumerator\", \"enumerator\", NULL, 0);\n")
+after.call(parse,"  char head[160]; snprintf(head, sizeof head, \"require \\\"%s\\\"\\n\", bf->req);\n"+tail,
+  "  if (sp_m3_active()) sp_m3_note(bf->req, \"builtin_extra\", NULL, 0);\n")
+after.call(parse,"      sp_build_line_map(premap, source_file);\n","      if (sp_m3_active()) sp_m3_build(premap, source, source_file);\n")
+emit='src/emit_mlir.inc'
+before.call(emit,"static int mlir_emit(Compiler *c) {\n","#include \"source_map_emit.inc\"\n")
+before.call(emit,"  if (g_ndiags) for (int i=0;i<g_ndiags;++i) {\n","if (!mlir_m3_check()) ok=0;\n")
+before.call(emit,"    if (ok) ok=mlir_table(&b,pristine,\"pristine\",sources,count);\n","    if (ok) mlir_m3_splices(&b);\n")
+%w[source_map.h source_map_decl.inc source_map.inc source_map_emit.inc].each do |name|
+  edits["src/#{name}"]=File.binread(File.join(root,'patches/m3',name))
+end
+FileUtils.mkdir_p(destination)
+patch=String.new
+edits.each do |name,body|
+  target=File.join(destination,name)
+  FileUtils.mkdir_p(File.dirname(target)); File.binwrite(target,body)
+  old=File.join(source,name); old='/dev/null' unless File.exist?(old)
+  diff,status=Open3.capture2('diff','-u','--label',"a/#{name}",'--label',"b/#{name}",old,target)
+  abort 'diff failed' unless [0,1].include?(status.exitstatus)
+  abort "non-additive patch #{name}" if diff.lines.any?{|l|l.start_with?('-') && !l.start_with?('---')}
+  patch<<diff
+end
+File.binwrite(File.join(root,'patches/M3-source-map.patch'),patch)
+puts "M3: #{patch.lines.count{|l|l.start_with?('+')&&!l.start_with?('+++')}} additions"

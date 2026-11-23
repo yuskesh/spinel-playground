@@ -1,0 +1,4 @@
+searcher	expected	got	verdict
+correct	expected_exit=0	got=0	PASS
+anchor	expected_exit=1	got=1	PASS
+bestsofar	expected_exit=1	got=1	PASS

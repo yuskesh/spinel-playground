@@ -1,0 +1,2 @@
+function	source	note
+uart_cmsdk_apb_poll_out	su	https://github.com/zephyrproject-rtos/zephyr/blob/dccb09599635bdff17633fa7e9dab014b91dce90/drivers/serial/uart_cmsdk_apb.c#L201: the transport's uart_poll_out on the console UART (arm,cmsdk-uart); z_impl_uart_poll_out is an inline of the driver API header; uart_cmsdk_apb_poll_in (line 177) has the same frame

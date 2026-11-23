@@ -1,0 +1,9 @@
+core-channel 1
+# tests/app/build.sh 2f: the console contract of decision 0027's first user
+channel console
+from cm7
+to cm33
+depth 16
+field tic u32
+field len u8
+field text u8 count 119

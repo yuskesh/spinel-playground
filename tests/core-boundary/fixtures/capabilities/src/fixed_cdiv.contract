@@ -1,0 +1,6 @@
+core-contract 1
+root src/fixed_cdiv.rb
+entry fixed_cdiv
+result i32
+param n scalar i64
+param d scalar i64

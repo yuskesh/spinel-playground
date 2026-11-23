@@ -1,0 +1,7 @@
+core-contract 1
+root src/store_u32.rb
+entry store_u32
+result i64
+param dst buffer u32 inout count n_dst
+param n_dst scalar u64
+param v scalar i64

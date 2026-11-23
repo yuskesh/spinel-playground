@@ -1,0 +1,5 @@
+core-contract 1
+root src/fixed_bam.rb
+entry fixed_bam
+result i64
+param v scalar i64

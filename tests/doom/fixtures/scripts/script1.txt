@@ -1,0 +1,14 @@
+# doom/test/script1.txt — synthetic input (instead of a human player)
+#
+#   <from> <to> <key>[,<key>...]      tics include both ends. '#' to end of line is a comment.
+#
+# The key property: **the player does not die in this script**. After a death,
+# pressing use makes vanilla reload the whole level (`G_DoReborn` ->
+# `ga_loadlevel`); this port does not have that (it stops loudly if reached).
+0    34   fire          # shoot first (a wall ahead; runs the weapon state machine)
+35   139  up            # forward, 3 seconds
+140  174  right         # turn right, 1 second
+175  244  up,speed      # run forward, 2 seconds
+245  259  use           # use (a door or a switch)
+260  314  left          # turn left
+315  349  up            # forward, 1 second

@@ -1,0 +1,4 @@
+check	detail	verdict
+newton_converged	5 iters, gnorm 1.1746973803938441e-08	OK
+quadratic_tail	5.270e-02 -> 2.794e-04 -> 1.175e-08	OK
+beats_gd_at_equal_budget	newton 1.1746973803938441e-08 vs gd 0.001346787871995759 at 42 evals (x1.15e+05)	OK

@@ -1,0 +1,25 @@
+core-contract 1
+root src/packed.rb
+entry dc_sp_span
+result i64
+param scr buffer u8 inout count n_scr
+param n_scr scalar u64
+param cmap buffer u8 in count n_cmap
+param n_cmap scalar u64
+param flat buffer u8 in count n_flat
+param n_flat scalar u64
+param state buffer i64 in count n_state
+param n_state scalar u64
+param i_res scalar i64
+param i_base scalar i64
+param y scalar i64
+param x1 scalar i64
+param x2 scalar i64
+param xfrac scalar i64
+param yfrac scalar i64
+param xstep scalar i64
+param ystep scalar i64
+param colormap_row scalar i64
+param sw scalar i64
+param vwx scalar i64
+param vwy scalar i64

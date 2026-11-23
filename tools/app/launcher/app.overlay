@@ -1,0 +1,26 @@
+/*
+ * The launcher's own memory is its DTCM, so the HyperRAM is the M7's alone
+ * (boards/nxp/frdm_imxrt1186/cm33_sram_dtcm.overlay at the pinned Zephyr),
+ * and LPUART1 is left to the M7.
+ */
+/delete-node/ &dtcm;
+
+/ {
+	chosen {
+		zephyr,sram = &dtcm;
+		zephyr,code-m7-partition = &m7_code_partition;
+		/delete-property/ zephyr,console;
+		/delete-property/ zephyr,shell-uart;
+	};
+
+	soc {
+		dtcm: memory@30000000 {
+			compatible = "mmio-sram";
+			reg = <0x30000000 DT_SIZE_K(128)>;
+		};
+	};
+};
+
+&lpuart1 {
+	status = "disabled";
+};

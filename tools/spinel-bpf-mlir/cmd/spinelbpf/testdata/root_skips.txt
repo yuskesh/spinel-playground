@@ -1,0 +1,2 @@
+# guest で許す skip (E165 の条件 1 — go test の JSON の照合で root の試験の skip を 0 とする、その名前付きの例外)。形式: <試験>\t<理由>
+TestTableDifferential/t_min	CRuby の差動を利用者の決定 (2026-09-27) で外している — t_min は CRuby との差で記録する表 (SPINELBPF_CRUBY=1 で走る)

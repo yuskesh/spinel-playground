@@ -1,0 +1,4 @@
+function	source	note
+mcux_lpadc_isr	su	https://github.com/zephyrproject-rtos/zephyr/blob/dccb09599635bdff17633fa7e9dab014b91dce90/drivers/adc/adc_mcux_lpadc.c#L1101: the conversion-complete handler connected at init (CONFIG_ADC=y); completes the adapter's sampler thread's read through the ADC context's k_sem_give
+_isr_wrapper	su	https://github.com/zephyrproject-rtos/zephyr/blob/dccb09599635bdff17633fa7e9dab014b91dce90/arch/arm/core/cortex_m/isr_wrapper.c#L33: the vector table's entry for every IRQ (CONFIG_GEN_IRQ_VECTOR_TABLE=y), demuxes _sw_isr_table[irq] and calls the handler
+z_arm_exc_exit	su	https://github.com/zephyrproject-rtos/zephyr/blob/dccb09599635bdff17633fa7e9dab014b91dce90/arch/arm/core/cortex_m/exc_exit.c#L55: pends PendSV when a reschedule is due; no frame

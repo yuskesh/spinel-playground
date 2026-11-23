@@ -1,0 +1,20 @@
+# tools/app/zephyr/v4.4.2/effects.tsv -- the effect table of decision 0014 §3:
+# what a board member's instance is, by the compatible of the controller that
+# drives it and the bus it sits on. The generator reads the row for each
+# instance; an instance with no applicable row is not isr_ok and not proven
+# non-blocking, and is split into its own module. Every row is attestation:
+# the evidence is the driver source at the pinned commit (dccb09599635bdff17633fa7e9dab014b91dce90), read
+# for kernel waits (k_sem_take, k_mutex_lock, k_sleep) on the call path of the
+# operation the adapter uses. applies_when predicates are CONFIG_X=value
+# entries of the build's .config, all of which must hold.
+# compatible	bus	isr_ok	blocking	applies_when	evidence
+arm,mmio32-gpio	mmio	true	false	CONFIG_GPIO=y	https://github.com/zephyrproject-rtos/zephyr/blob/dccb09599635bdff17633fa7e9dab014b91dce90/drivers/gpio/gpio_mmio32.c (port_set_masked_raw and port_get_raw are one register access each; no kernel wait in the file)
+nxp,kinetis-gpio	mmio	true	false	CONFIG_GPIO=y	https://github.com/zephyrproject-rtos/zephyr/blob/dccb09599635bdff17633fa7e9dab014b91dce90/drivers/gpio/gpio_mcux.c (pin set and get are register accesses; no kernel wait in the file)
+zephyr,gpio-emul	mmio	true	false	CONFIG_GPIO=y,CONFIG_GPIO_EMUL=y	https://github.com/zephyrproject-rtos/zephyr/blob/dccb09599635bdff17633fa7e9dab014b91dce90/drivers/gpio/gpio_emul.c (port operations under a spinlock; no kernel wait in the file)
+nxp,pcal6416a	i2c	false	true	CONFIG_GPIO=y	https://github.com/zephyrproject-rtos/zephyr/blob/dccb09599635bdff17633fa7e9dab014b91dce90/drivers/gpio/gpio_pcal64xxa.c (every port operation takes drv_data->lock with k_sem_take and performs an I2C transfer)
+nxp,sctimer-pwm	mmio	true	false	CONFIG_PWM=y	https://github.com/zephyrproject-rtos/zephyr/blob/dccb09599635bdff17633fa7e9dab014b91dce90/drivers/pwm/pwm_mcux_sctimer.c (set_cycles programs the match registers; no kernel wait in the file)
+nxp,lpc-lpadc	mmio	true	false	CONFIG_ADC=y	https://github.com/zephyrproject-rtos/zephyr/blob/dccb09599635bdff17633fa7e9dab014b91dce90/drivers/adc/adc_mcux_lpadc.c waits: adc_context_lock and adc_context_wait_for_completion both k_sem_take (drivers/adc/adc_context.h). THE MEMBER Adc.latest is one atomic word read in tools/app/adapters/adc/adapter.c, and the driver's read runs in that adapter's sampler thread, never in a CORE context: this row's isr_ok/blocking rest on the adapter, which Task 10 compiles
+zephyr,adc-emul	mmio	true	false	CONFIG_ADC=y,CONFIG_ADC_EMUL=y	https://github.com/zephyrproject-rtos/zephyr/blob/dccb09599635bdff17633fa7e9dab014b91dce90/drivers/adc/adc_emul.c waits: k_mutex_lock on cfg_mtx and k_sem_take on the read path. THE MEMBER Adc.latest is one atomic word read in tools/app/adapters/adc/adapter.c, and the driver's read runs in that adapter's sampler thread: this row's isr_ok/blocking rest on the adapter, which Task 10 compiles
+arm,armv8m-systick	mmio	true	false	CONFIG_CORTEX_M_SYSTICK=y	https://github.com/zephyrproject-rtos/zephyr/blob/dccb09599635bdff17633fa7e9dab014b91dce90/drivers/timer/cortex_m_systick.c; the members read k_uptime_ticks and k_cycle_get_64, interrupt-safe kernel reads
+arm,armv7m-systick	mmio	true	false	CONFIG_CORTEX_M_SYSTICK=y	https://github.com/zephyrproject-rtos/zephyr/blob/dccb09599635bdff17633fa7e9dab014b91dce90/drivers/timer/cortex_m_systick.c; the members read k_uptime_ticks and k_cycle_get_64, interrupt-safe kernel reads; the same driver for Armv7-M's compatible (drivers/timer/Kconfig.cortex_m_systick: CORTEX_M_SYSTICK depends on DT_HAS_ARM_ARMV7M_SYSTICK_ENABLED or the Armv8-M one), the FRDM-IMXRT1186's Cortex-M7 (decision 0023)
+nxp,imx-rgpio	mmio	true	false	CONFIG_GPIO=y,CONFIG_GPIO_MCUX_RGPIO=y	https://github.com/zephyrproject-rtos/zephyr/blob/dccb09599635bdff17633fa7e9dab014b91dce90/drivers/gpio/gpio_mcux_rgpio.c (pin set and get are register accesses through RGPIO_PortSet, RGPIO_PortClear and PDIR, lines 178-216; no kernel wait in the file)

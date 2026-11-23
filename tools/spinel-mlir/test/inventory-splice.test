@@ -1,0 +1,1 @@
+# RUN: mkdir -p %t && ruby %S/inventory-splice.rb %S/../scripts/facts-inventory.rb %t

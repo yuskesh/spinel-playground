@@ -1,0 +1,19 @@
+core-contract 1
+root src/packed.rb
+entry dc_sp_call
+result i64
+param state buffer i64 inout count n_state
+param n_state scalar u64
+param wall buffer i32 in count n_wall
+param n_wall scalar u64
+param xcount buffer u8 inout count n_xcount
+param n_xcount scalar u64
+param xyl buffer u16 inout count n_xyl
+param n_xyl scalar u64
+param xyh buffer u16 inout count n_xyh
+param n_xyh scalar u64
+param width buffer u16 in count n_width
+param n_width scalar u64
+param i_nwall scalar i64
+param i_wall_all_max_k scalar i64
+param i_wall_all_overlaps scalar i64

@@ -1,0 +1,11 @@
+check	verdict	detail
+grad_touched_allowed_only	FAIL	touched: tools/grad/README.md tools/grad/spinel-gradfs tools/grad/spinel/grad_freestanding.rb  (allowed: tools/grad/README.md tools/grad/rules/ tools/grad/spinel-gradgen tools/grad/spinel-searchgate tools/grad/spinel/grad.rb tools/grad/spinel/grad_rules.rb )
+vendor_untouched	PASS	0 changes under vendor/ (READ-ONLY)
+vendor_head	PASS	8e30ae3c (READ-ONLY, never rebuilt)
+gradfs_untouched	FAIL	spinel-gradfs and grad_freestanding.rb byte-identical (E079's G5 and 4-target gates rest on them)
+e076_rejects_tsv	PASS	byte-identical
+e076_rejects_gates	PASS	byte-identical
+e076_twoexits_gates	PASS	byte-identical
+e076_twoexits_targets	PASS	byte-identical
+e076_twoexits_build	EXPLAINED	only generated_c_fnv1a differs (2 line(s)): spinel/grad.rb grew hvp:/jvp: keyword parameters and is textually inserted into every generated C.  Gates and targets above are byte-identical
+e078_hvp_shim	PASS	s5.2 summary reproduced: #	s5.2	worst_rel_vs_analytic=0.000e+00	worst_rel_vs_fd=8.300e-12	worst_symmetry_abs=0.000e+00

@@ -1,0 +1,6 @@
+# a cross-entry delay: a's release 1 costs 1500 us; b, visited after a in
+# the sweep at 1000, is selected at 2500 with release 2 newest and release 1
+# skipped, although b itself never ran long.
+horizon_us 4000
+drain_us 1000
+cost a 1 1500

@@ -1,0 +1,10 @@
+check	verdict	detail
+generator_determinism	PASS	the .ll is byte-identical across runs
+g5_kernel_loop.arm64-host	PASS	0 fast-math sites in the kernel .ll (loop included)
+g5_adjoint.arm64-host	PASS	gradfs reports 0 fast-math sites in the adjoint module
+g5_kernel_loop.cortex-m33-zephyr	PASS	0 fast-math sites in the kernel .ll (loop included)
+g5_adjoint.cortex-m33-zephyr	PASS	gradfs reports 0 fast-math sites in the adjoint module
+g5_kernel_loop.riscv32-zephyr	PASS	0 fast-math sites in the kernel .ll (loop included)
+g5_adjoint.riscv32-zephyr	PASS	gradfs reports 0 fast-math sites in the adjoint module
+g5_kernel_loop.wasm32-worker	PASS	0 fast-math sites in the kernel .ll (loop included)
+g5_adjoint.wasm32-worker	PASS	gradfs reports 0 fast-math sites in the adjoint module

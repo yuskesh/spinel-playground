@@ -1,0 +1,12 @@
+# Where the extracted slot and link kernels came from, and what they came from.
+#
+# Same shape as the other capabilities' tables: `token` is a string the
+# EXTRACTED source must contain, so the source names its own origin and a
+# reader of it is never sent to a side table to find out where it came from.
+#
+#extracted	original	token	upstream
+thinker_add	examples/doom/lib/doom/game.rb	DG/p_tick.c:P_AddThinker	R007 4.8, insertion at the tail
+thinker_remove	examples/doom/lib/doom/game.rb	DG/p_tick.c:P_RemoveThinker	R007 4.8, removal is deferred
+thinker_collect	examples/doom/lib/doom/game.rb	DG/p_tick.c:P_RunThinkers	R007 4.8, the sweep without the dispatch
+mobj_alloc	examples/doom/lib/doom/game.rb	DG/p_mobj.c	R007 4.8, a free list over a bump allocator
+mobj_free	examples/doom/lib/doom/game.rb	DG/p_mobj.c:P_RemoveMobj	R007 4.8, the list is LIFO

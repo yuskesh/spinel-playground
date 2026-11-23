@@ -1,0 +1,750 @@
+# frozen_string_literal: true
+#
+# Run: ruby -Isrc -Itests tests/spinel_ebpf/affordance_gate_test.rb
+#
+# E406: the affordance gate's own invariants.
+#
+# The gate itself (tools/affordance_gate.rb) needs the production in-process
+# codegen, which is Linux + a built third_party/spinel; these tests deliberately
+# need neither. They check the part that decides WHAT gets compiled -- because a
+# gate that quietly stops covering a builtin looks exactly like a gate that
+# passes. E406's whole finding was a check nobody was running; the second-order
+# version of that mistake is a check that runs but no longer reaches anything.
+
+require "minitest/autorun"
+require "spinel_ebpf/capabilities"
+require_relative "../../tools/affordance_gate"
+
+class AffordanceGateTest < Minitest::Test
+  CAP = SpinelEbpf::Capabilities
+  G   = AffordanceGate
+
+  # ---------- coverage: the gate must be able to probe every claim ----------
+
+  # Every advertised builtin resolves to a probe shape the gate can actually
+  # write. A name resolving to an unknown shape would raise mid-run (or, worse,
+  # be skipped by a future `next`), which is how coverage silently shrinks.
+  def test_every_advertised_builtin_has_a_writable_shape
+    bad = CAP.all_builtins.reject { |b| SHAPES.key?(G.shape_for(b)) }
+    assert_empty bad, "probe shape 未定義の builtin (gate が測れない): #{bad.inspect}"
+  end
+
+  def test_every_withdrawn_builtin_has_a_writable_shape
+    bad = CAP::WITHDRAWN.keys.reject { |b| SHAPES.key?(G.shape_for(b)) }
+    assert_empty bad, "probe shape 未定義の withdrawn builtin: #{bad.inspect}"
+  end
+
+  # Nothing is silently skipped: the two sets together are what the gate checks,
+  # and the advertised half must be the whole affordance.
+  #
+  # E415: `WITHDRAWN` が非空であることはもう要求しない。P011 Phase A は降格を
+  # 巻き戻すので、この要求は「ゲートを armed に保つために出荷物へ嘘を残せ」という
+  # 圧力になる (ADR-015 違反)。空集合は**事実として正しい状態**であり、
+  # 「不在を検出できるか」は下の self-check anchor 群が毎回証明する。
+  def test_gate_covers_the_whole_affordance
+    refute_empty CAP.all_builtins
+    assert_empty(CAP.all_builtins & CAP::WITHDRAWN.keys)
+  end
+
+  # ---------- E415: the controls that do not deplete ----------
+  # 4 つの withdrawn 集合はどれも Phase A/B で空になり得る。ゲートの検出力は
+  # そこから切り離され、**生きた claim を memory 内で壊す** self-check に移った。
+  # ⇒ その参照先が消えたら制御は黙って何も指さなくなる (本 Edoc の問題の縮小版)
+  # ので、参照先が生きていることをここで固定する。
+
+  def test_builtin_selfcheck_anchor_is_a_live_claim_that_takes_an_argument
+    assert_includes CAP.all_builtins, G::SELFCHECK_BUILTIN,
+                    "builtin self-check の参照先が宣伝されていない"
+    call = G.call_text(G::SELFCHECK_BUILTIN)
+    assert_includes call, "(", "参照先が 0 引数だと、名前を壊した綴りが「未定義の local」に " \
+                              "見えてしまい、builtin の不在ではなく別の失敗を測ることになる"
+  end
+
+  # 名前を壊した綴りは **括弧つきの呼出**でなければならない (裸の識別子は
+  # CallNode ですらないので、測っているものが変わる)。
+  def test_builtin_selfcheck_absent_call_is_still_a_call
+    absent = "#{G::SELFCHECK_BUILTIN}_zz_e415_absent"
+    call   = G.call_text(G::SELFCHECK_BUILTIN).sub(G::SELFCHECK_BUILTIN, absent)
+    assert_match(/\A#{Regexp.escape(absent)}\(.*\)\z/, call)
+    refute_includes CAP.all_builtins, absent
+  end
+
+  # no_effect 半分は「入力が構成上つねに twin と同一」であることが成立条件。
+  # そこが崩れると、この半分は twin witness ではなく別の何かを測り始める。
+  def test_builtin_selfcheck_no_effect_input_is_identical_to_the_twin
+    shape = G.shape_for(G::SELFCHECK_BUILTIN)
+    with    = G.source(shape, "@hits = @hits + 0", [])
+    without = G.source(shape, "@hits = @hits + 0", [])
+    assert_equal without, with,
+                 "no_effect self-check の 2 本が同一でないなら、それは twin witness の test ではない"
+  end
+
+  def test_attach_selfcheck_anchor_is_a_live_kind_with_a_probe_shape
+    assert_includes CAP::ATTACH_KINDS.map { |a| a[:kind] }, G::SELFCHECK_ATTACH
+    assert_includes G::ATTACH_SHAPES.keys, G::SELFCHECK_ATTACH
+    refute_nil G.promised_sec(G::SELFCHECK_ATTACH)
+  end
+
+  # 壊した SEC は本物と衝突してはならない (衝突すると :wrong_sec が出ない)。
+  def test_attach_selfcheck_corrupted_sec_cannot_match_the_real_one
+    real = G.promised_sec(G::SELFCHECK_ATTACH)
+    refute_equal real, "#{real}_zz_e415"
+  end
+
+  def test_sugar_selfcheck_anchor_is_a_live_claim
+    assert_includes CAP.surface_sugar.map { |s| s[:sugar] }, G::SELFCHECK_SUGAR,
+                    "sugar absence self-check は pkt.* chain family が在ることに依存している"
+    refute_includes CAP.surface_sugar.map { |s| s[:sugar] }, "pkt.zz_e415_absent"
+  end
+
+  # E415 (D3): 降格 attach の control は **2 箇所**にある — affordance の記録
+  # (gate が probe する側) と、C の CC_WITHDRAWN_ATTACH (実際に拒否する側)。
+  # 片方だけ消えると、その surface は誰にも probe されなくなり、しかも何も言わない。
+  # この対応は**両方が空でも意味を保つ**ので、Phase A/B を越えて生き残る。
+  def test_codegen_refusal_table_and_the_withdrawn_record_are_the_same_set
+    prefixes = G.cc_withdrawn_attach_prefixes
+    refute_nil prefixes, "CC_WITHDRAWN_ATTACH を読めない (空の拒否表と読めない拒否表を区別できない)"
+    recorded = CAP::WITHDRAWN_ATTACH.values.map { |w| w[:method_prefix].to_s }
+    prefixes.each do |p|
+      assert recorded.any? { |m| m.include?(p) },
+             "codegen は #{p} を拒否するが WITHDRAWN_ATTACH に記録が無い (誰も probe しない)"
+    end
+    CAP::WITHDRAWN_ATTACH.each do |k, w|
+      assert prefixes.any? { |p| w[:method_prefix].to_s.include?(p) },
+             "#{k} は降格記録に在るが codegen の拒否が無い (E407: 降格は affordance だけでは半分)"
+    end
+  end
+
+  # ---------- the probe text ----------
+
+  # The call the gate compiles is the affordance's own published example, not a
+  # separately-maintained snippet. If these ever diverge the gate would be
+  # proving something about a probe nobody was ever told to write.
+  def test_call_text_is_the_published_example
+    %w[pid kfield path_eq flow_get spnl_emit].each do |b|
+      assert_equal CAP.example_for(b), G.call_text(b), "#{b}: gate の probe が affordance の example と違う"
+    end
+  end
+
+  # opaque kfuncs publish no example (params honestly unknown); the gate must
+  # still be able to call them, at the known arity.
+  # E416: the attach probe's body marker must be something ONLY the body can put
+  # in the emitted C.
+  #
+  # It used to be the ivar's name, and the probe declares that ivar at top level
+  # -- which the codegen turns into a map called `<unit>_top_<marker>`. So the
+  # needle appeared in the output whether or not the body survived, and stage 2
+  # ("did the handler body reach the C?", the check E407 added because `on :timer`
+  # vanished body and all) could not fail for any kind whose probe has an ivar.
+  # Found while porting the one kind that legitimately discards its body.
+  def test_the_body_marker_cannot_come_from_the_ivar_declaration
+    src = G.attach_source(:xdp, "zzprobe")
+    assert_includes src, "@zzprobe = 0", "probe が ivar を宣言していない (作者が書く形でなくなる)"
+    assert_includes src, G::BODY_MARK, "body に needle が無い"
+    refute_equal "zzprobe", G::BODY_MARK,
+                 "needle が ivar 名 — top-level ivar は map 名として出力に現れるので body の証拠にならない"
+    # The needle must not be derivable from anything but the increment: it does
+    # not appear in the probe's declarations, only in the handler.
+    decls, body = src.split(/^\s*def |^\s*on /, 2)
+    refute_includes decls.to_s, G::BODY_MARK, "needle が宣言側にも出ている"
+    assert_includes body.to_s, G::BODY_MARK
+  end
+
+  def test_opaque_builtins_get_a_synthesised_call
+    assert_nil CAP.example_for("scx_dispatch")
+    assert_equal "scx_dispatch(a0, a1, a2, a3)", G.call_text("scx_dispatch")
+  end
+
+  def test_withdrawn_builtins_get_a_call_even_without_a_signature
+    # Withdrawn builtins are out of SIGNATURES entirely, so the arity comes from
+    # WITHDRAWN. The arity>=1 subject was `tail_call_to` until E412 re-ported it
+    # and `tcp_reply_synack` until E416 did; the `example:` subject was
+    # `payload_starts`, also E416. What is being tested is the gate's SYNTHESIS,
+    # not the subject, so when a subject comes back the fix is to move the
+    # assertion -- not to keep an entry withdrawn so a test keeps passing
+    # (E415's whole point, one level down).
+    #
+    # After E416 the live inventory is two arity-0 entries with no example, so
+    # the other two paths are exercised against a SYNTHETIC record instead. That
+    # is the same move E415 made for the gate itself: the ability to detect a
+    # thing must not depend on the shipped product still containing one.
+    refute_includes CAP::SIGNATURES.keys, "xdp_match_health"
+    assert_equal "xdp_match_health", G.call_text("xdp_match_health")
+    assert_equal "xdp_reply_health", G.call_text("xdp_reply_health")
+
+    fake = CAP::WITHDRAWN.merge(
+      "zz_e416_arity"   => { edoc: "E416", ctx: :xdp, arity: 2, why: "synthetic" },
+      "zz_e416_example" => { edoc: "E416", ctx: :xdp, arity: 1, why: "synthetic",
+                             example: 'zz_e416_example("GET ")' },
+    ).freeze
+    CAP.send(:remove_const, :WITHDRAWN)
+    CAP.const_set(:WITHDRAWN, fake)
+    begin
+      assert_equal "zz_e416_arity(a0, a1)", G.call_text("zz_e416_arity")
+      assert_equal 'zz_e416_example("GET ")', G.call_text("zz_e416_example")
+    ensure
+      CAP.send(:remove_const, :WITHDRAWN)
+      CAP.const_set(:WITHDRAWN, fake.reject { |k, _| k.start_with?("zz_e416") }.freeze)
+    end
+  end
+
+  def test_free_vars_skips_literals
+    assert_equal %w[sk], G.free_vars("kfield", 'kfield(sk, "sock", "sk_sndbuf")')
+    assert_equal [], G.free_vars("flow_get", "flow_get(:conn, :backend_ip)")
+    assert_equal %w[a b], G.free_vars("divu", "divu(a, b)")
+  end
+
+  # ---------- the generated probe is a probe ----------
+
+  def test_probe_binds_free_vars_as_params_where_the_kind_takes_them
+    src = G.source(:kprobe, 'kfield(sk, "sock", "sk_sndbuf")', %w[sk])
+    assert_includes src, "def kprobe__do_sys_openat2(sk)"
+    assert_includes src, 'kfield(sk, "sock", "sk_sndbuf")'
+  end
+
+  def test_probe_binds_free_vars_as_locals_where_the_kind_does_not
+    src = G.source(:xdp, "cpumap_redirect(cpu)", %w[cpu])
+    assert_includes src, "def xdp__probe\n"
+    assert_includes src, "  cpu = 0"
+    assert_includes src, "  XDP_PASS"   # a verdict kind still returns a verdict
+  end
+
+  def test_probe_uses_the_gated_handler_for_dpath_builtins
+    src = G.source(G.shape_for("path_eq"), G.call_text("path_eq"), G.free_vars("path_eq", G.call_text("path_eq")))
+    assert_includes src, "def lsm__file_open(file, ret)"
+    assert_includes src, 'path_eq(file, "/usr/bin/curl")'
+  end
+
+  def test_struct_ops_probe_is_wrapped_in_its_class
+    src = G.source(:tcp_cc, "tcp_sock_snd_cwnd(sk)", %w[sk])
+    assert_includes src, "class ProbeCC < BPF::TcpCC"
+    assert_includes src, "  def cong_avoid(sk, ack, acked)"
+    assert src.rstrip.end_with?("end"), "class を閉じていない"
+  end
+
+  # The call is never the last statement, so a value-returning builtin cannot be
+  # mistaken for the handler's verdict -- and a statement-only builtin still
+  # emits. (Both forms have to survive the same probe template.)
+  def test_call_is_not_the_return_value
+    src = G.source(:kprobe, "spnl_emit(value)", %w[value])
+    lines = src.lines.map(&:strip).reject(&:empty?)
+    tail = lines[-2..]   # last body statement, then `end`
+    assert_equal "end", tail[1]
+    assert_equal "0", tail[0], "builtin 呼出が戻り値位置に来ている (void builtin と衝突する)"
+  end
+
+  # ---------- shape metadata does not rot ----------
+
+  # SHAPE_OVERRIDE is hand-maintained, so it is the part most likely to go stale.
+  # Every key must still be a builtin, and it must be doing work (an override
+  # that agrees with the derived shape is dead weight that reads as coverage).
+  def test_shape_overrides_all_name_real_builtins
+    unknown = SHAPE_OVERRIDE.keys.reject { |b| CAP.all_builtins.include?(b) }
+    assert_empty unknown, "SHAPE_OVERRIDE が存在しない builtin を指している: #{unknown.inspect}"
+    bad = SHAPE_OVERRIDE.values.reject { |v| SHAPES.key?(v) }
+    assert_empty bad, "SHAPE_OVERRIDE の shape が未定義: #{bad.inspect}"
+  end
+
+  # A builtin with a declared context requirement must take its shape from the
+  # requirement, not from a hand-written override (otherwise the gate stops
+  # testing the documented context and starts testing whatever we typed here).
+  def test_gated_builtins_are_not_shape_overridden
+    overridden = SHAPE_OVERRIDE.keys.select { |b| CAP::CONTEXT_REQUIREMENTS.key?(b) }
+    assert_empty overridden,
+                 "context が宣言済なのに override している (宣言と違う context を測ってしまう): #{overridden.inspect}"
+  end
+
+  # ---------- E407: the attach-kind half ----------
+
+  # Same coverage invariant as the builtins: a kind with no probe shape is a kind
+  # nothing checks. The gate aborts on this at run time; here it is caught without
+  # needing the Linux codegen.
+  def test_every_advertised_attach_kind_has_a_probe_shape
+    missing = CAP::ATTACH_KINDS.map { |a| a[:kind] } - G::ATTACH_SHAPES.keys
+    assert_empty missing, "probe shape 未定義の attach kind (gate が測れない): #{missing.inspect}"
+  end
+
+  def test_no_probe_shape_for_a_withdrawn_or_unknown_attach_kind
+    stale = G::ATTACH_SHAPES.keys - CAP::ATTACH_KINDS.map { |a| a[:kind] }
+    assert_empty stale, "宣伝していない attach kind の shape が残っている: #{stale.inspect}"
+  end
+
+  # E415: 非空要求は撤去。attach 側の「不在を検出できるか」は、C の拒否表との
+  # 対応 (上の test) と 2 段の self-check (wrong_sec / body_missing) が担う。
+  def test_attach_gate_covers_both_directions
+    refute_empty CAP::ATTACH_KINDS
+    assert_empty(CAP::ATTACH_KINDS.map { |a| a[:kind] } & CAP::WITHDRAWN_ATTACH.keys)
+  end
+
+  # The expected SEC is the affordance's own `sec:` field with this shape's
+  # concrete names substituted -- never a string typed into the gate. If they
+  # diverged, the gate would be enforcing a promise nobody published.
+  def test_promised_sec_comes_from_the_affordance
+    assert_equal "kprobe/do_sys_openat2", G.promised_sec(:kprobe)
+    assert_equal "tracepoint/syscalls/sys_enter_openat", G.promised_sec(:tracepoint)
+    assert_equal "struct_ops/cong_avoid", G.promised_sec(:tcp_cc)
+    assert_equal "sockops", G.promised_sec(:sock_ops)
+    # no unsubstituted placeholder may survive into an expectation
+    CAP::ATTACH_KINDS.each do |a|
+      refute_match(/[<>]/, G.promised_sec(a[:kind]).to_s,
+                   "#{a[:kind]}: sec の placeholder が埋まっていない (ATTACH_SHAPES の subst 不足)")
+    end
+  end
+
+  def test_attach_probe_is_written_in_the_advertised_surface
+    src = G.attach_source(:sock_ops, "zzm")
+    assert_includes src, "def sock_ops__probe"
+    # E416: the increment carries BODY_MARK, not `1` -- see
+    # test_the_body_marker_cannot_come_from_the_ivar_declaration for why.
+    assert_includes src, "@zzm = @zzm + #{G::BODY_MARK}",
+                    "body marker が無いと「body が出力に届いたか」を測れない"
+
+    cls = G.attach_source(:qdisc, "zzq")
+    assert_includes cls, "class ProbeQ < BPF::Qdisc"
+    assert_includes cls, "  def enqueue(skb, sch, to_free)"
+  end
+
+  # The withdrawn probes come from the affordance's own record, so the negative
+  # control is the shape a reader of WITHDRAWN_ATTACH would actually type.
+  def test_withdrawn_attach_probe_uses_the_recorded_surface
+    CAP::WITHDRAWN_ATTACH.each_key do |k|
+      src = G.withdrawn_attach_source(k, "zzw")
+      assert_includes src, CAP::WITHDRAWN_ATTACH[k][:probe].lines.first.chomp
+      assert src.rstrip.end_with?("end"), "#{k}: probe を閉じていない"
+    end
+  end
+
+  # SEC("license") / SEC(".maps") / SEC(".struct_ops") are not attach points; a
+  # gate that counted them would call any output "has a SEC".
+  def test_prog_secs_ignores_non_program_sections
+    out = %(char LICENSE[] SEC("license") = "GPL";\n} u_top SEC(".maps");\nSEC("sockops")\nSEC(".struct_ops.link")\n)
+    assert_equal ["sockops"], G.prog_secs(out)
+  end
+
+  # ---------- E408: surface sugar ----------
+
+  # A sugar claim the gate cannot write is a claim nothing checks -- the
+  # second-order version of E408's own finding.
+  def test_every_sugar_claim_has_a_writable_shape
+    bad = CAP.surface_sugar.reject do |s|
+      s[:form] == :attach || G::SUGAR_SHAPES.key?(s[:shape])
+    end
+    assert_empty bad.map { |s| [s[:id], s[:shape]] },
+                 "probe shape 未定義の sugar claim (gate が測れない)"
+  end
+
+  # ids name the failures, so a duplicate would hide one behind the other.
+  def test_sugar_claim_ids_are_unique
+    dups = CAP.surface_sugar.map { |s| s[:id] }.tally.select { |_, v| v > 1 }
+    assert_empty dups, "sugar claim id が重複"
+  end
+
+  # Every claim is a PAIR. One-sided entries would silently degrade the section
+  # into "does it compile", which is the criterion E408 exists to replace.
+  def test_every_sugar_claim_has_both_spellings
+    CAP.surface_sugar.each do |s|
+      refute_nil s[:sugar], "#{s[:id]}: sugar 綴りが無い"
+      refute_nil s[:flat],  "#{s[:id]}: flat 等価物が無い"
+      refute_equal s[:sugar], s[:flat], "#{s[:id]}: 2 つの綴りが同一 (主張になっていない)"
+      assert_includes %i[identical compiles], s[:equiv], "#{s[:id]}: equiv 未指定"
+    end
+  end
+
+  # :compiles is the weaker tier and cannot see `diverged`, so an entry may only
+  # sit there with a written reason. Silent weakening is how a gate rots.
+  def test_weaker_equivalence_tier_states_its_reason
+    CAP.surface_sugar.select { |s| s[:equiv] == :compiles }.each do |s|
+      refute_nil s[:note], "#{s[:id]}: equiv: :compiles なのに理由が無い"
+      assert_operator s[:note].length, :>, 40, "#{s[:id]}: 理由が短すぎる"
+    end
+  end
+
+  # :attach claims are whole probe fragments; both sides must have the hole the
+  # shared body goes into, or the two probes would not be running the same code.
+  def test_attach_sugar_fragments_carry_the_body_hole
+    CAP.surface_sugar.select { |s| s[:form] == :attach }.each do |s|
+      assert_includes s[:sugar], "<BODY>", "#{s[:id]}: sugar 側に <BODY> が無い"
+      assert_includes s[:flat],  "<BODY>", "#{s[:id]}: flat 側に <BODY> が無い"
+      refute_nil s[:ret], "#{s[:id]}: 戻り値が無いと handler が閉じない"
+    end
+  end
+
+  # E415: 非空要求は撤去 (A5 で 0 になる集合の 1 つ)。sugar 側の「不在」は
+  # `pkt.zz_e415_absent` の self-check が、「在るのに別物」は E408 の
+  # mismatched pair が担う。ここに残るのは記録の中身の契約だけ。
+  def test_sugar_gate_covers_both_directions
+    refute_empty CAP.surface_sugar
+    assert_empty(CAP.surface_sugar.map { |s| s[:sugar] } & CAP::WITHDRAWN_SUGAR.keys)
+    CAP::WITHDRAWN_SUGAR.each do |spelling, info|
+      # E410: the withdrawn set is not guaranteed to be expressions. Un-withdrawing
+      # its last :expr entry (`pkt.byte_at`) left the reactor spelling of a
+      # withdrawn attach kind as the control, so the shape requirement is the one
+      # the gate actually applies -- an :expr claim needs a probe shape to sit in,
+      # an :attach claim IS the probe (and so needs the body hole and a return).
+      if (info[:form] || :expr) == :attach
+        assert_includes info[:sugar].to_s, "<BODY>", "#{spelling}: attach 形に <BODY> が無い"
+        refute_nil info[:ret], "#{spelling}: 戻り値が無いと handler が閉じない"
+      else
+        assert G::SUGAR_SHAPES.key?(info[:shape]), "#{spelling}: shape 未定義"
+      end
+      refute_nil info[:why]
+      refute_nil info[:instead], "#{spelling}: 代わりに何を書くかが無い"
+    end
+  end
+
+  # The pkt.* chain claims are derived from the flat reader names, so the chain
+  # surface cannot name a reader the flat surface does not have.
+  def test_pkt_chain_claims_are_derived_from_the_flat_builtins
+    CAP.surface_sugar.select { |s| s[:edoc] == "E071" }.each do |s|
+      assert_equal s[:sugar].tr(".", "_"), s[:flat]
+      assert_includes CAP.all_builtins, s[:flat], "#{s[:id]}: flat 側が builtin として宣伝されていない"
+    end
+  end
+
+  # The class and module surfaces of one DSL parent must claim the SAME flat
+  # twin: E073/E074 are two spellings of one binding, and the failure E408 found
+  # was precisely that only one of them was implemented.
+  def test_class_and_module_surfaces_claim_the_same_flat_form
+    by_flat = CAP.surface_sugar.select { |s| %w[E073 E074].include?(s[:edoc]) }.group_by { |s| s[:flat] }
+    assert_equal CAP::SUGAR_DSL_PARENTS.size, by_flat.size
+    by_flat.each_value { |pair| assert_equal 2, pair.size, "class/module の片側しか主張していない" }
+  end
+
+  # ---------- E409: maps ----------
+
+  # Every map claim must be probeable by the gate, and the probe must be one of
+  # the surfaces that actually make the map. A claim whose probe is not in its
+  # own created_by would be measuring some other surface's output.
+  def test_every_map_claim_is_probeable
+    CAP::MAPS.each do |m|
+      assert_includes m[:created_by], m[:probe], "#{m[:id]}: probe が created_by に無い"
+      case m[:probe_kind]
+      when :builtin then assert_includes CAP.all_builtins, m[:probe], "#{m[:id]}: probe が builtin として宣伝されていない"
+      when :attach  then assert_includes CAP::ATTACH_KINDS.map { |a| a[:kind].to_s }, m[:probe]
+      when :syntax  then assert G::MAP_SYNTAX_PROBES.key?(m[:probe].to_sym), "#{m[:id]}: syntax probe 未定義"
+      else flunk "#{m[:id]}: probe_kind #{m[:probe_kind].inspect} を gate は書けない"
+      end
+    end
+  end
+
+  # created_by is the whole point of the table -- "which surface makes this" --
+  # so every name in it must be a surface the affordance actually publishes.
+  def test_map_created_by_names_are_real_surfaces
+    known = CAP.all_builtins + CAP::ATTACH_KINDS.map { |a| a[:kind].to_s } + G::MAP_SYNTAX_PROBES.keys.map(&:to_s)
+    CAP::MAPS.each do |m|
+      (m[:created_by] - known).each { |n| flunk "#{m[:id]}: created_by の #{n} は宣伝されていない surface" }
+    end
+  end
+
+  # The four non-.maps forms create a map the emitted C does not describe, so the
+  # gate can only check that the form is present. An entry may sit in that weaker
+  # tier ONLY with a recorded kernel-side measurement -- the same rule E408 put on
+  # equiv: :compiles. Silent weakening is how a gate rots.
+  def test_undeclared_map_forms_carry_a_measurement
+    CAP::MAPS.reject { |m| m[:declared_as] == :maps }.each do |m|
+      refute_nil m[:measured], "#{m[:id]}: declared_as=#{m[:declared_as]} なのに measured (kernel 側の出典) が無い"
+      assert_operator m[:measured].length, :>, 30, "#{m[:id]}: measured が短すぎる"
+    end
+  end
+
+  # Capacity and overflow behaviour are the load-bearing fields: they are what an
+  # AI needs to decide whether a probe will quietly drop events (E393).
+  def test_every_map_states_its_role_and_what_happens_when_full
+    CAP::MAPS.each do |m|
+      refute_nil m[:role], "#{m[:id]}: role が無い"
+      refute_nil m[:when_full], "#{m[:id]}: 満杯時の挙動が無い (容量だけでは判断できない)"
+      refute_nil m[:type]
+      refute_nil m[:edoc]
+    end
+  end
+
+  def test_map_ids_and_names_are_unique
+    assert_equal CAP::MAPS.size, CAP::MAPS.map { |m| m[:id] }.uniq.size
+    assert_equal CAP::MAPS.size, CAP::MAPS.map { |m| m[:map] }.uniq.size
+  end
+
+  # Withdrawn types are the record of what left with the E406/E407 surfaces, and
+  # a type cannot be advertised and withdrawn at once.
+  #
+  # E415: 非空要求は撤去。`mrevived` は集合積であって拒否 path の test では
+  # ないので、そもそも検出力の control ではなかった (map 半分の control は
+  # E409 の 2 つの self-check)。A3/A4/A5 が 3 型すべてを戻すと空になる。
+  def test_withdrawn_map_types_are_disjoint_and_documented
+    assert_empty(CAP::MAPS.map { |m| m[:type] }.uniq & CAP::WITHDRAWN_MAPS.keys)
+    CAP::WITHDRAWN_MAPS.each do |t, info|
+      refute_nil info[:went_with], "#{t}: どの surface と一緒に消えたのかが無い"
+      refute_nil info[:why]
+    end
+  end
+
+  # ---------- E409: the scanner ----------
+  # It knows five map-creating forms. Four of them do not look like maps, and
+  # E409 found the last two only by loading the objects, so each one gets a test:
+  # a form the scanner forgets is a map nobody is told about.
+  def test_scanner_finds_the_dot_maps_form_with_its_properties
+    d = G.map_decls(<<~C).first
+      struct {
+          __uint(type, BPF_MAP_TYPE_HASH);
+          __type(key, __u32);
+          __type(value, __s64);
+          __uint(max_entries, 4096);
+      } u_thing SEC(".maps");
+    C
+    assert_equal ["u_thing", "HASH", :maps, "4096", "__u32", "__s64"],
+                 [d.name, d.type, d.form, d.max_entries, d.key, d.value]
+  end
+
+  # `__uint(value_size, sizeof(struct bpf_cpumap_val))` -- a [^)]* capture would
+  # truncate this into a plausible-looking lie.
+  def test_scanner_balances_parentheses_in_attribute_arguments
+    d = G.map_decls(<<~C).first
+      struct {
+          __uint(type, BPF_MAP_TYPE_CPUMAP);
+          __uint(key_size, sizeof(__u32));
+          __uint(value_size, sizeof(struct bpf_cpumap_val));
+          __uint(max_entries, 64);
+      } spnl_cpumap SEC(".maps");
+    C
+    assert_equal "sizeof(struct bpf_cpumap_val)", d.value_size
+  end
+
+  def test_scanner_finds_struct_ops_rodata_data_section_and_header_forms
+    src = <<~C
+      #include <bpf/usdt.bpf.h>
+      #define private(name) SEC(".data." #name) __hidden __attribute__((aligned(8)))
+      volatile const __s64 spnl_param_x = 0;
+      private(A) struct bpf_spin_lock lk;
+      SEC(".struct_ops.link")
+      struct Qdisc_ops spnl_qdisc_ops = { .id = "spnl_qdisc" };
+    C
+    got = G.map_decls(src).map { |d| [d.name, d.form] }
+    assert_includes got, ["spnl_qdisc_ops", :struct_ops]
+    assert_includes got, [".rodata", :rodata]
+    assert_includes got, [".data.A", :data_section]
+    assert_includes got, ["__bpf_usdt_specs", :libbpf_header]
+    assert_includes got, [".kconfig", :libbpf_header]
+  end
+
+  # The macro DEFINITION is not a use; counting it would invent a .data. map for
+  # every program that includes the qdisc preamble.
+  def test_scanner_ignores_the_macro_definition_line
+    src = "#define private(name) SEC(\".data.\" #name) __hidden\n"
+    assert_empty G.map_decls(src)
+  end
+
+  # A section form nobody taught the scanner is reported, not ignored: silence is
+  # the failure this vocabulary had, so an unknown form must be loud.
+  def test_scanner_reports_an_unknown_section_form
+    d = G.map_decls("int zz SEC(\".weird_new_thing\") = 0;\n").first
+    assert_equal :unknown, d.form
+  end
+
+  # `<unit>` is substituted, `<ivar>`/`<class>`/`<N>` are wildcards, everything
+  # else must match literally -- otherwise a claim would cover maps it never saw.
+  def test_map_name_patterns_match_only_what_they_mean
+    assert_match G.map_name_re("<unit>_top_<ivar>"), "u_top_hits"
+    refute_match G.map_name_re("<unit>_top_<ivar>"), "other_top_hits"
+    assert_match G.map_name_re("bpf_mim_inner<N>"), "bpf_mim_inner3"
+    refute_match G.map_name_re("bpf_mim_inner<N>"), "bpf_mim_innerX"
+    assert_match G.map_name_re("spnl_flow_<unit>_conn"), "spnl_flow_u_conn"
+  end
+
+  # The three verdicts the gate acts on, without needing the codegen.
+  def test_check_map_distinguishes_missing_mismatch_and_ok
+    entry = { id: :t, map: "bpf_hist", type: "ARRAY", declared_as: :maps, max_entries: "64",
+              key: "__u32", value: "__u64", created_by: %w[hist_observe], probe: "hist_observe" }
+    good = G::MapDecl.new(name: "bpf_hist", type: "ARRAY", form: :maps, max_entries: "64",
+                          key: "__u32", value: "__u64")
+    assert_equal :ok, G.check_map(entry, [good]).first
+    assert_equal :missing, G.check_map(entry, []).first
+    assert_equal :mismatch, G.check_map(entry, [good.dup.tap { |d| d.max_entries = "32" }]).first
+    assert_equal :other, G.check_map(entry, nil).first
+  end
+
+  # ---------- E420: the correspondence check, and its own control ----------
+
+  # The comparison itself. Substring matching in both directions is deliberate (a
+  # C refusal prefix is the `def` prefix minus its trailing separator), and it is
+  # the kind of rule that inverts silently, so pin all three outcomes.
+  def test_correspondence_pairs_by_substring_in_both_directions
+    assert_empty G.correspondence(%w[xdp_tail], { xdp_tail_call: "xdp_tail__" })
+    assert_equal [[:codegen_only, "ghost"]],
+                 G.correspondence(%w[ghost], {})
+    assert_equal [[:affordance_only, :recorded]],
+                 G.correspondence([], { recorded: "recorded__" })
+    # both empty = the Phase A end state = vacuously true, and that is CORRECT.
+    assert_empty G.correspondence([], {})
+  end
+
+  # The third storey (E415's own follow-up). Both real inventories are empty
+  # today, so `orphan=0` is printed by a check with no live input: a broken regex
+  # or an inverted `any?` reads exactly the same. The control must therefore be
+  # SYNTHESISED -- and must still work when handed the empty world, because that
+  # is the world it runs in.
+  def test_the_correspondence_self_check_fires_on_an_empty_tree
+    r = G.selfcheck_correspondence([], {})
+    assert_equal :codegen_only,    r[:codegen_only]
+    assert_equal :affordance_only, r[:affordance_only]
+  end
+
+  # ...and the control's own control: break the comparison and the self-check
+  # must stop saying `caught`. (E408 NC5's shape: a self-check that cannot fail
+  # makes every number above it meaningless, so its inability to fail must fail.)
+  def test_a_broken_correspondence_is_visible_to_its_self_check
+    blind = Module.new do
+      extend G                                  # the real self-check...
+      def self.correspondence(_cc, _aff) = []   # ...over a comparison that compares nothing
+    end
+    r = blind.send(:selfcheck_correspondence, [], {})
+    assert_equal :MISSED, r[:codegen_only]
+    assert_equal :MISSED, r[:affordance_only]
+  end
+
+  # ---------- it must not pass vacuously ----------
+
+  # A gate whose codegen is unavailable has to abort, not report success. This is
+  # the failure mode tools/golden.rb hit (a wrong-platform binary turned every
+  # fixture into a skip and still exited 0), and build/ is bind-mounted into the
+  # container, so it is not hypothetical.
+  def test_gate_aborts_when_the_codegen_is_missing
+    out = `SPNL_INPROC_CC=/nonexistent/spinel-ebpf-cc ruby #{File.expand_path('../../tools/affordance_gate.rb', __dir__)} 2>&1`
+    refute_predicate $?, :success?, "codegen が無いのに成功終了した"
+    assert_match(/production codegen missing/, out)
+  end
+
+  # ---------- E426: the syntax vocabulary ----------
+  #
+  # Two of these claims were dead while advertised (literal `n.times`,
+  # `x = if ... end`), and nothing measured them because a construct is not a
+  # builtin, an attach kind, a sugar pair or a map. These tests pin the part that
+  # decides WHAT the syntax section measures -- the same second-order worry as the
+  # builtin half above: a section that runs and no longer reaches anything looks
+  # exactly like one that passes.
+
+  def test_every_syntax_claim_has_a_writable_shape
+    bad = CAP::SYNTAX.reject { |s| s[:form] == :attach || G::SUGAR_SHAPES.key?(s[:shape]) }
+    assert_empty bad.map { |s| s[:id] },
+                 "probe shape 未定義の syntax claim (gate が測れない)"
+  end
+
+  def test_syntax_claim_ids_are_unique
+    dups = CAP::SYNTAX.map { |s| s[:id] }.tally.select { |_, v| v > 1 }.keys
+    assert_empty dups
+  end
+
+  # The declared lowering IS the claim. Without it a syntax claim degenerates to
+  # "it compiles", which is stage 1 -- and stage 1 cannot tell literal `n.times`
+  # (open-coded, kernel floor 6.4) from a silent fall back to bpf_loop.
+  def test_every_syntax_claim_declares_what_it_lowers_to
+    bad = CAP::SYNTAX.reject { |s| s[:lowers_to].is_a?(String) && !s[:lowers_to].empty? }
+    assert_empty bad.map { |s| s[:id] }
+  end
+
+  # ...and a twin that does NOT contain the construct. `%`, `else` and `if (` all
+  # occur in the scaffolding, so a needle nobody requires to be ABSENT from the
+  # twin can be satisfied by boilerplate and proves nothing.
+  def test_every_syntax_claim_has_a_twin_that_differs
+    missing = CAP::SYNTAX.reject { |s| s[:without].is_a?(String) }
+    assert_empty missing.map { |s| s[:id] }, "`without` (construct-free twin) 未宣言"
+    same = CAP::SYNTAX.select { |s| s[:without] == s[:syntax] }
+    assert_empty same.map { |s| s[:id] },
+                 "twin が本体と同じテキスト = needle の absence 検査が構造的に無意味"
+  end
+
+  # :attach claims are whole-file shapes, so both spellings must carry the
+  # substitution point and a return literal, or sugar_source writes a broken probe.
+  def test_attach_form_syntax_claims_carry_body_and_ret
+    CAP::SYNTAX.select { |s| s[:form] == :attach }.each do |s|
+      assert_includes s[:syntax], "<BODY>", "#{s[:id]}: syntax に <BODY> が無い"
+      assert_includes s[:without], "<BODY>", "#{s[:id]}: without に <BODY> が無い"
+      refute_nil s[:ret], "#{s[:id]}: :attach 形は ret: が要る"
+    end
+  end
+
+  # ---------- E426 (D2): the coverage authorities ----------
+  #
+  # The reverse direction reads the codegen's own lowering dispatch. Two ways to
+  # read it wrong, and both make the gate QUIETLY WEAKER rather than fail:
+
+  # cc_lower_stmt has two forward declarations before its definition (it is
+  # mutually recursive with cc_lower_expr). Matching one of those and then taking
+  # the next `{` lands in an unrelated function -- measured: 11 accepted node
+  # types instead of 16, i.e. five types silently uncoverable.
+  def test_function_body_extraction_skips_forward_declarations
+    body = G.cc_function_body("cc_lower_stmt")
+    refute_nil body, "cc_lower_stmt の本体が読めない"
+    assert_includes body, "LocalVariableWriteNode",
+                    "forward decl を掴んで別の関数の本体を読んでいる"
+    assert_includes body, "InstanceVariableOperatorWriteNode"
+  end
+
+  def test_both_lowering_dispatchers_contribute_node_types
+    types = G.cc_lowering_node_types
+    refute_nil types
+    # one that only cc_lower_expr has, one that only cc_lower_stmt has
+    assert_includes types, "IntegerNode"
+    assert_includes types, "CallOperatorWriteNode"
+    assert_operator types.size, :>=, 15, "受理ノード型が急に減った = 抽出が壊れている疑い"
+  end
+
+  # The other measurement trap: the AST dump is space-separated, so operator
+  # names are percent-encoded. `%` arrives as `%25`, and a scanner that does not
+  # decode reports the modulo operator uncovered while a claim exercises it.
+  def test_dump_strings_are_percent_decoded
+    assert_equal "%", G.decode_dump_str("%25")
+    assert_equal "<<", G.decode_dump_str("<<")
+    assert_equal "+", G.decode_dump_str("+")
+  end
+
+  def test_binary_operator_table_is_readable_and_complete
+    ops = G.cc_binary_ops
+    refute_nil ops, "cc_is_binary_op() の表が読めない"
+    %w[+ - * / % == != < > <= >= & | ^ << >>].each { |o| assert_includes ops, o }
+  end
+
+  # The self-checks' anchors. E415's rule: a control anchored on something that
+  # can disappear must say so rather than quietly stop referring to anything.
+  def test_syntax_self_check_anchors_are_live
+    assert CAP::SYNTAX.any? { |s| s[:id] == G::SELFCHECK_SYNTAX },
+           "SELFCHECK_SYNTAX が生きた claim を指していない"
+    assert CAP::RUBY_SUBSET[:rejected].any? { |r| r[:flag] == G::SELFCHECK_SYNTAX_REJECT_FLAG },
+           "不在の self-check は affordance 自身の拒否 (#{G::SELFCHECK_SYNTAX_REJECT_FLAG}) に錨を打っている"
+  end
+
+  # ---------- E426 (D3): the rejected half ----------
+  #
+  # "Each flag corresponds to a partition flag (loud failure)" was a claim, and
+  # measuring it found `uses_bignum` exiting 0 with a different number baked into
+  # the kernel program. These pin the inputs that make the measurement meaningful.
+
+  def test_every_rejected_row_carries_a_probe_and_the_refusal_it_expects
+    CAP::RUBY_SUBSET[:rejected].each do |r|
+      refute_nil r[:probe], "#{r[:flag]}: probe 未宣言 = この行は測られない"
+      refute_empty r[:refusal].to_s, "#{r[:flag]}: refusal 未宣言 = 理由まで測れない"
+    end
+  end
+
+  # The construct goes in an ATTACH HANDLER on purpose: a plain method that
+  # cannot be lowered is correctly and quietly kept native, so "loud" is only
+  # meaningful where there is no native path to fall back to.
+  def test_rejected_probes_put_the_construct_in_an_attach_handler
+    CAP::RUBY_SUBSET[:rejected].each do |r|
+      assert_match(/def kprobe__/, r[:probe].to_s, "#{r[:flag]}: probe が attach ハンドラでない")
+    end
+  end
+
+  # The join that broke. The affordance names a flag and the text it expects;
+  # partition renders that text. Nothing else connects the two tables, and the
+  # E426 bug was exactly a name no producer emits.
+  def test_each_rejected_row_expects_text_partition_actually_renders
+    require "spinel_ebpf/partition"
+    CAP::RUBY_SUBSET[:rejected].each do |r|
+      flags = SpinelEbpf::Partition::MethodFlags.default
+      assert flags.respond_to?(r[:flag]), "#{r[:flag]} は MethodFlags のメンバではない"
+      flags[r[:flag]] = true
+      assert flags.reasons.any? { |t| t.include?(r[:refusal]) },
+             "#{r[:flag]}: affordance は #{r[:refusal].inspect} を期待するが " \
+             "MethodFlags#reasons はそれを出さない (#{flags.reasons.inspect})"
+    end
+  end
+end

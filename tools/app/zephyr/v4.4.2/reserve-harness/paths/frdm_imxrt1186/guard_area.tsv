@@ -1,0 +1,2 @@
+function	source	note
+none	hw:0	no guard or reserved area is taken from a thread stack in this configuration: ARCH_THREAD_STACK_RESERVED is 0 on arm (https://github.com/zephyrproject-rtos/zephyr/blob/dccb09599635bdff17633fa7e9dab014b91dce90/include/zephyr/arch/arm/arch.h#L275), ARCH_KERNEL_STACK_RESERVED is defined only under CONFIG_MPU_STACK_GUARD (arch.h#L266, unset), CONFIG_STACK_SENTINEL and CONFIG_STACK_POINTER_RANDOM are unset

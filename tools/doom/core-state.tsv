@@ -1,0 +1,33 @@
+# tools/doom/core-state.tsv — decision 0008 task 1's storage ownership.
+#
+# One row per class whose instance variables the closure touches. The ROLE of
+# each individual variable is not declared here: the audit derives it from
+# where the accesses are (read-only in the closure = resource; written and read
+# = persistent if anything outside the closure touches it, scratch if not;
+# written and not read = output), so it cannot drift from the code. What is
+# declared here is which of 0008's entries OWNS the storage, which the audit
+# cannot derive and which the Stage 2 schema needs.
+#
+# A class whose storage the closure touches with no row here is unclassified
+# and fails the run. `full` is checked against the derived roles: storage the
+# closure writes cannot belong to Full.
+#
+# The `domains` column of state-use.tsv is the evidence for each row below.
+#
+# class	owner	why
+TiccmdBuilder	input	Only doom_core_input touches it (domains: input). It accumulates this tic's command from the key state and quantizes the angle for recording.
+KeyScript	input	Only doom_core_input touches it (domains: input). It holds the scripted key timeline that stands in for a human.
+KeyState	input	Only doom_core_input touches it (domains: input). The closure reads it; whoever fills it -- SDL in bin/doom.rb, or KeyScript#apply -- writes it outside these entries.
+DemoWriter	input	Only doom_core_input touches it (domains: input). It is the recording being appended to, which is why one of its variables derives as output.
+Game	step	Only doom_core_step touches it (domains: step). It is the simulation: 74 persistent variables that survive the tic, 151 the closure only reads, 12 that live for one call, 8 it writes and never reads back.
+Random	step	Only doom_core_step touches it (domains: step). The generator index is the canonical piece of state a demo's determinism rests on.
+Renderer	render	Only doom_core_render touches it (domains: render). It holds the frame buffer and the per-frame tables.
+Jobs	render	Only doom_core_render touches it (domains: render). The job list is built and consumed within one frame.
+JobExecutor	render	Only doom_core_render touches it (domains: render). It draws a frame's jobs and holds nothing between frames.
+StatusBar	shared	Both entries touch it (domains: step, render and step,render). `ticker` advances it with the tic and `draw` composes it into the frame, so its storage crosses the two.
+Hud	shared	Both entries touch it (domains: step, render and step,render). `ticker` takes the message the tic produced and `draw` composes it.
+Textures	shared	Full loads the atlas from the WAD before any entry runs and neither entry writes it -- but `Textures#animate`, reached from `Game#update_specials` in the tick, writes `@texturetranslation` and `@flattranslation` every tic, and the render entry reads them. Declaring the class Full's said the closure writes none of it, which the audit measured to be false once an element store `@t[i] = v` was counted as a write to the storage rather than a read of it.
+Level	shared	Full loads the geometry from the WAD before any entry runs, and most of it is never written -- but a moving floor or ceiling writes the sector's height, pic and light every tic (`Game#move_plane`, `Game#ev_do_plat`), and the render entry reads them. Declaring the class Full's said the closure writes none of it, which the audit measured to be false once an element store through an ACCESSOR -- `lv.sector_floorheight[i] = h` -- was counted as a write to that storage.
+Sprites	full	Full loads it from the WAD before any entry runs. Only the render entry reads it, and the closure writes none of it.
+Wad	full	Full opens the file and owns the bytes. Only the render entry reads it, and the closure writes none of it.
+Lump	full	One entry of the WAD directory: a name, a position and a size. Full opens the file and owns the bytes, and CORE receives buffers rather than object references; what it needs from a lump is passed as scalars or prepared as a table. It appears here at all because the closure reaches those three fields through accessors, which is the case 0008 says must not let a field disappear.

@@ -1,0 +1,537 @@
+# tests/spinel-bpf-mlir/tests.tsv -- every Go test function of tools/spinel-bpf-mlir,
+# under one class, so tests/spinel-bpf-mlir/run.sh can run the routine ones and
+# refuse to run with a test it does not know.
+#
+# COLUMNS
+#   package  the Go package directory under tools/spinel-bpf-mlir
+#   test     the Test function
+#   class    routine           runs in run.sh with no privilege and no oracle
+#            privileged        reaches sudoCmd (a load or attach as root);
+#                              not run until the owner names the lane
+#            vm                boots a kernel image under $HOME/kernel-build
+#                              (SPINELBPF_VM=1); kept as a file, not run here
+#            oracle-committed  compares with, or reads, the generated outputs
+#                              spinel-bpf-mlir committed (an oracle; run.sh's
+#                              gated section committed-artefacts)
+#            oracle-cruby      runs CRuby (gated section cruby)
+#            pending           waits for the owner's decision on the driver's
+#                              Spinel commit check; the note says how
+#            absent            needs a file of the source that was not imported
+#   note     why ('-' for routine)
+#
+# Shape: this file lists the public shape, the one this tree builds: no
+# build tag selects it.
+#
+# The class was first derived from each test's call graph within its package
+# (test files only): reaching sudoCmd, sudo or Geteuid is privileged,
+# SPINELBPF_VM is vm, a comparison with a committed output is
+# oracle-committed, SPINELBPF_CRUBY or a ruby exec is oracle-cruby. A test
+# that compares the kernel with the native twin the same frontend generates
+# stays within one implementation and is not an oracle; those tests are
+# privileged anyway. A class changed after the first run says why in its note.
+#
+#package	test	class	note
+cmd/spinelbpf	TestAdjhTable	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestAdjhTableOut	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestAdjtTable	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestAdjtTableOut	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestArgvArtefacts	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+cmd/spinelbpf	TestArgvDifferential	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestArgvLoadCheck	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestArgvTpDifferential	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestArgvTwinSmoke	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestBMLTestCapsNotInProduct	routine	-
+cmd/spinelbpf	TestBMLVersionMismatchStops	routine	-
+cmd/spinelbpf	TestBMLVersionsMatch	routine	-
+cmd/spinelbpf	TestBccArtefacts	oracle-committed	compares with, or reads, the generated outputs spinel-bpf-mlir committed
+cmd/spinelbpf	TestBccArtefactsSha256	oracle-committed	compares with, or reads, the generated outputs spinel-bpf-mlir committed
+cmd/spinelbpf	TestBccDecodeExitsnoop	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+cmd/spinelbpf	TestBccProvenance	routine	-
+cmd/spinelbpf	TestBccSelftestArgdist	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestBccSelftestBiolatency	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestBccSelftestCachestat	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestBccSelftestCapable	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestBccSelftestCpudist	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestBccSelftestExecsnoop	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestBccSelftestExitsnoop	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestBccSelftestFilelife	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestBccSelftestFileslower	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestBccSelftestFunccount	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestBccSelftestFunclatency	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestBccSelftestHardirqs	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestBccSelftestKillsnoop	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestBccSelftestMemleak	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestBccSelftestMountsnoop	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestBccSelftestOpensnoop	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestBccSelftestRunqlat	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestBccSelftestRunqslower	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestBccSelftestSetuids	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestBccSelftestSlabratetop	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestBccSelftestSoftirqs	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestBccSelftestStatsnoop	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestBccSelftestSyncsnoop	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestBccSelftestSyscount	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestBccSelftestTcplife	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestBccSelftestTcpstates	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestBccSelftestTrace	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestBccSelftestVfsstat	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestBccTracepointFormats	oracle-committed	reads a generated output spinel-bpf-mlir committed (first run, 2026-10-26)
+cmd/spinelbpf	TestBccWave1Accounting	routine	-
+cmd/spinelbpf	TestBccWave2Accounting	routine	-
+cmd/spinelbpf	TestBuildRemovesWork	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+cmd/spinelbpf	TestBuildTwice	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+cmd/spinelbpf	TestBytehistArtefacts	oracle-committed	compares with, or reads, the generated outputs spinel-bpf-mlir committed
+cmd/spinelbpf	TestBytehistSelftestHost	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestCgAttach	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestCgBuildNoRoot	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+cmd/spinelbpf	TestCgTable	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestCgTableOut	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestCgUserAPI	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestCheckNeededRejects	routine	-
+cmd/spinelbpf	TestCommArtefacts	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+cmd/spinelbpf	TestCommDifferential	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestCommTwinSmoke	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestCompileOutputShapes	routine	-
+cmd/spinelbpf	TestCompileWarningEndToEnd	routine	-
+cmd/spinelbpf	TestCompileWarningPosLikeFrontend	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+cmd/spinelbpf	TestCompileWarningsNoneToday	oracle-committed	compares with, or reads, the generated outputs spinel-bpf-mlir committed
+cmd/spinelbpf	TestControlMLIR	oracle-committed	reads a generated output spinel-bpf-mlir committed (first run, 2026-10-26)
+cmd/spinelbpf	TestCtxfAttach	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestCtxfBuildNoRoot	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+cmd/spinelbpf	TestCtxfTable	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestCtxfTableOut	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestDevmapBmlPut	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestDifferential	vm	boots a $HOME/kernel-build image (SPINELBPF_VM=1)
+cmd/spinelbpf	TestDifferentialMutation	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestEarlyReturnDifferential	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestEarlyReturnShapes	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+cmd/spinelbpf	TestErrnoConsts	oracle-cruby	runs CRuby
+cmd/spinelbpf	TestEthertypeArtefacts	oracle-committed	compares with, or reads, the generated outputs spinel-bpf-mlir committed
+cmd/spinelbpf	TestEthertypeSelftestHost	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestEthertypeSelftestVM	vm	boots a $HOME/kernel-build image (SPINELBPF_VM=1)
+cmd/spinelbpf	TestEthertypeVeth	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestFentryArgsDifferential	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestFentryIntArtefacts	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+cmd/spinelbpf	TestFentryIntDifferential	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestFentryIntTwinSmoke	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestFentryIntWrongDecl	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestFlowBuildNoRoot	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+cmd/spinelbpf	TestFlowKeysOrder	routine	-
+cmd/spinelbpf	TestFlowTable	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestFlowTableOut	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestFlowUserAPI	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestFlowcountArtefacts	oracle-committed	compares with, or reads, the generated outputs spinel-bpf-mlir committed
+cmd/spinelbpf	TestFlowcountSelftestHost	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestFlowcountSelftestVM	vm	boots a $HOME/kernel-build image (SPINELBPF_VM=1)
+cmd/spinelbpf	TestFlowcountVeth	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestFmodRetArtefacts	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+cmd/spinelbpf	TestFmodRetDifferential	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestFmodRetLoadChecks	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestFmodRetTwinSmoke	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestForkcountArtefacts	oracle-committed	compares with, or reads, the generated outputs spinel-bpf-mlir committed
+cmd/spinelbpf	TestForkcountSelftestHost	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestGlobalCounterMutant	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestGlobalCounterParallel	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestGlobalsCompile	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+cmd/spinelbpf	TestGlobalsDifferential	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestGlobalsMapsJSONTamper	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestGlobalsUserSide	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestGoRuntimeRemoved	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestGoldenArtefacts	oracle-committed	compares with, or reads, the generated outputs spinel-bpf-mlir committed
+cmd/spinelbpf	TestGreetwatchArtefacts	oracle-committed	compares with, or reads, the generated outputs spinel-bpf-mlir committed
+cmd/spinelbpf	TestGreetwatchHost	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestGreetwatchSelftestHost	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHarnessAgree	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHashKeyTable	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+cmd/spinelbpf	TestHashMultiCPU	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHashStatusTable	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHashTable	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHashTableOut	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHashTableVM	vm	boots a $HOME/kernel-build image (SPINELBPF_VM=1)
+cmd/spinelbpf	TestHashUserAPI	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookAdjhMutations	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookAdjtMutations	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookArgvFlat	routine	-
+cmd/spinelbpf	TestHookArgvIndexShift	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookCgSwapVerdict	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookCgWinL2	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookCommSkip	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookCtxfIfxZero	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookCtxfNoMarkStore	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookEbpfPrefixCollision	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+cmd/spinelbpf	TestHookFentryArgSwap	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookFlowMutations	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookFmodSelectSwap	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookHashMultiCPU	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookHashMutations	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookKcopyRingDrop	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookKprobePtrSwap	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookKreadOffset	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookKretvalZext	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookKstrNoStatus	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookKsysStrNoStatus	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookKsyscallSwap34	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookLpmFlags	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookLpmMutations	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookNfLenL2	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookNfSwapVerdict	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookNoCounterRMW	routine	-
+cmd/spinelbpf	TestHookNoMemberRecv	routine	-
+cmd/spinelbpf	TestHookNoOffsetRangeConstant	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+cmd/spinelbpf	TestHookNoOffsetRangeVariable	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookNoOrigin	routine	-
+cmd/spinelbpf	TestHookNoOverflow	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookNoSummary	routine	-
+cmd/spinelbpf	TestHookNoSummaryBorrow	routine	-
+cmd/spinelbpf	TestHookPercpuFaddSub	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookPercpuShared	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookRawtpIndex	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookRecordMultiCPU	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookRedirectFallbackDrop	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookRingMultiCPU	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookRingMutations	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookSfMutations	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookSfSwapVerdict	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookSkAssignAbsentZero	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookSwapComparisons	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookSwapOperands	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookTpStrNoStatus	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookTpfieldShift	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookUretvalSext	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookUstrNullStatus	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHostAttach	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestI64MinValueRange	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestINT64MinSpinelTwin	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestIdxConstWarningFixes	routine	-
+cmd/spinelbpf	TestKcopyRingArtefacts	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+cmd/spinelbpf	TestKcopyRingForkDifferential	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestKcopyRingTwinSmoke	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestKernelTypeCopyFargControls	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestKindTable	routine	-
+cmd/spinelbpf	TestKreadArtefacts	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+cmd/spinelbpf	TestKreadAttachDifferential	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestKreadTwinSmoke	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestKretprobeArtefacts	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+cmd/spinelbpf	TestKretprobeAttachKind	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestKretprobeDifferential	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestKretprobeTwinSmoke	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestKstrArtefacts	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+cmd/spinelbpf	TestKstrExecDifferential	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestKstrStrptrOnInt	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestKstrTwinSmoke	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestKsysStrArtefacts	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+cmd/spinelbpf	TestKsysStrDifferential	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestKsysStrLoadCheck	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestKsysStrTwinSmoke	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestKsyscallArtefacts	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+cmd/spinelbpf	TestKsyscallAttachDifferential	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestKsyscallAttachKind	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestKsyscallTwinSmoke	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestKsyscallWrongType	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestLargeEventOutlined	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+cmd/spinelbpf	TestLastseenArtefacts	oracle-committed	compares with, or reads, the generated outputs spinel-bpf-mlir committed
+cmd/spinelbpf	TestLastseenSelftestHost	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestLastseenSelftestVM	vm	boots a $HOME/kernel-build image (SPINELBPF_VM=1)
+cmd/spinelbpf	TestLastseenVeth	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestLibraryDefsAvoidSpinelSplice	pending	reads Spinel 086d514d's spinel_parse.c aliases table, which this pin does not have (first run, 2026-10-26)
+cmd/spinelbpf	TestLibraryTypeUniformity	routine	-
+cmd/spinelbpf	TestLinkNeeded	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+cmd/spinelbpf	TestLoadStages	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestLoaderGoRemoved	routine	-
+cmd/spinelbpf	TestLoopBudgetWrapped	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+cmd/spinelbpf	TestLoopHostLoad	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestLoopMutations	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestLoopShapes	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+cmd/spinelbpf	TestLoopTable	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestLpmPrefixNoRoot	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestLpmTable	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestLpmTableOut	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestLpmUserAPI	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestMapPut	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestMaskRangeWarning	routine	-
+cmd/spinelbpf	TestNarrowE294Load	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestNarrowShapes	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+cmd/spinelbpf	TestNarrowTable	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestNfAttach	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestNfBuildNoRoot	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+cmd/spinelbpf	TestNfTable	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestNfTableOut	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestNfUserAPI	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestNoGoInProduct	routine	-
+cmd/spinelbpf	TestNoMutationHookInProduction	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+cmd/spinelbpf	TestNoThreadedRuntime	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+cmd/spinelbpf	TestOutputStrDiscardDifferential	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestOutputStrDiscardOwnership	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+cmd/spinelbpf	TestPacketHarnessAgree	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestPacketHostLoad	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestPacketMutations	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestPacketNonrootHint	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestPacketRunHost	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestPacketRunVM	vm	boots a $HOME/kernel-build image (SPINELBPF_VM=1)
+cmd/spinelbpf	TestPacketTable	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestPacketTableVM	vm	boots a $HOME/kernel-build image (SPINELBPF_VM=1)
+cmd/spinelbpf	TestPercpuMultiCPU	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestPercpuSemantics	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestPercpuTable	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestPercpuTableVM	vm	boots a $HOME/kernel-build image (SPINELBPF_VM=1)
+cmd/spinelbpf	TestPktlogArtefacts	oracle-committed	compares with, or reads, the generated outputs spinel-bpf-mlir committed
+cmd/spinelbpf	TestPktlogSelftestHost	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestPktlogSelftestVM	vm	boots a $HOME/kernel-build image (SPINELBPF_VM=1)
+cmd/spinelbpf	TestPktlogVeth	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestPollwatchArtefacts	oracle-committed	compares with, or reads, the generated outputs spinel-bpf-mlir committed
+cmd/spinelbpf	TestPollwatchSelftestHost	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestProtostatArtefacts	oracle-committed	compares with, or reads, the generated outputs spinel-bpf-mlir committed
+cmd/spinelbpf	TestProtostatSelftestHost	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestProtostatSelftestVM	vm	boots a $HOME/kernel-build image (SPINELBPF_VM=1)
+cmd/spinelbpf	TestProtostatVeth	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestPtrValArtefacts	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+cmd/spinelbpf	TestPtrValDifferential	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestPtrValLoadCheck	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestPtrValTwinSmoke	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestRawTpArtefacts	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+cmd/spinelbpf	TestRawTpAttachDifferential	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestRawTpAttachKind	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestRawTpTestRunDifferential	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestRawTpTwinSmoke	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestRawTpWideIndex	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestRecordArrayHarness	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestRecordArrayMutations	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestRecordArrayShapes	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+cmd/spinelbpf	TestRecordArrayTable	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestRecordArrayUserSpace	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestRecordArrayVarHost	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestRecordArrayVarIndex	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+cmd/spinelbpf	TestRecordHarnessSmoke	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestRecordHostLoad	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestRecordMapsJSONTamper	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestRecordMemberBuiltinNames	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestRecordMutations	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestRecordNoRegenerate	oracle-committed	compares with, or reads, the generated outputs spinel-bpf-mlir committed
+cmd/spinelbpf	TestRecordRoundTrip	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestRecordTable	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestRecordTableOut	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestRecordTableVM	vm	boots a $HOME/kernel-build image (SPINELBPF_VM=1)
+cmd/spinelbpf	TestRecordsTable	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+cmd/spinelbpf	TestRedirectArtefacts	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+cmd/spinelbpf	TestRedirectDifferential	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestRedirectTwinSmoke	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestRefusedProgramWritesOnlyDomainGraph	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+cmd/spinelbpf	TestReuseCommitted	oracle-committed	compares with, or reads, the generated outputs spinel-bpf-mlir committed
+cmd/spinelbpf	TestReuseCompileWarnings	oracle-committed	reads a generated output spinel-bpf-mlir committed (first run, 2026-10-26)
+cmd/spinelbpf	TestRingMultiCPU	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestRingReader	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestRingReaderTableTamper	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestRingTable	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestRingTableOut	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestRingTableVM	vm	boots a $HOME/kernel-build image (SPINELBPF_VM=1)
+cmd/spinelbpf	TestRingworkerArtefacts	oracle-committed	compares with, or reads, the generated outputs spinel-bpf-mlir committed
+cmd/spinelbpf	TestRingworkerSelftestHost	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestRootCallsUseLock	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestRootLockTimeout	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestRootLockWaits	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestSchemaReadStrict	oracle-committed	compares with, or reads, the generated outputs spinel-bpf-mlir committed
+cmd/spinelbpf	TestSelftest	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestSfAttach	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestSfBuildNoRoot	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+cmd/spinelbpf	TestSfTable	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestSfTableOut	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestSfUserAPI	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestSkLookupArtefacts	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+cmd/spinelbpf	TestSkLookupDifferential	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestSkLookupTwinSmoke	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestSockmapBmlPut	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestSpinelThreadCurrent	routine	-
+cmd/spinelbpf	TestSubprogramBorrowDifferential	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestSubprogramDifferential	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestSubprogramHashBorrowDifferential	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestSubprogramRingHost	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestSubprogramWindowDifferential	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestTableDifferential	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestTableThreeTargets	vm	boots a $HOME/kernel-build image (SPINELBPF_VM=1)
+cmd/spinelbpf	TestTcAttachKind	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestTcDirectionMutation	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestTcHarnessSmoke	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestTcMutations	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestTcTable	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestTccountArtefacts	oracle-committed	compares with, or reads, the generated outputs spinel-bpf-mlir committed
+cmd/spinelbpf	TestTccountSelftestHost	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestTccountVeth	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestTextMutations	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestThreadCloseInFlight	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestThreadGCStall	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestThreadLoadMainOnly	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestThreadParallel	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestThreadRingOwner	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestThreadTwinDifferential	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestThreadTwinKeyMix	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestTlvwalkArtefacts	oracle-committed	compares with, or reads, the generated outputs spinel-bpf-mlir committed
+cmd/spinelbpf	TestTlvwalkHarnessSmoke	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestTlvwalkSelftestHost	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestTpBtfChaseDifferential	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestTpBtfCommDifferential	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestTpBtfForkDifferential	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestTpBtfLoadControls	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestTpBtfNullTwin	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestTpBtfNullableDeclaredNonNull	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestTpBtfPiDifferential	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestTpBtfTwin	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestTpStrArtefacts	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+cmd/spinelbpf	TestTpStrDifferential	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestTpStrLoadCheck	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestTpStrTwinSmoke	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestTracepointArtefacts	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+cmd/spinelbpf	TestTracepointAttachDifferential	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestTracepointAttachKind	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestTracepointTwinSmoke	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestTracepointWrongField	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestTracepointWrongWidth	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+cmd/spinelbpf	TestTracingAttachKind	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestTracingCompile	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+cmd/spinelbpf	TestTracingDifferential	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestTracingHarnessStops	routine	-
+cmd/spinelbpf	TestTracingTwinNeedsTask	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestTracingTwinSmoke	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestTutorialCommands	absent	reads spinel-bpf-mlir's docs/tutorial.md, not imported
+cmd/spinelbpf	TestTwinTypes	routine	-
+cmd/spinelbpf	TestUnknownWarningText	routine	-
+cmd/spinelbpf	TestUnrollBudgetMessage	routine	-
+cmd/spinelbpf	TestUprobeArgSwap	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestUprobeDifferential	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestUprobeGoTarget	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestUprobeLoadTargets	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestUprobeSelfTarget	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestUprobeSpinelTarget	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestUretprobeArtefacts	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+cmd/spinelbpf	TestUretprobeAttachKind	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestUretprobeDifferential	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestUretprobeGoTargetBuild	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+cmd/spinelbpf	TestUretprobeGoTargetLoad	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestUretprobeTwinSmoke	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestVerifiedKeyClosure	routine	-
+cmd/spinelbpf	TestVersionFlag	routine	-
+cmd/spinelbpf	TestWrongVersionsStopBeforeGenerating	pending	refused at the driver check that Spinel is 086d514d (first run, 2026-10-26)
+internal/frontend	TestAdjhOutputs	routine	-
+internal/frontend	TestAdjtOutputs	routine	-
+internal/frontend	TestAmbiguousType	routine	-
+internal/frontend	TestBoundaries	routine	-
+internal/frontend	TestCgOutputs	routine	-
+internal/frontend	TestCodesFrozen	routine	-
+internal/frontend	TestCodesNamed	routine	-
+internal/frontend	TestComparatorAdditiveRule	routine	-
+internal/frontend	TestComparatorDependentRule	routine	-
+internal/frontend	TestCtxFieldOutputs	routine	-
+internal/frontend	TestDynamicDispatch	routine	-
+internal/frontend	TestEBPFOnlyStatic	routine	-
+internal/frontend	TestFloorDiv	routine	-
+internal/frontend	TestFlowOutputs	routine	-
+internal/frontend	TestGenerateTwice	routine	-
+internal/frontend	TestGoldenExample	oracle-committed	reads a generated output spinel-bpf-mlir committed (first run, 2026-10-26)
+internal/frontend	TestInjectionComparator	routine	-
+internal/frontend	TestInjectionWrongClass	routine	-
+internal/frontend	TestIvBit	routine	-
+internal/frontend	TestKeptSourceMultiline	routine	-
+internal/frontend	TestLibraryKeepsEBPFTypes	pending	the Go frontend against this repository's Spinel, a route the owner did not take (2026-10-26); first run: its eBPF-side typed nodes do not change at this pin
+internal/frontend	TestLibraryNoBuiltinsSplice	pending	the Go frontend against this repository's Spinel, a route the owner did not take (2026-10-26); first run: the library makes this pin splice builtins/enumerator.rb into every program
+internal/frontend	TestLoopNoSplice	routine	-
+internal/frontend	TestLpmOutputs	routine	-
+internal/frontend	TestMapKindPredicates	routine	-
+internal/frontend	TestNativeTwinText	routine	-
+internal/frontend	TestNegative	pending	the Go frontend against this repository's Spinel, a route the owner did not take (2026-10-26); first run: this pin's --emit-types JSON has a type record with no file, kind or end
+internal/frontend	TestNfOutputs	routine	-
+internal/frontend	TestNoUncheckedPacketLoad	routine	-
+internal/frontend	TestPacketReproducible	routine	-
+internal/frontend	TestParseTypesStrict	routine	-
+internal/frontend	TestPerCPUExempt	routine	-
+internal/frontend	TestPositive	routine	-
+internal/frontend	TestRecordComparator	routine	-
+internal/frontend	TestRecordComparatorNoCtx	routine	-
+internal/frontend	TestRecordReproducible	routine	-
+internal/frontend	TestSameOpsAsMojo	oracle-committed	the committed xdpcount.mlir against mojo-bpf-mlir's recorded one (testdata/mojo_xdpcount.mlir)
+internal/frontend	TestSchedClsHarnessStops	routine	-
+internal/frontend	TestSfOutputs	routine	-
+internal/frontend	TestSpliceMeasureSynthetic	routine	-
+internal/frontend	TestSpliceShift	pending	the Go frontend against this repository's Spinel, a route the owner did not take (2026-10-26); first run: enum_name_count.rb gives k=0 at this pin
+internal/frontend	TestTpBtfHarnessStops	routine	-
+internal/frontend	TestUnescape	routine	-
+internal/frontend	TestUntypedSpellingCanary	routine	-
+internal/frontend	TestUnusedMapConditional	routine	-
+internal/frontend	TestUprobeBuildKindsClassified	routine	-
+internal/frontend	TestUprobeBuildMismatch	routine	-
+internal/frontend	TestUprobeFixtureRebuild	routine	-
+internal/frontend	TestUprobeHarnessStops	routine	-
+internal/frontend	TestUprobeNegative	routine	-
+internal/frontend	TestUprobePositive	oracle-committed	compares with, or reads, the generated outputs spinel-bpf-mlir committed
+internal/frontend	TestVerifyWorld	oracle-committed	reads a generated output spinel-bpf-mlir committed (first run, 2026-10-26)
+internal/toolchain	TestModuleVersion	routine	-
+internal/toolchain	TestParseCompileOutput	routine	-
+internal/toolchain	TestParseCompileOutputFailsClosed	routine	-
+internal/toolchain	TestPublicModuleVersion	routine	-
+internal/toolchain	TestPublicVerify	routine	-
+internal/toolchain	TestPublicSubmoduleSource	routine	-
+internal/toolchain	TestVerifySpinel	routine	-
+internal/version	TestPublicBpfMLIRLine	routine	-
+internal/version	TestPublicBMLLine	routine	-
+internal/version	TestPublicBMLSourceVersion	routine	-
+internal/version	TestPublicBMLSourceVersionCheck	routine	-
+cmd/spinelbpf	TestPublicSeamPin	routine	-
+cmd/spinelbpf	TestPublicVersionFlagWant	routine	-
+cmd/spinelbpf	TestSeamRoundTrip	pending	builds its reference through the Go frontend, refused at the driver check that Spinel is 086d514d (4b936d5, 2026-10-26)
+cmd/spinelbpf	TestSeamRefusal	pending	builds its reference through the Go frontend, refused at the driver check that Spinel is 086d514d (4b936d5, 2026-10-26)
+cmd/spinelbpf	TestSeamManifestChecks	pending	builds its reference through the Go frontend, refused at the driver check that Spinel is 086d514d (4b936d5, 2026-10-26)
+cmd/spinelbpf	TestSeamBackChecks	pending	builds its reference through the Go frontend, refused at the driver check that Spinel is 086d514d (4b936d5, 2026-10-26)
+cmd/spinelbpf	TestReadDomainGraphRoundTrip	pending	builds its reference through the Go frontend, refused at the driver check that Spinel is 086d514d (4b936d5, 2026-10-26)
+cmd/spinelbpf	TestHookTpCopyDrop	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestTpArrayArtefacts	pending	refused at the driver check that Spinel is 086d514d (v0.8.0 first run, 2026-10-27)
+cmd/spinelbpf	TestTpArrayTwinSmoke	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestTpArrayDifferential	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestBccSelftestTcpconnect	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestBccSelftestTcpaccept	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookKpathLeafSwap	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestKpathArtefacts	pending	refused at the driver check that Spinel is 086d514d (v0.8.0 first run, 2026-10-27)
+cmd/spinelbpf	TestKpathTwinSmoke	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestKpathDifferential	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestBccSelftestTcpretrans	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookKaddrZero	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestKaddrArtefacts	pending	refused at the driver check that Spinel is 086d514d (v0.8.0 first run, 2026-10-27)
+cmd/spinelbpf	TestKaddrTwinSmoke	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestKaddrDifferential	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestBccSelftestBiosnoop	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookUprobeDebugOff	pending	refused at the driver check that Spinel is 086d514d (v0.8.0 first run, 2026-10-27)
+cmd/spinelbpf	TestGaiTwinSmoke	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestGaiDifferential	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestDebugRootJSON	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestDebugRootLoad	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestBccLibcCondition	routine	-
+cmd/spinelbpf	TestBccSelftestGethostlatency	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookUprobePtrTrunc	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestUprobePtrTwinSmoke	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestUprobePtrDifferential	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestBccSelftestDeadlock	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestHookUserReadLenAbs	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestUprobeBufTwinSmoke	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestUprobeBufDifferential	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestBccLibsslCondition	routine	-
+cmd/spinelbpf	TestBccSelftestSslsniff	privileged	reaches sudoCmd: loads or attaches as root
+cmd/spinelbpf	TestBccWave3Accounting	routine	-
+internal/frontend	TestUprobeAbsBuildMismatch	routine	-
+internal/frontend	TestUprobeLibcPositive	routine	-
+internal/frontend	TestUprobeSplitDebugBuild	routine	-
+internal/frontend	TestUprobePtrPositive	routine	-
+internal/frontend	TestUprobePtrBuild	routine	-
+internal/frontend	TestUprobeBufPositive	routine	-
+internal/frontend	TestUprobeBufLibssl	routine	-
+cmd/spinelbpf	TestGateVMFormalRecord	absent	runs scripts/gate-vm.sh, excluded from the public tree (x-bpf-vm)
+cmd/spinelbpf	TestGateVMJudge	absent	runs scripts/gate-vm-judge.sh, excluded from the public tree (x-bpf-vm)
+cmd/spinelbpf	TestGuestScriptGatesBeforeSideEffects	absent	runs scripts/gate-vm-guest.sh, excluded from the public tree (x-bpf-vm)
+cmd/spinelbpf	TestNoInternalRefsInGoStrings	routine	-
+cmd/spinelbpf	TestNoInternalRefsInGoStringsNegative	routine	-
+cmd/spinelbpf	TestNoOtherSudoPath	absent	its expected list names scripts/gate-vm-guest.sh, excluded from the public tree (x-bpf-vm)
+cmd/spinelbpf	TestRootAllowed	routine	-
+cmd/spinelbpf	TestRootScriptsRefuseHost	routine	-
+cmd/spinelbpf	TestRsudoGuestGuard	routine	-
+cmd/spinelbpf	TestSudoCmdGuestGuard	routine	-
+cmd/spinelbpf	TestVerifiedRecordAllowedRootTests	routine	-
+internal/frontend	TestPublicReleaseCodeTable	absent	reads distribution/templates/docs/release.md, which was not imported (c56a4915, 2026-11-11)
+internal/frontend	TestPublicReleaseCodeTableNegative	routine	-
+internal/toolchain	TestParseSourceVersion	routine	-
+internal/toolchain	TestReleaseSource	routine	-

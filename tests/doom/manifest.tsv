@@ -1,0 +1,179 @@
+# Import manifest for decision 0006, task 2.
+#
+# Source: spinel-llvm at f8ad13c6d9dc990b116ba1c842c7881232f29585, read-only.
+# The files are TRACKED in this repository; this manifest is the record of where
+# each came from and whether it was changed, not a build input that reaches
+# outside the checkout.  tools/doom/verify-sources.sh checks the tracked tree
+# against the local columns and needs nothing but this checkout.  The original
+# columns let a reviewer re-derive the same digests from the source revision;
+# tools/doom/audit-origin.sh does that when a read-only predecessor checkout is
+# supplied, and is an audit, never part of build or test.
+#
+# The computed set is the require_relative closure of the three entry points and
+# the five IWAD-independent probes.  The union of the three entry closures is 34
+# files, matching docs/doom/task1-checkpoint.md; the probe closure adds
+# palette.rb, picture.rb and the probe programs, and each probe's
+# combined-stream expectation accompanies it.
+#
+# The GPU raster port (2026-09-23, tools/raster) adds three more entry-kind
+# programs: bin/dump_jobs.rb, bin/gpu_demo.rb and bin/gpu_reject.rb. Their
+# originals are identical at f8ad13c6 and at the port's source revision
+# 463d49dd, so their original columns stay on this manifest's one revision.
+# Their require_relative closures add no library file.
+#
+# The GC-monitoring port (2026-09-23, tools/gcmon) adds bin/bench_tic.rb, the
+# subject of tools/gcmon/run_gcmon_gate.sh. Its original is identical at
+# f8ad13c6 and at 463d49dd, and its closure adds no library file.
+#
+# The leftovers port (2026-09-23) adds bin/dump_ppm.rb, which writes WAD
+# pictures as PPM for looking at, and the library file it needs, lib/doom/ppm.rb;
+# both originals are identical at f8ad13c6 and 463d49dd. It also adds
+# bin/frame_ppm.rb, written here (kind=local), which writes a frame that
+# bin/sim_demo.rb dumped.
+#
+# modified=yes marks an imported file whose local bytes differ from its
+# original's.  Fifty-one are: the five test programs, changed ON import and
+# only in their require_relative prefixes (tests/doom/NOTICE.md); the two input
+# scripts and wad_and_picture.expected, whose Japanese comments and printed
+# remarks were translated into English on 2026-11-23; and all 43
+# imported files under examples/doom, changed AFTER it.  Seven of those have
+# deliberate code changes -- examples/doom/native/sp_sdl_shim.c,
+# examples/doom/bin/doom.rb and, under examples/doom/lib/doom/, render.rb,
+# statusbar.rb, render_gpu.rb, executor.rb and jobs.rb -- and on 2026-11-23 the
+# Japanese comments of all 43 were translated into English, comments only
+# (examples/doom/NOTICE.md says what and why).
+#
+# kind=local marks a file written HERE rather than imported.  Its original
+# columns are "-" and modified is "n/a", because there is no original.  These
+# rows exist so the manifest covers every file in the imported directories: a
+# file that is simply absent from the manifest would otherwise be a hole in the
+# bijection, and "is this ours or theirs?" would be answered by looking at the
+# header comment instead of by the record.
+#
+# kind	original path	original bytes	original sha256	local path	local bytes	local sha256	modified
+entry	doom/bin/doom.rb	16686	5ab572b9602d1180cfc28240058148ac7a3c8296df3b2ce4620c457731f3ab76	examples/doom/bin/doom.rb	21185	350c3be36bfd53ba4f8d2626b79f4e09056f8f57c30b083397d8b42e9d0a884c	yes
+entry	doom/bin/record_demo.rb	5449	370a05b999f542e60cfe16c0bf98aaf48517a2510f41217deec2af8feb15490b	examples/doom/bin/record_demo.rb	5353	fb73a566a3cdc5d8080dadb3dde92eb2ad225e0848da11d06ec858b7cf334c36	yes
+entry	doom/bin/sim_demo.rb	15046	9cba853fa99723b59c401e4cd6bac9243c4864d1f4c787903e4eab6bbc7bfc3d	examples/doom/bin/sim_demo.rb	14525	52f58275a387577b5cc679f06a6b575f494ae58a500119f4696ad43d3d277897	yes
+entry	doom/bin/dump_jobs.rb	21821	9c37d6b2d04b2528c0f716c8325e6254bbbcef853ff0a421828de2c55be0e317	examples/doom/bin/dump_jobs.rb	20824	56c4aff79c03cf1c2d259ed84ff986b906ae1e1e5c126a9cd180b3e42f0d23a3	yes
+entry	doom/bin/gpu_demo.rb	7107	755595eb0b8ca0def09bffeffa85a854de8f768165ae7881a08db4c2542c9951	examples/doom/bin/gpu_demo.rb	6786	2afc4e14530f7891daba8950022a1737993082d40ff6ce49b0226bd650dec414	yes
+entry	doom/bin/gpu_reject.rb	10272	10c12a34c0078c367b420e6bf6086e0432b15ba56acda5bcd689154718575c86	examples/doom/bin/gpu_reject.rb	10122	e296631c13682abed3ff2295d4f47374fba572f2f5031d004bca22a2d68a9028	yes
+entry	doom/bin/bench_tic.rb	4021	e4cc1147d06c8116e398c5c93eaf093266d8b1bac084a14b7f495964c1a0aba6	examples/doom/bin/bench_tic.rb	3893	27197ff893b982e3951a799bbe961df03af0fbaa50a3de29239419336c1cec5b	yes
+entry	doom/bin/dump_ppm.rb	1215	c5e0e6956bbb972c1065078d0d6e38c38e1aef42d5d642e0d3115bb62d5d7656	examples/doom/bin/dump_ppm.rb	1137	0c6e53b9e36de097f276b92640a8c90e393c97ddd0e33b8ca2988a6049eefa8c	yes
+lib	doom/lib/doom/bytes.rb	5452	e0ed8d90514392a40c038ace413052a4e7d889812650085e6066b4f9e982c01d	examples/doom/lib/doom/bytes.rb	4864	0eefd047823ddaea611e47533b35eb681ae5d1f99e5368f8c9f92ec04d1da432	yes
+lib	doom/lib/doom/defs.rb	5602	ca6835ce2db634b18e5c7b084c1e91abeaf8dd40ed153bb15a48a3405186689f	examples/doom/lib/doom/defs.rb	5455	581cdf0deaa20a1408f662af7c446613e18fdce60d5dabf27b815708592ff4b9	yes
+lib	doom/lib/doom/demo.rb	4294	bfd8582c7dd9af3229c661146e239edceae7d285e49f0e79099a5d1310ba4e6f	examples/doom/lib/doom/demo.rb	4052	5bd635a5032a6459757b21ba2a55838c3164c3e52b389f5a7c4270754089706a	yes
+lib	doom/lib/doom/enemy.rb	26057	24bcf4d303c699130e5d0dba03663d9bb783cce09543ca00e88c7cf9d857f717	examples/doom/lib/doom/enemy.rb	25969	fee9f8deb213de5c21ae14fbc198f98da8479afc936fa8c175a39722c320aa53	yes
+lib	doom/lib/doom/errors.rb	1391	a1094d969e620054edbad384fe402449ab5cd4bc1476ccf4ad9ba058c23bf4bb	examples/doom/lib/doom/errors.rb	1237	ef91538d7a2efd867cb7d4c1f0bd4500e60344a144b7140cf9b5693796874ee0	yes
+lib	doom/lib/doom/executor.rb	12134	6fdc2fa27bbb4977e5ce6b2b585e56fde890a90224467ca1fe77cae3b6d6f974	examples/doom/lib/doom/executor.rb	11463	30dffde16795aba5c5be7e3b50ffff4b407232296a456a30b00e1f60ea359612	yes
+lib	doom/lib/doom/fixed.rb	3243	6281e8218f1e8f085e13eec258c1bf77ceea23121a07859406c8b3153752e91c	examples/doom/lib/doom/fixed.rb	2901	89a74ccb8c1eb0f85bb8a8c03de73dc790b1cdfea8bf7164ab919049f07dbafe	yes
+lib	doom/lib/doom/game.rb	38114	d976cc576f8079de64e7f98f88fbc17550a3ec96d70bbe379002993105409b41	examples/doom/lib/doom/game.rb	37401	90d41ef46fb7074fbb123d2d4eb50e60161779bdb96e6f71414b838534f6df00	yes
+lib	doom/lib/doom/hires.rb	3015	cbc89eb6e8c75c8de8c5c3a392b409d6bf877b527c9c6608f5cc6d70d360ca9e	examples/doom/lib/doom/hires.rb	2777	edb18e4e31cd31dec600ddf2971b45ac5e3a54feddb728709fb88b458f251878	yes
+lib	doom/lib/doom/hud.rb	6626	3a551c2a4399b800eed2e8047c903a66233450ebdb8656f9e89a617f5fc306b2	examples/doom/lib/doom/hud.rb	6313	a1b8636724ba365923ee9de98ccf4ffb549277c1638e3ef7eef0d1d4fa1c42c7	yes
+lib	doom/lib/doom/info.rb	241105	5214f0b63a8b385dd2ee26259306c67abc372f5a04b94834278fe650e17919cf	examples/doom/lib/doom/info.rb	240949	f734adbff74a95de3b17aaeb65ab918f9516f54ae2511516fd00db1bf2707fcd	yes
+lib	doom/lib/doom/input.rb	8229	a5b791ef1728fd014eab36a8664cb0053fb4d0170fbb73442bff540cc980b61a	examples/doom/lib/doom/input.rb	7752	3405337d1ebbc16dedd6f53d4dede981a5dcc2c041e13e69e2cb44540afda9cd	yes
+lib	doom/lib/doom/inter.rb	13152	d23eaf311fad6c3ef696d749e8eca5e4dcff2d3e30eff2d9c85aac2393e1c164	examples/doom/lib/doom/inter.rb	12916	925161f8979f65aca3667ea858fc5a7210022e55853ad28948e759722d52e6cf	yes
+lib	doom/lib/doom/jobs.rb	57015	977d8946525c561267dd47f2a33632e362bbbd13d6f70a685e094fca66a783a3	examples/doom/lib/doom/jobs.rb	53427	84b0ad67b2dbd114acaeeaac89a0ffa7ce6fe663e60664e2c9e957773a82c886	yes
+lib	doom/lib/doom/level.rb	23137	d2a30629d686d8d0a1009e2b679beb213f41dd5b772d4ea114f68fdafc3b2cd5	examples/doom/lib/doom/level.rb	22115	5f4cc2c5b8ab980fba53f253b0b569dfcbd6335271ffd6266177f27a6302e5df	yes
+lib	doom/lib/doom/mapmove.rb	26660	cb05abce0e92bb1f1d26da7e7663a1951dfb8c94e2fdbeae9be9badf978e38c8	examples/doom/lib/doom/mapmove.rb	26345	ada4a5b0a92c8735dc16671952d875b42f9b4cf1a864a7aaf1ff08c27304cd10	yes
+lib	doom/lib/doom/palette.rb	3370	3b33ad1e81fffc32fd15f47d7f59c496ac4e0ee836ad51a7829fe3ab862ef22a	examples/doom/lib/doom/palette.rb	3129	b03a734ea7d658f34125d8b487b0940d3b7c440e67d0ec2bfe78c50c77a827d4	yes
+lib	doom/lib/doom/picture.rb	5766	ce52cce056cbc66d6304020a1d5146b41cf81d4b24cb819eac653fa38e4898bc	examples/doom/lib/doom/picture.rb	5514	6f8b5b4715c08482e72689d06c02fff59c3db4e0b8ecb7b48610d036a69ce210	yes
+lib	doom/lib/doom/ppm.rb	1420	fcd10099c67a9879f1815b4a8118559ddf532988f8f2304cc04becbb4b4bb404	examples/doom/lib/doom/ppm.rb	1332	200a079d8906251679bfee6baa3f252d75ef79ca07d2a9cc9ef8e4efc2c0bc1a	yes
+lib	doom/lib/doom/pspr.rb	11790	9e495a4ca0eee66a574abee14ee62c09f3d01a8188c467234b4fc71759c5843b	examples/doom/lib/doom/pspr.rb	11679	dce0a930fa2993936262f2466c0f6411916b85ebf4a50fa8b1b1c78caa5e48ed	yes
+lib	doom/lib/doom/random.rb	4573	e35ed9e6b70ff27b1980788c13ad67969c23b9e7a5bc969c036727a3170a4f85	examples/doom/lib/doom/random.rb	4275	f9984f256463cafecf8035976b521d0de076ecbe600a6e27124b6449ec7fe963	yes
+lib	doom/lib/doom/record.rb	3174	ff00164a049a325bc8b0319d2bea4ba7c8046b9e2974fd6c9b9a856321cf1d82	examples/doom/lib/doom/record.rb	2996	726fc3daf184770630b746c2f934d8a6f2952e98fccf3756c6d5f74242e864d7	yes
+lib	doom/lib/doom/render.rb	92989	a990c36bfde5839ea58d20a64fa571a849668671cac9131c9f6b1194a2589dc4	examples/doom/lib/doom/render.rb	91168	2741ead4e8d62b92b7c3449ea120b5374242a30890e09591c9af10954d8a2c7a	yes
+lib	doom/lib/doom/render_gpu.rb	8911	e993ebbc0dc8cf02d28530489c5eb292b595f8d7a5c6bfb66032c2df9f914ae0	examples/doom/lib/doom/render_gpu.rb	7644	3fc82f4fa9b3fc4adf8a2b6ebf51e1d39503727bda65aed9903b0c70bb4bb922	yes
+lib	doom/lib/doom/sight.rb	5589	4b53e45b431cdf966f3c105ed21a1c873ccd0eecfb7e8697984bc56aed52f364	examples/doom/lib/doom/sight.rb	5502	c7c93ffada678537b524fa260fb36b53220ad2baffe341bb7a291a64013a89a3	yes
+lib	doom/lib/doom/specials.rb	43208	3a27afdc6297fc99166db97c2dab290bfce49abb73859c1cd87b106bd3421fbb	examples/doom/lib/doom/specials.rb	42337	7cf1441de03bb8528b627104d735259e34a43a90497a0db9cd350a6f2b656d68	yes
+lib	doom/lib/doom/sprites.rb	6923	b365014b3f935c81ced4838a7782c6fd225671fb6738ba59a6ee8b8e29b86f9f	examples/doom/lib/doom/sprites.rb	6863	e3f6da79e99d7bca95c07f15b1f0f5dcd36205779eac797ff6fa379cf7538505	yes
+lib	doom/lib/doom/statusbar.rb	20086	3f157b3dd3a07d2aab11c50b5e4ea373e92f9242e2a30ecc7469114fc9d73b5f	examples/doom/lib/doom/statusbar.rb	19701	ec5388b9bdb884be8ffceee6a3be7b926d55cfaadaaef17109916d74cbc696f2	yes
+lib	doom/lib/doom/tables.rb	264417	57b7fe940b46e6ab4e0da7bf3cb429aac789238a5b78fb9ff37c95b2483da2e6	examples/doom/lib/doom/tables.rb	264271	afadfd4a9c2e4e7eaa395e0e3f02dce59dd5439091594997d0a34dc6901ea8d9	yes
+lib	doom/lib/doom/texnames.rb	4324	21de6cda8527c70ba52aebf4eaf08e197b0d6a901917331e88a908a53a2ecc22	examples/doom/lib/doom/texnames.rb	4057	52ad156fed2ab5b82f4d6ad59afac3f1d4690fb91eadff82763aa6f0b2b568d7	yes
+lib	doom/lib/doom/texture.rb	26448	ea942b59d40bfca4c3898b7b880a2a6a99f669b92a44c724ba8b02672f6fdbad	examples/doom/lib/doom/texture.rb	24735	215a67e548c10ac79c2c74763f50703bf53cedf6b191fdbaaf7e74585a38cf5b	yes
+lib	doom/lib/doom/things.rb	5871	b4da232ad210af17db264fa03e438123bd8dc7cbade1d08ffe4c8bb4d177c28b	examples/doom/lib/doom/things.rb	5653	63b4c8dd1cbecd4110686972a48561ccacbcb30e56af752c081b457d4b2ab7b9	yes
+lib	doom/lib/doom/video.rb	3603	217a74eb903321428b05bc39497ec8772097b25eef7a22c605dda09fbdd82f3b	examples/doom/lib/doom/video.rb	3350	a411e302cd9bdce35d8dce47a4d228ab7dca9011fc37e01513217f2b54aa98e0	yes
+lib	doom/lib/doom/wad.rb	9225	b157b7f5f63833e3b446aa997b078d69d19432e9675adbe41ce2350704157810	examples/doom/lib/doom/wad.rb	8672	f34d9ab9c15a4e55f1f0bb9e0e83773972ba318ea1af184ac97c36bdd639b261	yes
+expected	doom/test/bytes_le.expected	401	b558e149b89f32bff0ad2228b9d4b99a4e705714e6d387c9d5ab06795a095cc1	tests/doom/cases/bytes_le.expected	401	b558e149b89f32bff0ad2228b9d4b99a4e705714e6d387c9d5ab06795a095cc1	no
+test	doom/test/bytes_le.rb	2045	048e956eaad34c59ddd5f2f0cd33cb323c4e0d69dda97dc5e95f7e7041817755	tests/doom/cases/bytes_le.rb	2005	390cf83389449bf4e8647aac2cce89f3ef1d5e4041c7e2151925d483f89ad610	yes
+expected	doom/test/fixed_and_bsp.expected	864	54f264f4951ef54f61d81e72e8b89847cd8e69b2e60570a950c7a8ed2cc6895d	tests/doom/cases/fixed_and_bsp.expected	864	54f264f4951ef54f61d81e72e8b89847cd8e69b2e60570a950c7a8ed2cc6895d	no
+test	doom/test/fixed_and_bsp.rb	4510	ba02d17976fb02b46ba21989937acb49a6ce5c8eb0f92dc4669305545a6debf0	tests/doom/cases/fixed_and_bsp.rb	4428	77d6ba7f8d7a06e158cb52448d9a19584a3799f87efab03805e21a6580a055f2	yes
+expected	doom/test/info_and_span.expected	328	f8b1b0429eff73c4c54f8c7ba7ceb57a8d0abe83b7241c59680c95c53b1819fc	tests/doom/cases/info_and_span.expected	328	f8b1b0429eff73c4c54f8c7ba7ceb57a8d0abe83b7241c59680c95c53b1819fc	no
+test	doom/test/info_and_span.rb	3549	916d380cc3feeb9363af3273d85a10439a4c5df5cd1132f3133dc9a8b68a89e9	tests/doom/cases/info_and_span.rb	3478	e69ecbc7c24977f992188c9305df4a9fe254e9e57536c7839836855be74927d2	yes
+expected	doom/test/palette_colormap.expected	422	bce66ac709376c75ed313357fda513b226cff75ecd516d646d5b803efcddf6ba	tests/doom/cases/palette_colormap.expected	422	bce66ac709376c75ed313357fda513b226cff75ecd516d646d5b803efcddf6ba	no
+test	doom/test/palette_colormap.rb	2837	f30fda6843dab6121fb02c0e8372539bc09f01966fb9fe8b196f6c1a65ae428e	tests/doom/cases/palette_colormap.rb	2840	c97b7daa36b5302c2136a2ce78527ce895b4e8e744747e7ba8bc9e0a54371475	yes
+expected	doom/test/wad_and_picture.expected	628	e72db2430073e165fbd2895069538d05c02bec3176a964f2831aabf974702a59	tests/doom/cases/wad_and_picture.expected	647	9a5ccb5371ba3964b25765b656317012210c6d9bb975b9b1ad7d49017e114002	yes
+test	doom/test/wad_and_picture.rb	4331	525054ce3ebf9f9611f6faa526f1b7fff48bb03a1d8576227704c0cc22f2a071	tests/doom/cases/wad_and_picture.rb	4351	b83b8e014dcbf46e853b9662e9dfd697349436b15e5865807ff3d9f95f9dc492	yes
+native	doom/tools/sp_sdl_shim.c	9583	7d9a0f823cfdbbd95a4d58ece319002c0b8607a8124ff744031f15407b38331d	examples/doom/native/sp_sdl_shim.c	10704	b61ab57ad20be4fc31bc69c2842337f90621cc7e659f30d2607f0351660dd533	yes
+script	doom/test/script1.txt	822	5ea91bd2202b7708f87b14bf0154a2952a477f96702d281aa78ac32b07ff7525	tests/doom/fixtures/scripts/script1.txt	753	67b44327ece9197ce5a31fbb5d0dcc9527e129c77170bed1afb3afcae3a78313	yes
+script	doom/test/script2.txt	526	2c83cc863b28360260f119ab9c080d7aceb85536327e5036b037f1a0c3e43ebd	tests/doom/fixtures/scripts/script2.txt	454	0e27f79fe8dbd142da326212dc6b6ade0bafacd4214adbdd211b3d88fb71a39b	yes
+local	-	-	-	examples/doom/native/sp_rg_stub.c	3129	6a511ca8efe92ca911dd50c019ce3922dd2e5af642894748390275adbe48df5a	n/a
+local	-	-	-	examples/doom/bin/frame_ppm.rb	990	a23c55df2a700af269f78463e52663f6ca8c7679664e1fb0d0dfe38942580986	n/a
+local	-	-	-	tests/doom/native/sdl-probe.c	1105	02b678a83d3d50e327b40d86da032f831243212318172f6cb98e8fda875b8595	n/a
+local	-	-	-	tests/doom/fixtures/allowances/demo1.tsv	2693	5df1dd45c589fa13f11993b46c3471903c7a24b6dd3a12ef1d2aace868be5265	n/a
+local	-	-	-	tests/doom/fixtures/allowances/demo2.tsv	3194	9368b673677614814359a5272546ce97ce9b1a2b03f905c7f949e99445245525	n/a
+local	-	-	-	tests/doom/native/key-combination-probe.c	6353	b298c37fd9414d6b2a908397f93c8184dd1446ac724247977ae36e456f4f6eaa	n/a
+local	-	-	-	tests/doom/cases-aux/ticcmd_combination.rb	1935	0e466f174485682407f3906b8ea6db8b09fa6f334542bedc8b1590534c6fff35	n/a
+local	-	-	-	tools/doom/sdl-input-trace.c	15655	7e401608dcb499ac46addb7946258bcd8b5e33ea555a5275d5cc462c10bc4eed	n/a
+local	-	-	-	examples/doom/native/sp_core_stub.c	2557	07916e030bf5e29d57a6dfe0a39920c043ca484d68cac0f3d31f0627158c7453	n/a
+local	-	-	-	tools/doom/audit-core.rb	147012	06308752181f48758ebed7d7e1b24ca1b1970cc109ed94a09ae8a98484c75038	n/a
+local	-	-	-	tools/doom/buffer-names.rb	4603	1e33900b95033a2b9657e528a4fa3d77407a4389b88181b4193e5d9643d76afd	n/a
+local	-	-	-	tools/doom/buffer-roles.tsv	819	cfe9ced979528d93aa8351bbeb2e9b0c73465aa32fe3f62016cb5eb11c92eafa	n/a
+local	-	-	-	tools/doom/contract_reader.rb	8555	a2a17b6302931c7a2e5cf0c09e539edf02c8d63b178476ba4fd6fbf8eaf7ea06	n/a
+local	-	-	-	tools/doom/core-acquired.README.md	6701	52966ec0966638e5bad0c27e913e69beb2536594f3238eb7e3f05c3f141af005	n/a
+local	-	-	-	tools/doom/core-acquired.tsv	10467	8236f3c257c7a72eada776f88a8df2676870bccce2c57e7ed0b324182dc5eab6	n/a
+local	-	-	-	tools/doom/core-added.tsv	4567	905f68c3e5febe8c70b7cedd0da25e76efdc6c58a3b15cbabb0365007df1a4bd	n/a
+local	-	-	-	tools/doom/core-builtin-effects.tsv	3237	45b5e0a72c3e58d8fa8d0c4f5900a18f39463a4ac2ed6477c3c19e15e2fd47ee	n/a
+local	-	-	-	tools/doom/core-builtins.tsv	3231	7f87a86c35c689ae3e0c67a51ca2c4709b1e3d1ca9374bfc126b9fbdd1405cf7	n/a
+local	-	-	-	tools/doom/core-configurations.tsv	3473	318b134d5b0198514b50cffb76818c0da5bd7c2cfff71e2a831fe195273d721c	n/a
+local	-	-	-	tools/doom/core-copies.rb	4451	cece178752594e589052449db80ef2dc54cd8f9aac34cca830c127c53a4aee63	n/a
+local	-	-	-	tools/doom/core-counts.tsv	8742	9c52da227516c2d879f823de2167eec2948b9c83f01ca2099aca2be578b9c0c8	n/a
+local	-	-	-	tools/doom/core-cycles.tsv	3482	258ccb36a0ad67968919e3b8a7634835bd559c328a9d9c3ff2fdc8b7f7ca35a1	n/a
+local	-	-	-	tools/doom/core-entries.rb	18842	eb933d9f5c297defb347322f9045c597b13506757a3a823ec99789de16bfe227	n/a
+local	-	-	-	tools/doom/core-fields.tsv	6724	7fb991a0c4ded50de1b31e1a36f0d88549e16ee86f51a4365dbd4cb142f8101c	n/a
+local	-	-	-	tools/doom/core-initials-held.tsv	730	455231dbd3985224874be6b5e37cb89af88d9fde77a7cd897095e1d33fa6a6f8	n/a
+local	-	-	-	tools/doom/core-migrated.tsv	121763	295d265a2981d3b51903d05e78c8fb2c808f9b1ed986dc1fb0ebaa3fd1e83809	n/a
+local	-	-	-	tools/doom/core-native-prep.rb	17898	0ef79abee16253e9554c159b99a7f5f9f62fb19134770e9b1ac20c10e63f88c7	n/a
+local	-	-	-	tools/doom/core-receivers.tsv	897	5b8ce4c539a5c4746065072eda933093f279f72a187ba324b0633baeb497ddd2	n/a
+local	-	-	-	tools/doom/core-refusals.tsv	3657	00e867cab528678078ab83656261fa1d07760dda25bc7fe4cab0b6f3150a03c7	n/a
+local	-	-	-	tools/doom/core-representations.tsv	5355	610f61700588d11b96ea9d5bc3e4174248bf74b60aea92a86fbed359860cd632	n/a
+local	-	-	-	tools/doom/core-state.tsv	4155	606f238e0529ea7e5e0c2b16079ed466470ffb4376c269896a0c237e5d0c1222	n/a
+local	-	-	-	tools/doom/core-unreached.tsv	16224	69bd30f8a54c424d56daba5ffea6cf063694d1bc1af00ed28ae3be75cd73c421	n/a
+local	-	-	-	tools/doom/emit-schema.rb	30401	c685818fca2fd68adea2a4759101228bd85b0f8895cd5063af2be59b9fa79315	n/a
+local	-	-	-	tools/doom/failure-site.rb	3564	6fd2b119dec402d4a4b041d544e8fd3914093230ab8b4b4996897e21d2e6c8fa	n/a
+local	-	-	-	tools/doom/key-sender.rb	10506	4e0b7437e1b2720dbea7e076254e90cf2ffb689d52275ad2f3f287a1b12d34a1	n/a
+local	-	-	-	tools/doom/knot-cps.rb	18770	409465311c697389bf7086fe50356af6801831b38c438086501306bfedbe4255	n/a
+local	-	-	-	tools/doom/knot-sites.rb	3918	ff03f1c312a390a8e373adcd1a01a9079eef32795ee338b575654998dbdac051	n/a
+local	-	-	-	tools/doom/knot-sites.tsv	6960	9c2d618010985d5ac1de7e13529c32eeb0515702aab87227478399da1ef5a779	n/a
+local	-	-	-	tools/doom/migration-ledger.rb	27533	b791fb2191c254870e0433c967cf2a98dbb5657a43d31078dc8c7f1fa840f6eb	n/a
+local	-	-	-	tools/doom/pack-core.rb	19812	4fed1ee769805aebf401f826258216831f60c07496441710d05571748da2561c	n/a
+local	-	-	-	tools/doom/packed-place.rb	2816	af508669538c47fd01e9ae566c2c593a8b81fd360fb40cec25ae39104814c5ba	n/a
+local	-	-	-	tools/doom/state-schema.rb	17961	81326f2077727a253cc3e267fb4601f394a225c293597f77bf62d8c5bfc77d73	n/a
+local	-	-	-	tools/doom/use-probe.rb	10506	d6a9a29646862c8c490adc1c69fd877096b61fd47ae8c0323d92d297f5af61b3	n/a
+local	-	-	-	tools/doom/core-ranges.rb	8284	ebf989027dc6c1da85b3385f63557130581776d63fb6f07bba489af3c4073a6b	n/a
+local	-	-	-	tools/doom/core-store-ranges.rb	4938	4068e88ea3f0510a66b91b0b9afbe22c48a97e730eaace7a1216c497ba11b447	n/a
+local	-	-	-	tools/doom/core-store-widths.rb	7762	b95e3723ac0550c03f3646c84105fb12a9d071b368e05e8cf8c5396a65c4514d	n/a
+local	-	-	-	tools/doom/core-widths.rb	11045	e7ce2c0e486bec65d76a252ff4b25f6e098b97eec18f066ddff15bb6e0895b40	n/a
+local	-	-	-	tools/doom/source-elements.rb	3688	783dd91288d31ccb7f510926d2906ed5a39677207f15210dcb4084a380cacaa0	n/a
+local	-	-	-	tools/doom/session-image.rb	11097	8f24f566a5ae23776cb71ffd6d606f1cda48d2ed95b7f7a8f70c64778aa1bc05	n/a
+local	-	-	-	tools/doom/nor-image.rb	6234	a527be5ecc939418463f042f89855a11cc44743bda61ecbee8341ffdcd5c58ed	n/a
+local	-	-	-	tools/doom/board-frames.rb	14291	139c36dd375d02b48c77bff032c168bfe0166f60c04d20da0b260d8180c5fc8f	n/a
+local	-	-	-	tools/doom/pair-counts.rb	12674	3bf15d80acecfe92c78ad08f70e49eca88cbd6cbab193c8cb222ae29af838b14	n/a
+local	-	-	-	tools/doom/board-pcsample.rb	7269	374f0a4c0255096a28381d5f090a0c39fd3e0f041b3c26e780771d4834ff80d3	n/a
+local	-	-	-	tools/doom/board-profile.rb	5901	884ef1f080bb675363b05e1c2aabf48ed5d3fd6110d062443e95ac30270f7f99	n/a
+local	-	-	-	tools/doom/objects-kernel.rb	2368	77533c7868db779d1c84055b73d03356eb7f0c8e9c4c0f2ffe6198191d35045b	n/a
+local	-	-	-	tools/doom/net-viewer.rb	14551	e193653c47cb6e868152a04928961c8ba8f088e839643f2638470dfd5908c986	n/a
+local	-	-	-	tools/doom/net_frames.rb	15152	455ecf97a6080bce51d8707fde014c254d75a40cf882556c6eb10afe6c7a161e	n/a
+local	-	-	-	tools/doom/ocram-ring/m33/CMakeLists.txt	777	0cdce06b25a0e39ed8308dc0a2ac2c669bf3dfbff0b51f95646a60a00902d535	n/a
+local	-	-	-	tools/doom/ocram-ring/m33/prj.conf	180	64e2526a006e877aad98e6ca00a3ad3b94db1534318c62f9a35de28e03fc1bd9	n/a
+local	-	-	-	tools/doom/ocram-ring/m33/src/main.c	7278	4028fa9fc8253d2f3a7af88f7916ecdc956db466a0b0e5f60eb52da28e252c0a	n/a
+local	-	-	-	tools/doom/ocram-ring/m7/CMakeLists.txt	1051	17b88bedc44f9f93bcf54dfed9efc9fbdd56a4d6282278532b8128deff697d8a	n/a
+local	-	-	-	tools/doom/ocram-ring/m7/prj.conf	77	52aed1d7be98ca96a31e48c4e0b65826d8868fb6a9748ca08e4dda9dfc352838	n/a
+local	-	-	-	tools/doom/ocram-ring/m7/src/main.c	8913	9e698ee36f9c9908f5cac7288cf891e4d3b9533cbf95fd4ced754e3c253dd535	n/a
+local	-	-	-	tools/doom/ocram-ring/test_words.h	3629	c3665212578446ede5ac639c084c8687d3309ff755865d863e9c6c2eac310ab4	n/a
+local	-	-	-	tools/doom/net-ring/m7/CMakeLists.txt	641	16537613beeb4d8be61bd54e3e21a192aa642170b71bdcb1ee480126b9b16352	n/a
+local	-	-	-	tools/doom/net-ring/m7/prj.conf	91	2d34ed4138420447cae347d6e41f73f031f05fcb3af308330ffec6f3ab31e39e	n/a
+local	-	-	-	tools/doom/net-ring/m7/src/main.c	6416	56f977dbcb174791603b4a11b3f3b3a1813be27d48dae46e3e59b3b62faef6e8	n/a
+local	-	-	-	tools/doom/net-probe/app.overlay	834	fb1288fac2581d88eab781e8f24744835eb2ee24af2b5e844568f887ed638cdd	n/a
+local	-	-	-	tools/doom/net-probe/CMakeLists.txt	1660	729830379af7bb764658ac10b312c3ccfff898e09fbd2dabb73d62bf1f1fc3a5	n/a
+local	-	-	-	tools/doom/net-probe/prj.conf	1789	f9366b256ce2ca788efa29bda585dd95f845e5ca12866ff890f94f638b468fa9	n/a
+local	-	-	-	tools/doom/net-probe/src/main.c	12009	3c37d4eed9de6ff5a0db3fbf87f0936d488e6bd7ba2af2683692cb986537bb33	n/a

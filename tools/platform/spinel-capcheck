@@ -1,0 +1,251 @@
+#!/usr/bin/env ruby
+# spinel-capcheck -- the T-2/T-3 build-time checker over the platform ledger.
+# [E090, P008 Phase 1]
+#
+#   spinel-capcheck check --entry app.rb (--profile P.yaml | --platform NAME)
+#                         [--tier core|arena|full] [--lane wasm] [-I DIR]...
+#                         [--typedump PATH] [--menus PATH] [--arena-rules PATH]
+#   spinel-capcheck profile --profile P.yaml [--lane wasm] [--menus PATH]
+#   spinel-capcheck tier --entry app.rb
+#
+# `check` answers, at build time, the two set inclusions of R016 T-3 --
+#   (1) declared tier >= every required capability's tier,
+#   (2) every required capability is in the chosen platform's menu --
+# plus the T-2 lane constraint (--lane wasm refuses tier core: core is the
+# freestanding lane) and, for tier arena only, the T-1 entry fee (arenacheck,
+# E093): no GC-semantics name and no request escape, both driven by the ledger
+# tools/platform/arena.yaml.  The REQUIRED set comes from spinel-typedump's
+# `features` mode (E089 P4 path B): the ledger's vocabulary is asked against
+# the resolved-require table, verbatim on the spelling; requires outside the
+# reserved prefixes (edge/ cloudflare/ fastly/) are never asked about and pass
+# through untouched, which is what keeps existing code unaffected.
+#
+# On success `check`/`profile` print a KEY=VAL plan on stdout (the caller --
+# tools/wasm/spinel-wasm -- reads platform/supplies/tier from it).  On refusal
+# line 1 of stderr is the machine-readable REJECT line (a reviewed decision, format fixed
+# in spinel_platform.reject_line) and the exit code is 1.  Environment /
+# usage problems exit 2.#
+# **E168: this is the product.** The frozen Python stays read-only in
+# `tools/platform/frozen/spinel-capcheck.py`, and the E168 suite runs it every time as the oracle for
+# byte equality of stdout / stderr / rc. Not one message was changed —
+# the moment it is rounded to "the same meaning", the claim of byte equality is gone.
+require "open3"
+require_relative "spinel_platform"
+
+SP = SpinelPlatform
+PROG = "spinel-capcheck"
+REPO = SP::REPO
+TYPEDUMP = File.join(REPO, "tools", "contract", "build", "spinel-typedump")
+
+# The platforms the wasm lane (tools/wasm/spinel-wasm) can package.  A lane
+# constraint, not a capability fact -- capability facts live in the ledger.
+WASM_LANE_PLATFORMS = ["workers", "fastly"].freeze
+
+def die(msg, rc = 2)
+  $stderr.write("#{PROG}: #{msg}\n")
+  exit rc
+end
+
+def reject(err)
+  $stderr.write(SP.reject_line(PROG, err.kind, err.detail) + "\n")
+end
+
+def parse_args(argv)
+  if argv.empty? || ["-h", "--help"].include?(argv[0])
+    # The frozen Python writes its module docstring, but this file has only a `#` comment
+    # header, so `__doc__` is None (= nothing is written).
+    # Only the one line below comes out — and it matches word for word too.
+    $stderr.write("usage: see the header of #{File.expand_path(__FILE__)}\n")
+    exit(argv.empty? ? 2 : 0)
+  end
+  sub = argv[0]
+  unless ["check", "profile", "tier"].include?(sub)
+    die("unknown subcommand '#{sub}' (check|profile|tier)")
+  end
+  a = { "sub" => sub, "roots" => [], "entry" => nil, "profile" => nil,
+        "platform" => nil, "tier" => nil, "lane" => nil,
+        "typedump" => TYPEDUMP, "menus" => nil, "arena_rules" => nil }
+  rest = argv[1..]
+  i = 0
+  while i < rest.size
+    t = rest[i]
+    val = lambda do |name = t|
+      i += 1
+      die("#{name} needs an argument") if i >= rest.size
+      rest[i]
+    end
+    case t
+    when "--entry"        then a["entry"] = val.call
+    when "--profile"      then a["profile"] = val.call
+    when "--platform"     then a["platform"] = val.call
+    when "--tier"         then a["tier"] = val.call
+    when "--lane"         then a["lane"] = val.call
+    when "-I"             then a["roots"] << val.call
+    when "--typedump"     then a["typedump"] = val.call
+    when "--menus"        then a["menus"] = val.call
+    when "--arena-rules"  then a["arena_rules"] = val.call
+    else die("unknown option '#{t}'")
+    end
+    i += 1
+  end
+  die("--lane knows only 'wasm'") unless [nil, "wasm"].include?(a["lane"])
+  a
+end
+
+def resolve_platform(a, menus)
+  if a["profile"] && a["platform"]
+    die("--profile and --platform are two spellings of one choice; pass one")
+  end
+  if a["profile"]
+    # note: false -- this tool does **not accept** the old format (the wasm lane
+    # refuses it, otherwise it goes back to the caller), so to keep the reviewed rule
+    # "REJECT is line 1" it prints no deprecation note.
+    prof = SP.load_profile(a["profile"], menus, prog: PROG, note: false)
+    if prof["format"] == "old"
+      if a["lane"] == "wasm"
+        raise SP::LedgerError.new("profile-error",
+          "#{a['profile']} is a pre-T5 freestanding profile, not a wasm app " \
+          "profile.  spinel-wasm needs the T-5 form with `supplies: full` " \
+          "(see tools/platform/profiles/)")
+      end
+      return [nil, nil, "old"]
+    end
+    if a["lane"] == "wasm"
+      unless WASM_LANE_PLATFORMS.include?(prof["platform"])
+        raise SP::LedgerError.new("profile-error",
+          "#{a['profile']}: platform '#{prof['platform']}' is not a wasm lane " \
+          "platform (#{WASM_LANE_PLATFORMS.join('|')}) -- spinel-wasm packages " \
+          "those two; a zephyr/native profile belongs to the freestanding or " \
+          "native lane")
+      end
+      if prof["supplies"] != "full"
+        raise SP::LedgerError.new("profile-error",
+          "#{a['profile']}: supplies: #{prof['supplies']} is a freestanding " \
+          "module's contract; spinel-wasm links the hosted runtime, which is " \
+          "`supplies: full` (T-5)")
+      end
+    end
+    return [prof["platform"], prof["supplies"], "new"]
+  end
+  if a["platform"]
+    unless menus["platforms"].key?(a["platform"])
+      raise SP::LedgerError.new("profile-error",
+        "unknown platform '#{a['platform']}' -- the ledger " \
+        "(#{SP.relpath(menus['_path'], REPO)}) knows " \
+        "#{menus['platforms'].keys.sort.join(', ')}")
+    end
+    return [a["platform"], nil, "-"]
+  end
+  die("check needs --profile or --platform")
+end
+
+def required_set(a, menus)
+  td = a["typedump"]
+  unless File.exist?(td)
+    build = File.join(REPO, "tools", "contract", "build.sh")
+    $stderr.write("#{PROG}: building #{SP.relpath(td, REPO)} (first run)\n")
+    system("sh", build, out: File::NULL)
+    ok = $?.exitstatus == 0
+    die("spinel-typedump is missing and tools/contract/build.sh failed") if !ok || !File.exist?(td)
+  end
+  vocab = menus["capabilities"].keys.sort
+  cmd = [td, a["entry"], "features"] + vocab
+  a["roots"].each { |r| cmd += ["-I", r] }
+  out, err, st = Open3.capture3(*cmd)
+  if st.exitstatus != 0
+    $stderr.write(err)
+    die("spinel-typedump features failed (exit #{st.exitstatus}) on #{a['entry']} " \
+        "-- the entry must parse/analyze before capabilities can be checked")
+  end
+  req = []
+  out.split("\n", -1).drop(1).each do |line|
+    name, _sep, flag = line.partition("\t")
+    req << name if flag.strip == "1"
+  end
+  req
+end
+
+def typedump(a, mode, what)
+  cmd = [a["typedump"], a["entry"], mode]
+  a["roots"].each { |r| cmd += ["-I", r] }
+  out, err, st = Open3.capture3(*cmd)
+  if st.exitstatus != 0
+    $stderr.write(err)
+    die("spinel-typedump #{mode} failed (exit #{st.exitstatus}) on #{a['entry']} " \
+        "-- the entry must parse before the #{what} can run")
+  end
+  out
+end
+
+def arena_errors(a, ast_text)
+  rules = SP.load_arena_rules(a["arena_rules"])
+  errs = SP.arena_gc_errors(ast_text, rules)
+  errs + SP.arena_escape_errors(ast_text, typedump(a, "globals", "arena escape check"), rules)
+end
+
+def main
+  a = parse_args(ARGV)
+  begin
+    if a["sub"] == "tier"
+      die("tier needs --entry") unless a["entry"]
+      tier, declared = SP.resolve_tier(a["entry"], a["tier"])
+      puts "tier=#{tier}"
+      puts "tier_declared=#{declared ? 1 : 0}"
+      return 0
+    end
+
+    menus = SP.load_menus(a["menus"])
+
+    if a["sub"] == "profile"
+      die("profile needs --profile") unless a["profile"]
+      plat, supplies, fmt = resolve_platform(a, menus)
+      puts "format=#{fmt}"
+      puts "platform=#{plat || '-'}"
+      puts "supplies=#{supplies || '-'}"
+      return 0
+    end
+
+    die("check needs --entry") unless a["entry"]
+    die("#{a['entry']}: No such file") unless File.exist?(a["entry"])
+    plat, supplies, fmt = resolve_platform(a, menus)
+    if plat.nil?
+      die("check cannot run against a pre-T5 profile (it names no platform the " \
+          "ledger knows); pass --platform, or a T-5 profile")
+    end
+    tier, declared = SP.resolve_tier(a["entry"], a["tier"])
+    if a["lane"] == "wasm" && tier == "core"
+      raise SP::LedgerError.new("tier-core-lane",
+        "entry #{File.basename(a['entry'])} declares '# spinel-tier: core' -- a " \
+        "core-tier program has no hosted runtime to link.  Build it with the " \
+        "freestanding lane (tools/mlir/spinel-mlirgen --freestanding --profile " \
+        "<yaml>); spinel-wasm builds tier full (default) and tier arena " \
+        "(--request-arena)")
+    end
+    req = required_set(a, menus)
+    errs = SP.check_capabilities(menus, plat, tier, req)
+    ast_text = typedump(a, "ast", "reserved-name check")
+    errs += SP.reserved_name_errors(ast_text)
+    errs += arena_errors(a, ast_text) if tier == "arena"
+    unless errs.empty?
+      errs.each { |e| reject(e) }
+      exit 1
+    end
+    puts "format=#{fmt}"
+    puts "platform=#{plat}"
+    puts "supplies=#{supplies || '-'}"
+    puts "tier=#{tier}"
+    puts "tier_declared=#{declared ? 1 : 0}"
+    puts "required=#{req.sort.join(',').then { |s| s.empty? ? '-' : s }}"
+    return 0
+  rescue SP::LedgerError => e
+    reject(e)
+    exit 1
+  rescue SP::LedgerDeath => e
+    # The frozen Python's `SystemExit("msg")`: the message goes to stderr as one line
+    # **without the prog name**, rc 1.
+    $stderr.write("#{e.message}\n")
+    exit 1
+  end
+end
+
+exit(main)

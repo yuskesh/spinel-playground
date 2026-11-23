@@ -1,0 +1,7 @@
+core-contract 1
+root at_u8.rb
+entry at_u8
+result i32
+param src buffer u8 in count n_src
+param n_src scalar u64
+param i scalar i32

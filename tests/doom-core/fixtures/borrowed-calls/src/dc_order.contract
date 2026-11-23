@@ -1,0 +1,6 @@
+core-contract 1
+root src/dc_order.rb
+entry dc_order
+result i64
+param buf buffer i32 inout count n_buf
+param n_buf scalar u64

@@ -1,0 +1,47 @@
+id	sub	argv	expect_rc	note	os_specific	skip_on
+e090_r1_tier_core	check	check --entry @R@/tools/platform/ab/fixtures/E090/reject/r1_tier_core_require.rb --platform workers -I @R@/tools/platform/ab/fixtures/E090/subjects/root	1	kind=tier-violation	-	-
+e090_r2_menu_fastly	check	check --entry @R@/tools/platform/ab/fixtures/E090/reject/r2_menu_fastly_r2.rb --profile @R@/tools/platform/profiles/fastly-full.yaml --lane wasm -I @R@/tools/platform/ab/fixtures/E090/subjects/root	1	kind=menu-violation	-	-
+e090_r4_native_menu	check	check --entry @R@/tools/platform/ab/fixtures/E090/reject/r4_native_kv.rb --platform native -I @R@/tools/platform/ab/fixtures/E090/subjects/root	1	kind=menu-violation	-	-
+e090_t1_tier_unknown	check	check --entry @R@/tools/platform/ab/fixtures/E090/reject/t1_tier_unknown.rb --platform workers	1	kind=tier-unknown	-	-
+e090_t2_core_lane	check	check --entry @R@/tools/platform/ab/fixtures/E090/reject/t2_core_wasm.rb --platform workers --lane wasm	1	kind=tier-core-lane	-	-
+e090_p1_unknown_platform	profile	profile --profile @R@/tools/platform/ab/fixtures/E090/reject/p1_unknown_platform.yaml --lane wasm	1	kind=profile-error	-	-
+e090_p2_arch_out_of_menu	profile	profile --profile @R@/tools/platform/ab/fixtures/E090/reject/p2_arch_out_of_menu.yaml	1	-	-	-
+e090_p3_bad_supplies	profile	profile --profile @R@/tools/platform/ab/fixtures/E090/reject/p3_bad_supplies.yaml --lane wasm	1	kind=profile-error	-	-
+e090_p4_broken_old	profile	profile --profile @R@/tools/platform/ab/fixtures/E090/reject/p4_broken_old.yaml --lane wasm	1	kind=profile-error	-	-
+e090_pf_workers_full	profile	profile --profile @R@/tools/platform/profiles/workers-full.yaml --lane wasm	0	accept	-	-
+e090_pf_fastly_full	profile	profile --profile @R@/tools/platform/profiles/fastly-full.yaml --lane wasm	0	accept	-	-
+e090_pf_old_no_lane	profile	profile --profile @R@/tools/freestanding/profiles/cortex-m33-zephyr.yaml	0	format=old	-	-
+e090_g_s1_accept	check	check --entry @R@/tools/platform/ab/fixtures/E090/subjects/s1_app.rb --platform workers -I @R@/tools/platform/ab/fixtures/E090/subjects/root	0	accept	-	-
+tier_undeclared	tier	tier --entry @R@/tools/platform/ab/fixtures/E090/subjects/s1_app.rb	0	undeclared = full	-	-
+tier_arena	tier	tier --entry @R@/tools/platform/ab/fixtures/E093/subjects/s4_arena_app.rb	0	arena	-	-
+tier_core	tier	tier --entry @R@/tools/platform/ab/fixtures/E090/reject/t2_core_wasm.rb	0	core	-	-
+tier_unknown	tier	tier --entry @R@/tools/platform/ab/fixtures/E090/reject/t1_tier_unknown.rb	1	an unknown value passes resolve_tier	-	-
+e091_k1_user_module_edge	check	check --entry @R@/tools/platform/ab/fixtures/E091/subjects/k1_user_module_edge.rb --platform workers -I @R@/tools/wasm/lib	1	kind=reserved-name	-	-
+e091_k2_nested_is_fine	check	check --entry @R@/tools/platform/ab/fixtures/E091/subjects/k2_nested_is_fine.rb --platform workers -I @R@/tools/wasm/lib	0	accept	-	-
+e091_k3_class_cloudflare	check	check --entry @R@/tools/platform/ab/fixtures/E091/subjects/k3_class_cloudflare.rb --platform workers -I @R@/tools/wasm/lib	1	kind=reserved-name	-	-
+e091_e1_no_host_api	check	check --entry @R@/tools/platform/ab/fixtures/E091/subjects/e1_no_host_api.rb --platform workers -I @R@/tools/wasm/lib	0	-	-	-
+e091_hello_fastly	check	check --entry @R@/examples/hello-fastly/app.rb --platform fastly -I @R@/tools/wasm/lib	1	accept	-	-
+e093_g01_s4_accept	check	check --entry @R@/tools/platform/ab/fixtures/E093/subjects/s4_arena_app.rb --platform workers -I @R@/tools/wasm/lib	0	accept (tier arena)	-	-
+e093_g07_c2_unboxed	check	check --entry @R@/tools/platform/ab/fixtures/E093/subjects/c2_arena_unboxed.rb --platform workers	0	accept	-	-
+e093_r5_gc_start	check	check --entry @R@/tools/platform/ab/fixtures/E093/reject/r5_gc_start.rb --platform workers -I @R@/tools/wasm/lib	1	kind=arena-gc	-	-
+e093_r5b_objectspace	check	check --entry @R@/tools/platform/ab/fixtures/E093/reject/r5b_objectspace.rb --platform workers	1	kind=arena-gc	-	-
+e093_r6_escape_global	check	check --entry @R@/tools/platform/ab/fixtures/E093/reject/r6_escape_global.rb --platform workers -I @R@/tools/wasm/lib	1	kind=arena-escape	-	-
+e093_r6b_escape_widening	check	check --entry @R@/tools/platform/ab/fixtures/E093/reject/r6b_escape_widening.rb --platform workers	1	kind=arena-escape	-	-
+e093_r6c_escape_in_require	check	check --entry @R@/tools/platform/ab/fixtures/E093/reject/r6c_escape_in_require.rb --platform workers -I @R@/tools/platform/ab/fixtures/E093/subjects/root	1	kind=arena-escape	-	-
+wasm_hello_http	check	check --entry @R@/examples/hello-http/app.rb --lane wasm --platform workers	0	spinel-wasm's real argv	-	-
+wasm_r2_d1	check	check --entry @R@/examples/r2-d1/app.rb --lane wasm --platform workers -I @R@/tools/wasm/lib -I @R@/tools/wasm/legacy	0	spinel-wasm's real argv (--host-api)	-	-
+wasm_hello_fastly	check	check --entry @R@/examples/hello-fastly/app.rb --lane wasm --platform fastly -I @R@/tools/wasm/lib -I @R@/tools/wasm/legacy	1	spinel-wasm's real argv (--host-api)	-	-
+wasm_gatekeeper	check	check --entry @R@/examples/gatekeeper/app.rb --lane wasm --platform workers	0	spinel-wasm's real argv	-	-
+die_no_args	-		2	usage (no arguments);mask=self	-	-
+die_help	-	--help	0	-h is rc 0;mask=self	-	-
+die_unknown_sub	-	bogus	2	unknown subcommand	-	-
+die_unknown_option	check	check --entry @R@/examples/hello-http/app.rb --bogus	2	unknown option	-	-
+die_missing_value	check	check --entry	2	--entry needs an argument	-	-
+die_bad_lane	check	check --entry @R@/examples/hello-http/app.rb --platform workers --lane bpf	2	--lane knows only 'wasm'	-	-
+die_both_choices	check	check --entry @R@/examples/hello-http/app.rb --platform workers --profile @R@/tools/platform/profiles/workers-full.yaml	2	profile and platform given together	-	-
+die_no_choice	check	check --entry @R@/examples/hello-http/app.rb	2	check needs --profile or --platform	-	-
+die_no_entry	check	check --platform workers	2	check needs --entry	-	-
+die_entry_missing	check	check --entry @R@/no-such-entry.rb --platform workers	2	No such file	-	-
+die_tier_no_entry	tier	tier	2	tier needs --entry	-	-
+die_profile_no_profile	profile	profile	2	profile needs --profile	-	-
+die_menus_no_tiers	check	check --entry @R@/examples/hello-http/app.rb --platform workers --menus @R@/tools/platform/ab/fixtures/menus_no_tiers.yaml	1	a lie in the ledger's structure (no tiers)	-	-

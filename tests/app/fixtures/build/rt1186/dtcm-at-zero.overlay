@@ -1,0 +1,21 @@
+/*
+ * tests/app/fixtures/build/rt1186/dtcm-at-zero.overlay -- tests/app/build.sh
+ * 2c's kept failing input for step 10's stack placement (decision 0027): the
+ * M7's data TCM rebuilt as plain SRAM while zephyr,dtcm still chooses it, as
+ * the companion's table once had it. The glue places the scheduler stack in
+ * the data TCM's section by that choice, and the linker, finding no region
+ * for it, puts it at address 0: step 10 must refuse the image, naming it.
+ */
+/delete-node/ &dtcm;
+
+/ {
+	soc {
+		dtcm: memory@20000000 {
+			compatible = "mmio-sram";
+			reg = <0x20000000 DT_SIZE_K(256)>;
+		};
+	};
+	chosen {
+		zephyr,dtcm = &dtcm;
+	};
+};

@@ -1,0 +1,89 @@
+# Decision 0022 §3: the entry wrapper's descriptor checks with 32-bit pointers,
+# run on wasm32 by tests/app/wrapper32.rb. Positive and negative cases, so that
+# a narrowed accepted set cannot pass on the refusals alone.
+#
+# Columns, tab-separated:
+#   id      unique
+#   kernel  the fixture stem in this directory (its .rb and .contract)
+#   args    the C arguments in signature order, comma separated: each buffer's
+#           address, each u64 count, then the result pointer. Numbers are
+#           decimal or 0x hex; R is the result slot, 8192, in the module's
+#           memory (two pages).
+#   status  ok | argument | bounds
+#   result  the result for ok; `-` otherwise
+#   why     what the case shows
+#
+# No kernel here but at_u8 accesses a buffer element, so an admitted
+# descriptor touches no memory: the only store is the result's, and every
+# case that is admitted places the result at R or another address inside the
+# memory. at_u8's admitted cases read an element inside the memory. A refused case
+# must also leave the result slot untouched (decision 0007), which the runner
+# checks whenever the slot is inside the memory.
+#
+# len_u8_64 and unread_u8_64 declare `# spinel: int64` and have no rows: a
+# 32-bit target refuses them (decision 0019, revised 2026-10-21), which the
+# runner checks. The u64 count of a 32-bit pointer stays covered here by the
+# 32-bit body's rows: read32-over, unread32-top, unread32-high, high-word-*;
+# the i64 result's overlap rows went with them, and the i32 result's
+# (result-carry, result-after, result-after-last) remain.
+#
+#id	kernel	args	status	result	why
+zero-null	len_u8	0,0,R	ok	0	a zero-length NULL buffer is admitted
+null-nonzero	len_u8	0,1,R	argument	-	a NULL buffer with a nonzero count
+end-at-max	len_u8	0xfffffff8,7,R	ok	7	the exclusive end is UINTPTR_MAX
+end-past-max	len_u8	0xfffffff8,8,R	argument	-	the exclusive end would be 2^32
+last-address-zero	len_u8	0xffffffff,0,R	ok	0	a zero count at the last address
+high-word-zero	len_u8	4096,0x100000000,R	argument	-	2^32 has a nonzero upper word and reads as 0 in 32 bits
+high-word-one	len_u8	4096,0x100000001,R	argument	-	2^32 + 1 reads as 1 in 32 bits
+u64-max	len_u8	4096,0xffffffffffffffff,R	argument	-	the largest u64
+u64-top-bit	len_u8	4096,0x8000000000000000,R	argument	-	a count with no i64 value
+read32-max	len_u8	0x10000,0x7fffffff,R	ok	2147483647	a read count at INT32_MAX in a 32-bit body
+read32-over	len_u8	0x10000,0x80000000,R	argument	-	a read count past INT32_MAX in a 32-bit body
+unread32-over	unread_u8	0x10000,0x80000000,R	ok	7	an unread count past INT32_MAX in a 32-bit body is not a value
+unread32-top	unread_u8	0x10000,0xfffeffff,R	ok	7	a count that ends at UINTPTR_MAX, unread
+unread32-high	unread_u8	0x10000,0x100000000,R	argument	-	an unread count's upper word
+i32-misaligned-zero	len_i32	4097,0,R	ok	0	misaligned non-NULL with a zero count is admitted
+i32-misaligned	len_i32	4097,1,R	argument	-	misaligned non-NULL with a nonzero count
+i32-aligned	len_i32	4096,1,R	ok	1	the same buffer aligned
+i32-size	len_i32	4096,0x40000000,R	argument	-	count * 4 = 2^32 leaves the address width
+i32-size-top	len_i32	0xfffffff0,3,R	ok	3	count * 4 ends at 0xfffffffc
+result-carry	tag_u8	0xfffffff8,7,0xfffffffc	argument	-	r + 4 = 2^32: a 32-bit end would read 0 and miss the overlap
+result-carry-1	tag_u8	0xfffffffb,4,0xfffffffc	argument	-	r + 4 = 2^32, the buffer's last byte at r
+result-adjacent	len_u8	8184,8,R	ok	8	the buffer ends where the i32 result begins
+result-overlap	len_u8	8185,8,R	argument	-	the buffer's last byte is the result's first
+result-after	len_u8	8196,8,R	ok	8	the buffer begins where the i32 result ends
+result-after-last	len_u8	8195,8,R	argument	-	the buffer begins at the i32 result's last byte
+result-dead	len_u8	8192,0,R	ok	0	a zero-length buffer at the result is admitted
+tag-adjacent	tag_u8	8188,4,R	ok	1	an i32 result adjacent to the buffer, constant result
+pair-adjacent	pair_u8	4096,4,4100,4,R	ok	0	adjacent ranges are admitted
+pair-overlap	pair_u8	4096,5,4100,4,R	argument	-	ranges overlapping by one byte, one inout
+pair-alias	pair_u8	4096,4,4096,4,R	argument	-	two names for one storage, one inout
+pair-dead	pair_u8	4096,8,4100,0,R	ok	0	a zero-length inout inside the other range
+pair-top-adjacent	pair_u8	0xfffffff0,8,0xfffffff8,7,R	ok	0	adjacent at the top: the inout ends at UINTPTR_MAX
+pair-top-overlap	pair_u8	0xfffffff0,9,0xfffffff8,7,R	argument	-	overlapping by one byte at the top
+in-in-alias	two_in_u8	4096,4,4096,4,R	ok	0	two read-only buffers over one storage are admitted
+in-in-top	two_in_u8	0xfffffff8,7,0xfffffff8,7,R	ok	0	read-only overlap ending at UINTPTR_MAX
+pair-equal-begin	pair_u8	4096,4,4096,8,R	argument	-	a read-only and an inout range with equal begins
+pair-dead-in	pair_u8	4100,0,4096,8,R	ok	0	a zero-length read-only range inside the inout one
+io-io-alias	two_inout_u8	4096,4,4096,4,R	argument	-	two inout names for one storage
+io-io-adjacent	two_inout_u8	4096,4,4100,4,R	ok	0	two adjacent inout ranges
+io-io-equal-begin	two_inout_u8	4096,4,4096,8,R	argument	-	two inout ranges with equal begins
+io-io-dead	two_inout_u8	4096,0,4096,4,R	ok	0	a zero-length inout at the other's begin
+io-io-both-dead	two_inout_u8	4096,0,4096,0,R	ok	0	two zero-length inout ranges at one address
+in-in-equal-begin	two_in_u8	4096,4,4096,8,R	ok	0	two read-only ranges with equal begins
+tri-disjoint	tri_u8	4096,4,4100,4,4104,4,R	ok	0	three adjacent ranges
+tri-in-in	tri_u8	4096,8,4200,4,4100,4,R	ok	0	the two read-only ranges overlap, the inout is apart
+tri-io-after	tri_u8	4096,4,4200,8,4204,4,R	argument	-	the inout overlaps the read-only range after it
+tri-io-before	tri_u8	4200,8,4204,4,4096,4,R	argument	-	the inout overlaps the read-only range before it
+tri-top	tri_u8	4096,4,0xfffffff0,8,0xfffffff8,7,R	ok	0	the inout and the last read-only adjacent at the top
+tri-dead-io	tri_u8	4096,8,4100,0,4096,8,R	ok	0	a zero-length inout among overlapping read-only ranges
+# A 32-bit body's index check: 0 <= i < count for every count the wrapper
+# admits, by hand. The count 0xfffeffff (unread as a value) is above 2^31,
+# where an index of -2^31 is below the count as unsigned 32 bits and must
+# still be refused. The memory is zero, so an admitted read answers 0.
+idx-last	at_u8	0x10000,4,3,R	ok	0	the last element of four
+idx-end	at_u8	0x10000,4,4,R	bounds	-	one past the end
+idx-neg	at_u8	0x10000,4,-1,R	bounds	-	a negative index
+idx-big-in	at_u8	0x10000,0xfffeffff,5,R	ok	0	a count past 2^31: an index inside it
+idx-big-neg	at_u8	0x10000,0xfffeffff,-1,R	bounds	-	a count past 2^31: -1
+idx-big-min	at_u8	0x10000,0xfffeffff,-2147483648,R	bounds	-	a count past 2^31: -2^31, below the count as unsigned 32 bits

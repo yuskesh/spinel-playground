@@ -1,0 +1,139 @@
+#!/usr/bin/env ruby
+# tools/census/spinel-codegen-audit — check whether codegen used the results of type inference
+#
+#   spinel-codegen-audit <file.rb>...   (relative paths are fine)
+#
+# Rule: **not optimizing is allowed; discarding type information without a reason is not.**
+#
+# Matches two sidecars by node id. Spinel runs twice because
+# `--emit-types` returns early, before C generation.
+#
+#   1) type table      spinel f --emit-types   (vendor patch L2, SPINEL_LLVM_TYPES_NODE_ID)
+#   2) codegen report  spinel f -S            (vendor patch L3, SPINEL_LLVM_CODEGEN_FACTS)
+#
+# Rules:
+#   CG901  emitted a poly dispatch although the receiver type is concrete (not poly)
+#          = discards type information without reporting a reason
+#   CG902  boxed although both the value to box and its destination have concrete types (needs vendor patch L4)
+#          = packed into a box although both ends are typed
+#
+# Statistics: the type-information use rate (the share of CallNodes that are direct calls) and the boxing breakdown.
+#
+# Reading a boxing fact (L4):
+#   detail = the type of the value boxed. "poly" names the path that "packs nothing because it is already boxed"
+#            (emit_boxed returns without boxing a poly value), so it is **not real boxing**
+#   dst    = the destination type. Present only at sites that report it (nil when unreported)
+#   site   = the call site = which codegen rule did the packing
+
+require "open3"
+require "tmpdir"
+require "json"
+
+ROOT   = File.expand_path("../..", __dir__)
+SPINEL = ENV["SPINEL"] || File.join(ROOT, "vendor/spinel/bin/spinel")
+
+POLYISH = %w[poly poly_array unknown].freeze
+
+def facts_for(rb)
+  rb = File.expand_path(rb)   # spinel runs in a tmpdir, so an absolute path is needed
+  Dir.mktmpdir do |d|
+    _o, _e, st1 = Open3.capture3({"SPINEL_LLVM_TYPES_NODE_ID" => "1"},
+                                 SPINEL, rb, "--emit-types", chdir: d)
+    j = Dir[File.join(d, "*.types.json")].first
+    return nil unless st1.success? && j
+    types = JSON.parse(File.read(j))["types"]
+    return nil unless types&.first&.key?("node")
+
+    fp = File.join(d, "cg.json")
+    _o, _e, st2 = Open3.capture3({"SPINEL_LLVM_CODEGEN_FACTS" => fp}, SPINEL, rb, "-S", chdir: d)
+    return nil unless st2.success? && File.exist?(fp)
+    cg = JSON.parse(File.read(fp))["codegen"] || []
+    [types, cg]
+  end
+end
+
+total = Hash.new(0)
+findings = []
+cg902 = []
+by_site = Hash.new(0)
+
+ARGV.each do |rb|
+  r = facts_for(rb)
+  if r.nil?
+    warn "#{rb}: cannot get the sidecar (vendor patch L2/L3 not applied, or the compile failed)"
+    next
+  end
+  types, cg = r
+  by_node = types.to_h { |e| [e["node"], e] }
+  src = File.readlines(rb) rescue []
+
+  calls   = types.count { |e| e["kind"] == "CallNode" }
+  poly_d  = cg.count { |x| x["fact"] == "dispatch_poly" }
+  box_all = cg.select { |x| x["fact"] == "boxing" }
+  box_real = box_all.reject { |x| x["detail"] == "poly" }   # poly is the path that packs nothing
+  boxing  = box_real.size
+  box_dst = box_real.count { |x| x["dst"] }
+  joined  = cg.count { |x| by_node.key?(x["node"]) }
+
+  total[:files] += 1
+  total[:calls] += calls
+  total[:poly_d] += poly_d
+  total[:boxing] += boxing
+  total[:facts] += cg.size
+  total[:joined] += joined
+  total[:box_noop] += box_all.size - boxing
+  total[:box_dst] += box_dst
+  box_real.each { |x| by_site[x["site"] || "(unknown)"] += 1 }
+
+  # CG902: packed into a box although the value and the destination are concrete
+  box_real.each do |x|
+    d = x["dst"]
+    next if d.nil? || POLYISH.include?(d)
+    t = by_node[x["node"]]
+    loc = t ? "#{File.basename(rb)}:#{t["line"]}:#{t["col"]}" : "#{File.basename(rb)}:?"
+    line = t && src[t["line"] - 1] ? src[t["line"] - 1].strip : ""
+    cg902 << [loc, x["detail"], d, x["site"], line]
+  end
+
+  cg.each do |x|
+    next unless x["fact"] == "dispatch_poly"
+    recv = x["detail"].to_s
+    next if POLYISH.include?(recv)          # a generic call is expected for a poly receiver
+    t = by_node[x["node"]]
+    loc = t ? "#{File.basename(rb)}:#{t["line"]}:#{t["col"]}" : "#{File.basename(rb)}:?"
+    line = t && src[t["line"] - 1] ? src[t["line"] - 1].strip : ""
+    findings << [loc, recv, line]
+  end
+end
+
+cg902.each do |loc, ty, dst, site, line|
+  puts "CG902 #{loc}"
+  puts "      boxes a #{ty} value for a #{dst} destination (#{site})"
+  puts "      #{line}" unless line.empty?
+end
+
+findings.each do |loc, recv, line|
+  puts "CG901 #{loc}"
+  puts "      the receiver type is #{recv} (concrete), yet it emits a poly dispatch"
+  puts "      #{line}" unless line.empty?
+end
+
+c = total[:calls]
+puts "---- codegen audit: files=#{total[:files]}  CallNode=#{c}  " \
+     "poly dispatch=#{total[:poly_d]}  boxing=#{total[:boxing]}"
+if c > 0
+  puts "     direct-call rate (1 - poly/CallNode): #{((1.0 - total[:poly_d].to_f / c) * 100).round(2)}%"
+end
+puts "     join rate (share of facts nodes found in the type table): " \
+     "#{total[:facts] > 0 ? (total[:joined] * 100.0 / total[:facts]).round(1) : 0}% " \
+     "(#{total[:joined]}/#{total[:facts]})"
+puts "     CG901: #{findings.size}"
+puts "     boxing: #{total[:boxing]} real (excluding #{total[:box_noop]} on paths that do not box)  " \
+     "destination declared for #{total[:box_dst]}" \
+     "#{total[:boxing] > 0 ? " (#{(total[:box_dst] * 100.0 / total[:boxing]).round(1)}%)" : ""}"
+puts "     CG902: #{cg902.size}"
+if ENV["AUDIT_SITES"] && !by_site.empty?
+  puts "     -- where the boxing comes from (by site, top 10)"
+  by_site.sort_by { |_, v| -v }.first(10).each { |k, v| puts "        %-30s %d" % [k, v] }
+end
+exit(findings.empty? && cg902.empty? ? 0 : 1)

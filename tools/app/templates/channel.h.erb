@@ -1,0 +1,31 @@
+/* generated from tools/app/templates/channel.h.erb: channel `<%= c.name %>`
+ * (decision 0014 §5), a single-producer single-consumer ring of
+ * <%= c.depth %> messages of up to <%= c.size %> bytes. <%= c.direction == "out" ? "CORE puts, the transport gets." : "The transport puts, CORE gets." %>
+ *
+ * put returns 1 when queued and 0 when full (nothing written); get returns
+ * the length, or 0 when empty. Neither checks its arguments: for a CORE
+ * caller every failure of §5 is a guard the kernel emits before the call
+ * (1 <= n <= size, n <= len(data); len(data) >= size), and the transport,
+ * the other caller, delivers only a frame whose length it has checked
+ * against the size and reads into a buffer of the size. Each operation is one
+ * function in its own translation unit, with global assembler labels around
+ * its copy and its publication (the plan's "Channels"), so a duplicated body
+ * is a link error and the stress build can count preemptions inside each. */
+#ifndef SPC_CHANNEL_<%= c.name.upcase %>_H
+#define SPC_CHANNEL_<%= c.name.upcase %>_H
+#include <stdatomic.h>
+#include <stdint.h>
+
+#define SPC_CHANNEL_<%= c.name.upcase %>_SIZE <%= c.size %>u
+#define SPC_CHANNEL_<%= c.name.upcase %>_DEPTH <%= c.depth %>u
+
+/* the ring's storage, defined in channel_<%= c.name %>_ring.c */
+extern uint8_t spc_channel_<%= c.name %>_slots[<%= c.depth %>][<%= c.size %>];
+extern uint32_t spc_channel_<%= c.name %>_lens[<%= c.depth %>];
+extern _Atomic uint32_t spc_channel_<%= c.name %>_head; /* messages ever enqueued */
+extern _Atomic uint32_t spc_channel_<%= c.name %>_tail; /* messages ever dequeued */
+
+int32_t spc_channel_<%= c.name %>_put(const uint8_t *data, uint32_t data_len, uint32_t n);
+int32_t spc_channel_<%= c.name %>_get(uint8_t *data, uint32_t data_len);
+uint32_t spc_channel_<%= c.name %>_occupancy(void);
+#endif

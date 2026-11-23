@@ -1,0 +1,9 @@
+verdict	symbol	from_c_header	from_kernel_ir
+MATCH	spinel_kern_version	i32 ()	i32 ()
+MATCH	spinel_gen_row	i32 (ptr, i32, i32)	i32 (ptr, i32, i32)
+MATCH	spinel_sq_hinge_loss	double (ptr, i32, ptr, i32)	double (ptr, i32, ptr, i32)
+MATCH	spinel_grad_norm2	double (ptr, i32, ptr, ptr, i32)	double (ptr, i32, ptr, ptr, i32)
+MATCH	spinel_newton_calibrate	i32 (ptr, i32, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, i32, i32, double)	i32 (ptr, i32, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, i32, i32, double)
+MATCH	spinel_hvp_probe	double (ptr, i32, ptr, ptr, ptr, ptr, i32, i32)	double (ptr, i32, ptr, ptr, ptr, ptr, i32, i32)
+MATCH	spinel_grad_sq_hinge_loss	double (ptr, i32, ptr, ptr, i32)	double (ptr, i32, ptr, ptr, i32)
+MATCH	spinel_hvp_sq_hinge_loss	double (ptr, i32, ptr, ptr, ptr, ptr, i32)	double (ptr, i32, ptr, ptr, ptr, ptr, i32)

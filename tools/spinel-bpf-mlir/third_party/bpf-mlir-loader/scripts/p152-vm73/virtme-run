@@ -1,0 +1,5 @@
+#!/bin/bash
+# 7.3.1's virtio/9p/overlay are built in: no initramfs is requested.
+set -euo pipefail
+export PYTHONUNBUFFERED=1
+exec /usr/bin/virtme-run --show-command --show-boot-console "$@"

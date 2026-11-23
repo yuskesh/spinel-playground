@@ -1,0 +1,26 @@
+#!/usr/bin/env ruby
+# E014: compare control/candidate facts of every arm in a capture-splice-arms
+# output with cmp. Only arms where both sides are rc 0 with a nonempty artifact
+# count as equal; each difference is named by arm and cmp's byte/line.
+# Exit 0 when every control success is raw-equal, 1 otherwise, 2 on usage.
+require 'json'
+require 'open3'
+output=ARGV[0] or abort 'usage: compare-raw-arms capture-output'
+rows=File.readlines(File.join(output,'arms.jsonl')).map{|l|JSON.parse(l)}
+equal=0; diffs=[]; both_ok=0
+rows.each do |r|
+  c,d=r['control'],r['candidate']
+  next unless c['rc']==0 && c['artifact_bytes']>0
+  arm="#{r['id']}/#{r['arm']}"
+  unless d['rc']==0 && d['artifact_bytes']>0
+    diffs<<"#{arm}: candidate rc=#{d['rc']} bytes=#{d['artifact_bytes']}"; next
+  end
+  both_ok+=1
+  a=File.join(output,'control',r['id'],r['arm'].to_s,'facts.mlir')
+  b=File.join(output,'candidate',r['id'],r['arm'].to_s,'facts.mlir')
+  out,st=Open3.capture2e('cmp',a,b)
+  if st.exitstatus==0 then equal+=1 else diffs<<"#{arm}: #{out.strip.sub(a,'control').sub(b,'candidate')}" end
+end
+puts "control successes #{rows.count{|r|r['control']['rc']==0 && r['control']['artifact_bytes']>0}}, both rc0/nonempty #{both_ok}, raw equal #{equal}, differences #{diffs.length}"
+diffs.each{|d| puts "  #{d}"}
+exit(diffs.empty? ? 0 : 1)

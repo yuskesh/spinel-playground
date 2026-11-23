@@ -1,0 +1,703 @@
+diff --git a/doomgeneric/d_main.c b/doomgeneric/d_main.c
+index d837769..63aa12d 100644
+--- a/doomgeneric/d_main.c
++++ b/doomgeneric/d_main.c
+@@ -1163,6 +1163,9 @@ static void LoadIwadDeh(void)
+ #ifdef DG_DUMP_HOOK
+ void DG_DumpHook(void);   // doomgeneric_dump.c
+ #endif
++#ifdef DG_E047_HOOK
++void DG_E047Hook(void);   // doomgeneric_e047.c
++#endif
+ 
+ void D_DoomMain (void)
+ {
+@@ -1852,6 +1855,13 @@ void D_DoomMain (void)
+ 			D_StartTitle ();                // start up intro loop
+     }
+ 
++#ifdef DG_E047_HOOK
++    // spinel-llvm E047 (P004 Phase 2): reference oracle dumps for the level
++    // geometry and one rendered frame. No-op unless DG_E047_DIR is set; exits
++    // when it is. Placed here because R_Init() and P_Init() are done but no
++    // level is loaded and no tic has run.
++    DG_E047Hook();
++#endif
+     D_DoomLoop ();
+ }
+ 
+diff --git a/doomgeneric/r_bsp.c b/doomgeneric/r_bsp.c
+index 9a78812..a8d2954 100644
+--- a/doomgeneric/r_bsp.c
++++ b/doomgeneric/r_bsp.c
+@@ -501,6 +501,9 @@ void R_Subsector (int num)
+ #endif
+ 
+     sscount++;
++#ifdef DG_E047_HOOK
++    { void DG_E047_Subsector(int); DG_E047_Subsector(num); }
++#endif
+     sub = &subsectors[num];
+     frontsector = sub->sector;
+     count = sub->numlines;
+diff --git a/doomgeneric/r_segs.c b/doomgeneric/r_segs.c
+index 9b4e413..124d430 100644
+--- a/doomgeneric/r_segs.c
++++ b/doomgeneric/r_segs.c
+@@ -281,6 +281,9 @@ void R_RenderSegLoop (void)
+ 	    dc_yh = yh;
+ 	    dc_texturemid = rw_midtexturemid;
+ 	    dc_source = R_GetColumn(midtexture,texturecolumn);
++#ifdef DG_E047_HOOK
++	    { void DG_E047_Column(int,int,int,int); DG_E047_Column(0,rw_x,dc_yl,dc_yh); }
++#endif
+ 	    colfunc ();
+ 	    ceilingclip[rw_x] = viewheight;
+ 	    floorclip[rw_x] = -1;
+@@ -303,6 +306,9 @@ void R_RenderSegLoop (void)
+ 		    dc_yh = mid;
+ 		    dc_texturemid = rw_toptexturemid;
+ 		    dc_source = R_GetColumn(toptexture,texturecolumn);
++#ifdef DG_E047_HOOK
++		    { void DG_E047_Column(int,int,int,int); DG_E047_Column(1,rw_x,dc_yl,dc_yh); }
++#endif
+ 		    colfunc ();
+ 		    ceilingclip[rw_x] = mid;
+ 		}
+@@ -333,6 +339,9 @@ void R_RenderSegLoop (void)
+ 		    dc_texturemid = rw_bottomtexturemid;
+ 		    dc_source = R_GetColumn(bottomtexture,
+ 					    texturecolumn);
++#ifdef DG_E047_HOOK
++		    { void DG_E047_Column(int,int,int,int); DG_E047_Column(2,rw_x,dc_yl,dc_yh); }
++#endif
+ 		    colfunc ();
+ 		    floorclip[rw_x] = mid;
+ 		}
+@@ -701,6 +710,9 @@ R_StoreWallRange
+ 	}
+     }
+     
++#ifdef DG_E047_HOOK
++    { void DG_E047_Wall(void); DG_E047_Wall(); }
++#endif
+     // render it
+     if (markceiling)
+ 	ceilingplane = R_CheckPlane (ceilingplane, rw_x, rw_stopx-1);
+diff --git a/doomgeneric/Makefile.headless b/doomgeneric/Makefile.headless
+index b698c14..a3c5c5e 100644
+--- a/doomgeneric/Makefile.headless
++++ b/doomgeneric/Makefile.headless
+@@ -17,6 +17,7 @@ CFLAGS+=-g -Os
+ CFLAGS+=-Wall -DNORMALUNIX -DLINUX -D_DEFAULT_SOURCE
+ CFLAGS+=-DDG_FRAME_HOOK
+ CFLAGS+=-DDG_DUMP_HOOK
++CFLAGS+=-DDG_E047_HOOK
+ # NOTE (macOS/arm64, Apple clang 21): the doomgeneric sources at dcb7a8d compile
+ # clean under -Wall with *no* -Wno-* suppressions and *no* source edits.
+ # The only macOS frictions are in the stock Makefile, and both are link flags
+@@ -29,7 +30,7 @@ LIBS+=-lm
+ OBJDIR=build_headless
+ OUTPUT=doomgeneric_headless
+ 
+-SRC_DOOM = dummy.o am_map.o doomdef.o doomstat.o dstrings.o d_event.o d_items.o d_iwad.o d_loop.o d_main.o d_mode.o d_net.o f_finale.o f_wipe.o g_game.o hu_lib.o hu_stuff.o info.o i_cdmus.o i_endoom.o i_joystick.o i_scale.o i_sound.o i_system.o i_timer.o memio.o m_argv.o m_bbox.o m_cheat.o m_config.o m_controls.o m_fixed.o m_menu.o m_misc.o m_random.o p_ceilng.o p_doors.o p_enemy.o p_floor.o p_inter.o p_lights.o p_map.o p_maputl.o p_mobj.o p_plats.o p_pspr.o p_saveg.o p_setup.o p_sight.o p_spec.o p_switch.o p_telept.o p_tick.o p_user.o r_bsp.o r_data.o r_draw.o r_main.o r_plane.o r_segs.o r_sky.o r_things.o sha1.o sounds.o statdump.o st_lib.o st_stuff.o s_sound.o tables.o v_video.o wi_stuff.o w_checksum.o w_file.o w_main.o w_wad.o z_zone.o w_file_stdc.o i_input.o i_video.o doomgeneric.o doomgeneric_headless.o doomgeneric_dump.o
++SRC_DOOM = dummy.o am_map.o doomdef.o doomstat.o dstrings.o d_event.o d_items.o d_iwad.o d_loop.o d_main.o d_mode.o d_net.o f_finale.o f_wipe.o g_game.o hu_lib.o hu_stuff.o info.o i_cdmus.o i_endoom.o i_joystick.o i_scale.o i_sound.o i_system.o i_timer.o memio.o m_argv.o m_bbox.o m_cheat.o m_config.o m_controls.o m_fixed.o m_menu.o m_misc.o m_random.o p_ceilng.o p_doors.o p_enemy.o p_floor.o p_inter.o p_lights.o p_map.o p_maputl.o p_mobj.o p_plats.o p_pspr.o p_saveg.o p_setup.o p_sight.o p_spec.o p_switch.o p_telept.o p_tick.o p_user.o r_bsp.o r_data.o r_draw.o r_main.o r_plane.o r_segs.o r_sky.o r_things.o sha1.o sounds.o statdump.o st_lib.o st_stuff.o s_sound.o tables.o v_video.o wi_stuff.o w_checksum.o w_file.o w_main.o w_wad.o z_zone.o w_file_stdc.o i_input.o i_video.o doomgeneric.o doomgeneric_headless.o doomgeneric_dump.o doomgeneric_e047.o
+ OBJS += $(addprefix $(OBJDIR)/, $(SRC_DOOM))
+ 
+ all: $(OUTPUT)
+diff --git a/doomgeneric/doomgeneric_e047.c b/doomgeneric/doomgeneric_e047.c
+new file mode 100644
+index 0000000..cdeba20
+--- /dev/null
++++ b/doomgeneric/doomgeneric_e047.c
+@@ -0,0 +1,590 @@
++//
++// doomgeneric_e047.c
++//
++// spinel-llvm / E047 (P004 Phase 2) reference oracle hooks.
++//
++// Additive on top of the R007 headless harness and the E044 dump hooks. Same
++// shape as E044: one new .c file plus a handful of #ifdef'd call sites, and a
++// hook that is a complete no-op unless DG_E047_DIR is set in the environment.
++//
++// What it dumps, all straight out of the reference implementation's own state:
++//
++//   1. FixedMul / FixedDiv over a systematically generated input set  (H2)
++//   2. the level geometry as P_SetupLevel left it -- fixed point, BAM angles,
++//      texture/flat numbers resolved, pointers turned into indices        (L2)
++//   3. the BSP walk of one frame rendered from the player 1 start:
++//        - the subsector visit order                                     (L3)
++//        - every R_StoreWallRange with its computed wall state
++//        - every column the seg loop draws (tier, x, yl, yh)
++//        - the final ceilingclip[] / floorclip[] arrays
++//        - the 320x200 8bit index framebuffer
++//
++// Environment variables:
++//
++//   DG_E047_DIR     output directory. Unset -> the hook does nothing.
++//   DG_E047_WHAT    comma separated subset of "fixed,level,render" (default all)
++//   DG_E047_EP      episode (default 1)
++//   DG_E047_MAP     map (default 1)
++//   DG_E047_SKILL   skill_t 0..4 (default 2 = sk_medium)
++//
++// The view for (3) is defined as: player 1 start, angle from the map thing,
++// viewz = mo->z + VIEWHEIGHT clamped to ceilingz-4*FRACUNIT. That is exactly
++// what P_CalcHeight computes on the first tic with the player at rest
++// (bob == 0 because momx == momy == 0 and leveltime == 0), and it is set here
++// explicitly so that the Ruby side -- which has no game logic in Phase 2 --
++// can derive the same view from the WAD alone.
++//
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <stdint.h>
++#include <limits.h>
++
++#include "doomtype.h"
++#include "doomdef.h"
++#include "doomdata.h"
++#include "i_swap.h"
++#include "doomstat.h"
++#include "d_player.h"
++#include "i_system.h"
++#include "m_bbox.h"
++#include "m_fixed.h"
++#include "p_local.h"
++#include "r_defs.h"
++#include "r_sky.h"
++#include "r_state.h"
++#include "r_main.h"
++#include "r_plane.h"
++#include "tables.h"
++#include "v_video.h"
++#include "w_wad.h"
++#include "z_zone.h"
++
++void G_InitNew(skill_t skill, int episode, int map);
++void R_RenderPlayerView(player_t *player);
++void R_ExecuteSetViewSize(void);
++
++extern byte *I_VideoBuffer;
++
++// r_segs.c globals (all plain globals in vanilla, no statics)
++extern int rw_x;
++extern int rw_stopx;
++extern fixed_t rw_distance;
++extern fixed_t rw_scale;
++extern fixed_t rw_scalestep;
++extern fixed_t rw_offset;
++extern angle_t rw_normalangle;
++extern int rw_angle1;
++extern int worldtop;
++extern int worldbottom;
++extern int worldhigh;
++extern int worldlow;
++extern fixed_t topfrac;
++extern fixed_t topstep;
++extern fixed_t bottomfrac;
++extern fixed_t bottomstep;
++extern fixed_t pixhigh;
++extern fixed_t pixlow;
++extern int midtexture;
++extern int toptexture;
++extern int bottomtexture;
++extern boolean markfloor;
++extern boolean markceiling;
++extern boolean segtextured;
++
++// ---------------------------------------------------------------- tracing
++
++#define E047_MAXVISIT 4096
++#define E047_MAXWALL 4096
++#define E047_MAXCOL 65536
++
++static int s_trace = 0;
++
++static int s_visit[E047_MAXVISIT];
++static int s_nvisit = 0;
++
++typedef struct
++{
++    int seg, x1, x2;
++    fixed_t distance, scale, scalestep;
++    int worldtop, worldbottom;
++    int mid, top, bottom;
++    int markfloor, markceiling, segtextured;
++    fixed_t topfrac, topstep, bottomfrac, bottomstep;
++} e047_wall_t;
++
++static e047_wall_t s_wall[E047_MAXWALL];
++static int s_nwall = 0;
++
++typedef struct
++{
++    int tier, x, yl, yh;
++} e047_col_t;
++
++static e047_col_t s_col[E047_MAXCOL];
++static int s_ncol = 0;
++
++void DG_E047_Subsector(int num)
++{
++    if (!s_trace)
++        return;
++    if (s_nvisit >= E047_MAXVISIT)
++        I_Error("DG_E047: subsector visit overflow");
++    s_visit[s_nvisit++] = num;
++}
++
++void DG_E047_Wall(void)
++{
++    e047_wall_t *w;
++
++    if (!s_trace)
++        return;
++    if (s_nwall >= E047_MAXWALL)
++        I_Error("DG_E047: wall overflow");
++    w = &s_wall[s_nwall++];
++    w->seg = (int)(curline - segs);
++    w->x1 = rw_x;
++    w->x2 = rw_stopx - 1;
++    w->distance = rw_distance;
++    w->scale = rw_scale;
++    w->scalestep = rw_scalestep;
++    w->worldtop = worldtop;
++    w->worldbottom = worldbottom;
++    w->mid = midtexture;
++    w->top = toptexture;
++    w->bottom = bottomtexture;
++    w->markfloor = markfloor;
++    w->markceiling = markceiling;
++    w->segtextured = segtextured;
++    w->topfrac = topfrac;
++    w->topstep = topstep;
++    w->bottomfrac = bottomfrac;
++    w->bottomstep = bottomstep;
++}
++
++void DG_E047_Column(int tier, int x, int yl, int yh)
++{
++    e047_col_t *c;
++
++    if (!s_trace)
++        return;
++    if (s_ncol >= E047_MAXCOL)
++        I_Error("DG_E047: column overflow");
++    c = &s_col[s_ncol++];
++    c->tier = tier;
++    c->x = x;
++    c->yl = yl;
++    c->yh = yh;
++}
++
++// ---------------------------------------------------------------- helpers
++
++static FILE *e047_open(const char *dir, const char *name)
++{
++    char path[1024];
++    FILE *fp;
++
++    snprintf(path, sizeof(path), "%s/%s", dir, name);
++    fp = fopen(path, "wb");
++    if (fp == NULL)
++        I_Error("DG_E047: cannot write %s", path);
++    return fp;
++}
++
++static int e047_sectornum(sector_t *s)
++{
++    if (s == NULL)
++        return -1;
++    if (s < sectors || s >= sectors + numsectors)
++        return -2; // GetSectorAtNullAddress(): the "glass hack" placeholder
++    return (int)(s - sectors);
++}
++
++// ---------------------------------------------------------------- 1. fixed
++
++//
++// The input set for H2. Generated here rather than read from a file so that
++// there is exactly one authority for "which pairs were checked": the Ruby side
++// consumes columns a and b out of this very TSV and recomputes mul/div.
++//
++// Three families, in this order:
++//   1. every ordered pair from a 46 value boundary list          (46*46 = 2116)
++//   2. the FixedDiv branch boundary: for each b in the list, the a values that
++//      sit exactly on, just inside and just outside  abs(a)>>14 == abs(b)
++//   3. a deterministic xorshift64 sample of the whole 32bit x 32bit domain,
++//      plus samples biased towards small magnitudes (where the shift and the
++//      truncation actually interact)
++//
++// (INT_MIN, 0) is the one pair that is skipped: abs(INT_MIN) is negative, so
++// vanilla's guard does not fire and the division traps. It is a genuine hole in
++// the reference, not something the port can match, and it is recorded as such.
++//
++static const int32_t e047_bound[] = {
++    0, 1, -1, 2, -2, 3, -3, 7, -7,
++    255, -255, 256, -256,
++    0x3fff, -0x3fff, 0x4000, -0x4000, 0x4001, -0x4001,
++    0x7fff, -0x7fff, 0x8000, -0x8000,
++    0xffff, -0xffff, 0x10000, -0x10000, 0x10001, -0x10001,
++    0x3fffff, -0x3fffff, 0x400000, -0x400000,
++    0x3fffffff, -0x3fffffff, 0x40000000, -0x40000000,
++    0x7ffffffe, -0x7ffffffe, 0x7fffffff, -0x7fffffff,
++    INT_MIN, 41 * 65536, -41 * 65536, 168, 320, 64 * 65536};
++
++#define E047_NBOUND ((int)(sizeof(e047_bound) / sizeof(e047_bound[0])))
++
++static uint64_t e047_rngstate = 0x9e3779b97f4a7c15ULL;
++
++static uint32_t e047_rng(void)
++{
++    e047_rngstate ^= e047_rngstate << 13;
++    e047_rngstate ^= e047_rngstate >> 7;
++    e047_rngstate ^= e047_rngstate << 17;
++    return (uint32_t)(e047_rngstate >> 32);
++}
++
++static void e047_pair(FILE *fp, int32_t a, int32_t b, long *n)
++{
++    if (a == INT_MIN && b == 0)
++        return; // see the note above
++    fprintf(fp, "%d\t%d\t%d\t%d\n", a, b, FixedMul(a, b), FixedDiv(a, b));
++    (*n)++;
++}
++
++static void dump_fixed(const char *dir)
++{
++    FILE *fp = e047_open(dir, "fixed.tsv");
++    long n = 0;
++    int i, j, k;
++
++    fprintf(fp, "#a\tb\tfixedmul\tfixeddiv\n");
++
++    // family 1: boundary x boundary
++    for (i = 0; i < E047_NBOUND; i++)
++        for (j = 0; j < E047_NBOUND; j++)
++            e047_pair(fp, e047_bound[i], e047_bound[j], &n);
++
++    // family 2: the FixedDiv guard boundary  abs(a)>>14 vs abs(b)
++    for (j = 0; j < E047_NBOUND; j++)
++    {
++        int64_t b = e047_bound[j];
++        int64_t ab = b < 0 ? -b : b;
++        int64_t base = ab << 14;
++        int64_t d;
++        for (d = -2; d <= 2; d++)
++        {
++            int64_t v = base + d;
++            if (v > INT_MAX || v < 0)
++                continue;
++            e047_pair(fp, (int32_t)v, (int32_t)b, &n);
++            e047_pair(fp, (int32_t)(-v), (int32_t)b, &n);
++        }
++    }
++
++    // family 3a: uniform over the full 32bit x 32bit domain
++    for (k = 0; k < 120000; k++)
++    {
++        int32_t a = (int32_t)e047_rng();
++        int32_t b = (int32_t)e047_rng();
++        e047_pair(fp, a, b, &n);
++    }
++
++    // family 3b: biased to small magnitudes, where >>16 and the int32 cast
++    // interact (this is the range DOOM actually lives in: coordinates are
++    // +-2048<<16 and scales are 256..64*FRACUNIT)
++    for (k = 0; k < 120000; k++)
++    {
++        uint32_t r = e047_rng();
++        int sa = (r & 1) ? -1 : 1;
++        int sb = (r & 2) ? -1 : 1;
++        int wa = 1 + (int)((r >> 2) % 31);
++        int wb = 1 + (int)((r >> 8) % 31);
++        int32_t a = (int32_t)(sa * (int32_t)(e047_rng() & ((1u << wa) - 1)));
++        int32_t b = (int32_t)(sb * (int32_t)(e047_rng() & ((1u << wb) - 1)));
++        e047_pair(fp, a, b, &n);
++    }
++
++    fclose(fp);
++    fprintf(stderr, "DG_E047: wrote %ld FixedMul/FixedDiv pairs\n", n);
++}
++
++// ---------------------------------------------------------------- 2. level
++
++static int s_specials_cleared = 0;
++static char levellump[16] = "E1M1";
++
++static void dump_level(const char *dir)
++{
++    FILE *fp;
++    int i, j;
++
++    fp = e047_open(dir, "vertexes.tsv");
++    fprintf(fp, "#i\tx\ty\n");
++    for (i = 0; i < numvertexes; i++)
++        fprintf(fp, "%d\t%d\t%d\n", i, vertexes[i].x, vertexes[i].y);
++    fclose(fp);
++
++    // NOTE (E047): sector->special is *not* the map value by the time
++    // P_SetupLevel returns. P_SpawnSpecials() runs last and every
++    // P_SpawnLightFlash / P_SpawnStrobeFlash / ... sets sector->special = 0
++    // ("nothing special about it during gameplay"). The map value is what a
++    // geometry loader produces, so it is re-read here straight out of the
++    // SECTORS lump (offset 22 of the 26 byte record, R007 4.5), and how many
++    // sectors the game cleared is recorded in level.tsv.
++    {
++        int lump = W_GetNumForName(levellump) + ML_SECTORS;
++        short *sec = (short *)W_CacheLumpNum(lump, PU_STATIC);
++        s_specials_cleared = 0;
++        fp = e047_open(dir, "sectors.tsv");
++        fprintf(fp, "#i\tfloorheight\tceilingheight\tfloorpic\tceilingpic\tlightlevel\tspecial\ttag\n");
++        for (i = 0; i < numsectors; i++)
++        {
++            int mapspecial = (short)SHORT(sec[i * 13 + 11]);
++            if (mapspecial != sectors[i].special)
++                s_specials_cleared++;
++            fprintf(fp, "%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n", i,
++                    sectors[i].floorheight, sectors[i].ceilingheight,
++                    sectors[i].floorpic, sectors[i].ceilingpic,
++                    sectors[i].lightlevel, mapspecial, sectors[i].tag);
++        }
++        fclose(fp);
++        W_ReleaseLumpNum(lump);
++    }
++
++    fp = e047_open(dir, "sidedefs.tsv");
++    fprintf(fp, "#i\ttextureoffset\trowoffset\ttoptexture\tbottomtexture\tmidtexture\tsector\n");
++    for (i = 0; i < numsides; i++)
++        fprintf(fp, "%d\t%d\t%d\t%d\t%d\t%d\t%d\n", i,
++                sides[i].textureoffset, sides[i].rowoffset,
++                sides[i].toptexture, sides[i].bottomtexture, sides[i].midtexture,
++                e047_sectornum(sides[i].sector));
++    fclose(fp);
++
++    fp = e047_open(dir, "linedefs.tsv");
++    fprintf(fp, "#i\tv1\tv2\tdx\tdy\tflags\tspecial\ttag\tslopetype"
++                "\tbboxtop\tbboxbottom\tbboxleft\tbboxright"
++                "\tsidenum0\tsidenum1\tfrontsector\tbacksector\n");
++    for (i = 0; i < numlines; i++)
++        fprintf(fp, "%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n", i,
++                (int)(lines[i].v1 - vertexes), (int)(lines[i].v2 - vertexes),
++                lines[i].dx, lines[i].dy,
++                lines[i].flags, lines[i].special, lines[i].tag,
++                (int)lines[i].slopetype,
++                lines[i].bbox[BOXTOP], lines[i].bbox[BOXBOTTOM],
++                lines[i].bbox[BOXLEFT], lines[i].bbox[BOXRIGHT],
++                lines[i].sidenum[0], lines[i].sidenum[1],
++                e047_sectornum(lines[i].frontsector),
++                e047_sectornum(lines[i].backsector));
++    fclose(fp);
++
++    fp = e047_open(dir, "segs.tsv");
++    fprintf(fp, "#i\tv1\tv2\tangle\toffset\tlinedef\tside\tsidedef\tfrontsector\tbacksector\n");
++    for (i = 0; i < numsegs; i++)
++    {
++        int side = (segs[i].sidedef == &sides[segs[i].linedef->sidenum[0]]) ? 0 : 1;
++        fprintf(fp, "%d\t%d\t%d\t%u\t%d\t%d\t%d\t%d\t%d\t%d\n", i,
++                (int)(segs[i].v1 - vertexes), (int)(segs[i].v2 - vertexes),
++                (unsigned)segs[i].angle, segs[i].offset,
++                (int)(segs[i].linedef - lines), side,
++                (int)(segs[i].sidedef - sides),
++                e047_sectornum(segs[i].frontsector),
++                e047_sectornum(segs[i].backsector));
++    }
++    fclose(fp);
++
++    fp = e047_open(dir, "ssectors.tsv");
++    fprintf(fp, "#i\tnumlines\tfirstline\tsector\n");
++    for (i = 0; i < numsubsectors; i++)
++        fprintf(fp, "%d\t%d\t%d\t%d\n", i,
++                subsectors[i].numlines, subsectors[i].firstline,
++                e047_sectornum(subsectors[i].sector));
++    fclose(fp);
++
++    fp = e047_open(dir, "nodes.tsv");
++    fprintf(fp, "#i\tx\ty\tdx\tdy"
++                "\tbb0top\tbb0bottom\tbb0left\tbb0right"
++                "\tbb1top\tbb1bottom\tbb1left\tbb1right"
++                "\tchild0\tchild1\n");
++    for (i = 0; i < numnodes; i++)
++    {
++        fprintf(fp, "%d\t%d\t%d\t%d\t%d", i,
++                nodes[i].x, nodes[i].y, nodes[i].dx, nodes[i].dy);
++        for (j = 0; j < 2; j++)
++            fprintf(fp, "\t%d\t%d\t%d\t%d",
++                    nodes[i].bbox[j][BOXTOP], nodes[i].bbox[j][BOXBOTTOM],
++                    nodes[i].bbox[j][BOXLEFT], nodes[i].bbox[j][BOXRIGHT]);
++        fprintf(fp, "\t%d\t%d\n",
++                (int)(unsigned short)nodes[i].children[0],
++                (int)(unsigned short)nodes[i].children[1]);
++    }
++    fclose(fp);
++
++    fp = e047_open(dir, "level.tsv");
++    fprintf(fp, "#key\tvalue\n");
++    fprintf(fp, "numvertexes\t%d\n", numvertexes);
++    fprintf(fp, "numsectors\t%d\n", numsectors);
++    fprintf(fp, "numsides\t%d\n", numsides);
++    fprintf(fp, "numlines\t%d\n", numlines);
++    fprintf(fp, "numsegs\t%d\n", numsegs);
++    fprintf(fp, "numsubsectors\t%d\n", numsubsectors);
++    fprintf(fp, "numnodes\t%d\n", numnodes);
++    fprintf(fp, "skyflatnum\t%d\n", skyflatnum);
++    fprintf(fp, "skytexture\t%d\n", skytexture);
++    fprintf(fp, "#specials_cleared_by_P_SpawnSpecials\t%d\n", s_specials_cleared);
++    fclose(fp);
++
++    fprintf(stderr, "DG_E047: wrote level dumps (%d segs, %d nodes)\n",
++            numsegs, numnodes);
++}
++
++// ---------------------------------------------------------------- 3. render
++
++static void dump_render(const char *dir)
++{
++    player_t *p = &players[consoleplayer];
++    FILE *fp;
++    int i;
++
++    if (p->mo == NULL)
++        I_Error("DG_E047: no player mobj");
++
++    // I_InitGraphics() and the first D_Display() normally do these two; the
++    // hook runs before D_DoomLoop(), so neither has happened yet.
++    if (I_VideoBuffer == NULL)
++        I_VideoBuffer = (byte *)Z_Malloc(SCREENWIDTH * SCREENHEIGHT, PU_STATIC, NULL);
++    memset(I_VideoBuffer, 0, SCREENWIDTH * SCREENHEIGHT);
++    R_ExecuteSetViewSize();
++
++    // See the file header: the resting first-tic view, set explicitly.
++    p->viewheight = VIEWHEIGHT;
++    p->viewz = p->mo->z + VIEWHEIGHT;
++    if (p->viewz > p->mo->ceilingz - 4 * FRACUNIT)
++        p->viewz = p->mo->ceilingz - 4 * FRACUNIT;
++
++    fp = e047_open(dir, "view.tsv");
++    fprintf(fp, "#key\tvalue\n");
++    fprintf(fp, "viewx\t%d\n", p->mo->x);
++    fprintf(fp, "viewy\t%d\n", p->mo->y);
++    fprintf(fp, "viewz\t%d\n", p->viewz);
++    fprintf(fp, "viewangle\t%u\n", (unsigned)p->mo->angle);
++    fprintf(fp, "mobjz\t%d\n", p->mo->z);
++    fprintf(fp, "floorz\t%d\n", p->mo->floorz);
++    fprintf(fp, "ceilingz\t%d\n", p->mo->ceilingz);
++    fprintf(fp, "viewwidth\t%d\n", viewwidth);
++    fprintf(fp, "viewheight\t%d\n", viewheight);
++    fprintf(fp, "centerx\t%d\n", centerx);
++    fprintf(fp, "centery\t%d\n", centery);
++    fprintf(fp, "centerxfrac\t%d\n", centerxfrac);
++    fprintf(fp, "centeryfrac\t%d\n", centeryfrac);
++    fprintf(fp, "projection\t%d\n", projection);
++    fprintf(fp, "clipangle\t%u\n", (unsigned)clipangle);
++    fprintf(fp, "viewwindowx\t%d\n", viewwindowx);
++    fprintf(fp, "viewwindowy\t%d\n", viewwindowy);
++    fprintf(fp, "extralight\t%d\n", p->extralight);
++    fprintf(fp, "fixedcolormap\t%d\n", p->fixedcolormap);
++    fclose(fp);
++
++    // viewangletox / xtoviewangle are derived tables; dumping them makes a
++    // divergence in R_InitTextureMapping visible one layer before the walk.
++    fp = e047_open(dir, "viewangletox.tsv");
++    fprintf(fp, "#i\tt\n");
++    for (i = 0; i < FINEANGLES / 2; i++)
++        fprintf(fp, "%d\t%d\n", i, viewangletox[i]);
++    fclose(fp);
++
++    fp = e047_open(dir, "xtoviewangle.tsv");
++    fprintf(fp, "#x\tangle\n");
++    for (i = 0; i <= viewwidth; i++)
++        fprintf(fp, "%d\t%u\n", i, (unsigned)xtoviewangle[i]);
++    fclose(fp);
++
++    s_trace = 1;
++    s_nvisit = s_nwall = s_ncol = 0;
++    R_RenderPlayerView(p);
++    s_trace = 0;
++
++    fp = e047_open(dir, "bsp_visit.tsv");
++    fprintf(fp, "#order\tsubsector\n");
++    for (i = 0; i < s_nvisit; i++)
++        fprintf(fp, "%d\t%d\n", i, s_visit[i]);
++    fclose(fp);
++
++    fp = e047_open(dir, "walls.tsv");
++    fprintf(fp, "#order\tseg\tx1\tx2\tdistance\tscale\tscalestep\tworldtop\tworldbottom"
++                "\tmidtexture\ttoptexture\tbottomtexture\tmarkfloor\tmarkceiling\tsegtextured"
++                "\ttopfrac\ttopstep\tbottomfrac\tbottomstep\n");
++    for (i = 0; i < s_nwall; i++)
++    {
++        e047_wall_t *w = &s_wall[i];
++        fprintf(fp, "%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n",
++                i, w->seg, w->x1, w->x2, w->distance, w->scale, w->scalestep,
++                w->worldtop, w->worldbottom, w->mid, w->top, w->bottom,
++                w->markfloor, w->markceiling, w->segtextured,
++                w->topfrac, w->topstep, w->bottomfrac, w->bottomstep);
++    }
++    fclose(fp);
++
++    fp = e047_open(dir, "columns.tsv");
++    fprintf(fp, "#order\ttier\tx\tyl\tyh\n");
++    for (i = 0; i < s_ncol; i++)
++        fprintf(fp, "%d\t%d\t%d\t%d\t%d\n", i,
++                s_col[i].tier, s_col[i].x, s_col[i].yl, s_col[i].yh);
++    fclose(fp);
++
++    fp = e047_open(dir, "clip.tsv");
++    fprintf(fp, "#x\tceilingclip\tfloorclip\n");
++    for (i = 0; i < viewwidth; i++)
++        fprintf(fp, "%d\t%d\t%d\n", i, ceilingclip[i], floorclip[i]);
++    fclose(fp);
++
++    fp = e047_open(dir, "frame.bin");
++    fwrite(I_VideoBuffer, 1, SCREENWIDTH * SCREENHEIGHT, fp);
++    fclose(fp);
++
++    fprintf(stderr, "DG_E047: rendered 1 frame: %d subsectors, %d walls, %d columns\n",
++            s_nvisit, s_nwall, s_ncol);
++}
++
++// ---------------------------------------------------------------- entry
++
++static int e047_want(const char *what, const char *name)
++{
++    return what == NULL || what[0] == '\0' || strstr(what, name) != NULL;
++}
++
++//
++// Called from D_DoomMain() immediately before D_DoomLoop(), i.e. with R_Init()
++// and P_Init() done but no level loaded and no tic run. Exits when done.
++//
++void DG_E047Hook(void)
++{
++    const char *dir = getenv("DG_E047_DIR");
++    const char *what = getenv("DG_E047_WHAT");
++    const char *ep = getenv("DG_E047_EP");
++    const char *map = getenv("DG_E047_MAP");
++    const char *skill = getenv("DG_E047_SKILL");
++
++    if (dir == NULL || dir[0] == '\0')
++        return;
++
++    if (e047_want(what, "fixed"))
++        dump_fixed(dir);
++
++    if (e047_want(what, "level") || e047_want(what, "render"))
++    {
++        snprintf(levellump, sizeof(levellump), "E%dM%d",
++                 ep == NULL ? 1 : atoi(ep), map == NULL ? 1 : atoi(map));
++        G_InitNew(skill == NULL ? sk_medium : (skill_t)atoi(skill),
++                  ep == NULL ? 1 : atoi(ep),
++                  map == NULL ? 1 : atoi(map));
++
++        // Order matters: R_StoreWallRange sets ML_MAPPED on every linedef it
++        // draws, so the geometry has to be dumped before anything is rendered.
++        if (e047_want(what, "level"))
++            dump_level(dir);
++        if (e047_want(what, "render"))
++            dump_render(dir);
++    }
++
++    exit(0);
++}

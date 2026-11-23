@@ -1,0 +1,24 @@
+# Controls. Each row changes ONE point of ONE extracted source, and both
+# comparisons must then fail:
+#
+#   ruby    scene.rb must stop refusing to agree -- the extraction no longer
+#           reproduces the original Full executor's screen.
+#   kernel  the CORE object built from the mutated source must no longer
+#           reproduce the screen the original produced.
+#
+# A control that passed would mean the comparison cannot see that part of the
+# computation, which is the only way a byte-for-byte check can be vacuous. The
+# lane also asserts that each row changes exactly one occurrence and exactly
+# one line, so a row cannot quietly break more than it claims.
+#
+#id	file	old	new	what it would hide
+fuzz-neighbour	draw_fuzz.rb	scr[o + fuzzoffset[fp] * width]	scr[o]	fuzz reading its own pixel instead of the neighbouring row
+fuzz-wrap	draw_fuzz.rb	FUZZ_N = 50	FUZZ_N = 49	the fuzz phase wrapping at the wrong point
+wall-step	draw_wall.rb	frac = (frac + fracstep) & M32	frac = (frac + 0) & M32	the column not stepping through the texture
+wall-origin	draw_wall.rb	o = (yl + viewwindowy) * width + x + viewwindowx	o = (yl + viewwindowy) * width + x	drawing the column in the wrong place
+span-spot	draw_span.rb	spot = (pos >> 26) | ((pos >> 4) & 0x0fc0)	spot = (pos >> 26)	the packed position losing half its address
+span-srcofs	draw_span.rb	flat[srcofs + spot]	flat[spot]	the span reading the wrong flat
+span-count	draw_span.rb	count = x2 - x1	count = x2 - x1 - 1	the span drawing one pixel short
+span-advance	draw_span.rb	o += 1	o += 2	the span skipping every other pixel
+wall-count	draw_wall.rb	count = yh - yl	count = yh - yl - 1	the column drawing one pixel short
+fuzz-count	draw_fuzz.rb	count = yh - yl	count = yh - yl - 1	the fuzz column drawing one pixel short

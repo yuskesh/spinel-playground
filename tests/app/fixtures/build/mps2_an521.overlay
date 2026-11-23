@@ -1,0 +1,74 @@
+#include <zephyr/dt-bindings/adc/adc.h>
+/* The board overlay of the acceptance sample on mps2/an521 under QEMU
+ * (decision 0014, Validation): the board has no ADC, and its buttons are
+ * FPGA registers the stimulus cannot drive, so the two Zephyr emulators
+ * stand in -- Button through gpio-emul, Adc through adc-emul -- and the
+ * board's own gpio-keys are disabled so that Button has the emulated
+ * instances alone. The LEDs stay the board's. */
+/ {
+	spinel_adc_emul: adc-emul {
+		compatible = "zephyr,adc-emul";
+		nchannels = <2>;
+		ref-internal-mv = <3300>;
+		#io-channel-cells = <1>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+		status = "okay";
+		/* ADC_DT_SPEC reads each channel's gain, reference and resolution
+		 * from the controller's channel@N child (the shape of Zephyr's own
+		 * tests/drivers/adc/adc_api native_sim overlay); without them the
+		 * emulator's channel_setup refuses the zeroed configuration */
+		channel@0 {
+			reg = <0>;
+			zephyr,gain = "ADC_GAIN_1";
+			zephyr,reference = "ADC_REF_INTERNAL";
+			zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+			zephyr,resolution = <10>;
+		};
+		channel@1 {
+			reg = <1>;
+			zephyr,gain = "ADC_GAIN_1";
+			zephyr,reference = "ADC_REF_INTERNAL";
+			zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+			zephyr,resolution = <10>;
+		};
+	};
+
+	spinel_gpio_emul: gpio-emul {
+		compatible = "zephyr,gpio-emul";
+		rising-edge;
+		falling-edge;
+		gpio-controller;
+		#gpio-cells = <2>;
+		ngpios = <8>;
+		status = "okay";
+	};
+
+	zephyr,user {
+		io-channels = <&spinel_adc_emul 0>, <&spinel_adc_emul 1>;
+		io-channel-names = "ch0", "ch1";
+	};
+
+	spinel_keys {
+		compatible = "gpio-keys";
+		spinel_button_0: button_0 {
+			gpios = <&spinel_gpio_emul 0 0>;
+			label = "SPINEL SW0";
+		};
+		spinel_button_1: button_1 {
+			gpios = <&spinel_gpio_emul 1 0>;
+			label = "SPINEL SW1";
+		};
+	};
+};
+
+&{/gpio_keys} {
+	status = "disabled";
+};
+
+/ {
+	aliases {
+		sw0 = &spinel_button_0;
+		sw1 = &spinel_button_1;
+	};
+};

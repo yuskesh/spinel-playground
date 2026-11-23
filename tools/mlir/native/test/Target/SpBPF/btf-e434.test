@@ -1,0 +1,22 @@
+# Emit ELF from the real predecessor contract and check declared record layout reaches BTF.
+#
+# Earlier manual Go readers silently shifted twenty-nine of sixty-four fields. Passing here shows
+# schema layout reaches BTF mechanically.
+#
+# REQUIRES: bpftool
+# RUN: spbpf-compile %S/Inputs/e434prog.mlir --schema %S/e434-converted.json -o %t.bpf.o
+# RUN: bpftool btf dump file %t.bpf.o format raw | FileCheck %s
+
+# dns_event has 128 bytes and seven fields; offsets come directly from the declaration.
+# CHECK: STRUCT 'dns_event' size=128 vlen=7
+# CHECK-NEXT: 'hdr' type_id={{[0-9]+}} bits_offset=0
+# CHECK-NEXT: 'pid' type_id={{[0-9]+}} bits_offset=128
+# CHECK-NEXT: 'comm' type_id={{[0-9]+}} bits_offset=160
+# CHECK-NEXT: 'raw' type_id={{[0-9]+}} bits_offset=288
+# CHECK-NEXT: 'cgid' type_id={{[0-9]+}} bits_offset=832
+# CHECK-NEXT: 'duration_ns' type_id={{[0-9]+}} bits_offset=896
+# CHECK-NEXT: 'raw_status' type_id={{[0-9]+}} bits_offset=960
+
+# char[16]/unsigned char[64] must appear as arrays, carrying schema type extensions into BTF.
+# CHECK: INT 'u8' size=1 {{.*}} encoding=(none)
+# CHECK-NEXT: ARRAY '(anon)' type_id={{[0-9]+}} index_type_id={{[0-9]+}} nr_elems=64

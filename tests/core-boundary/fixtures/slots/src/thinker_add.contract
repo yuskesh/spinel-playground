@@ -1,0 +1,16 @@
+core-contract 1
+root src/thinker_add.rb
+entry thinker_add
+result i64
+param func scalar i64
+param data scalar i64
+param th_func buffer i32 inout count n_func
+param n_func scalar u64
+param th_data buffer i32 inout count n_data
+param n_data scalar u64
+param th_next buffer i32 inout count n_next
+param n_next scalar u64
+param th_prev buffer i32 inout count n_prev
+param n_prev scalar u64
+param state buffer i32 inout count n_state
+param n_state scalar u64

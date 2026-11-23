@@ -1,0 +1,7 @@
+{"format": "spinel-provider-evidence", "version": 1,
+ "symbol": "spc_board_adc_latest", "object": {"file": "spc_board_adc_latest.o", "sha256": "c726b89dcee0062c07ba460ebc740ebf4ed40dc0a50d23f664b2ea9ff72ab073"},
+ "target": "HOSTTARGET", "board": "mps2/an521/cpu0",
+ "zephyr_release": "v4.4.2", "dts_sha256": "fc5c0ee20342b5b15494242d5da8076a24db6bd80b2cc1c27b67f1c7493e2fa9", "config_sha256": "b79606fb3afea5bd1609ed40b622142f1c98125abcfe89a76a661b0e8e343910", "flags_sha256": "2934fb49d6b38adef036c28fac69f188feae09259f3184e6d9cfbd0f35454fec",
+ "stack": {"bytes": 24, "method": "0010 step 2 frame sizes over the object's final IR"},
+ "effects": {"isr_ok": true, "blocking": false, "row": "effects.tsv:2"},
+ "provenance": "attested"}

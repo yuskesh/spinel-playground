@@ -1,0 +1,3 @@
+horizon_us 25000
+drain_us 1000
+expect_failure tick 2 3

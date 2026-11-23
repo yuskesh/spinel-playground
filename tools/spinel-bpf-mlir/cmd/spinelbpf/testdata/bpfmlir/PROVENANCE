@@ -1,0 +1,14 @@
+# E161 追補 2: bpf-mlir の試験の入力の写し (cmd/spinelbpf の警告の試験 — e013 の idxInput・e019 の m1fitInput が読む)
+#
+# 出どころ: bpf-mlir v1.20.0 (commit d3e13842326f4dd2006b2f5528a3c9b6f409caf7、https://github.com/yuskesh/bpf-mlir) の
+# commit の tree の file — Copyright (c) 2026 Yusuke Shinozaki、Apache-2.0 WITH LLVM-exception (bpf-mlir の LICENSE・NOTICE)。
+# 写しは中身を変えていない。v1.20.0 の source release (archive) には kernel/ と test/Target/EBPF/Inputs/m1fit/ が入らないので、
+# 公開の形 (third_party/bpf-mlir = source release) でも読めるようここに置く。
+# 注: 同じ blob が開発の pin の commit ab0db4b40 にも在る。開発の形の TestBPFMLIRInputCopies (form_dev_test.go) が
+# submodule の HEAD の file との byte の一致を見る。
+#
+# 写しの path	bpf-mlir の path	git の blob
+m1fit_c5_end/a_two_c5_end.mlir	test/Target/EBPF/Inputs/m1fit/c5_end/a_two_c5_end.mlir	a529ba47bcf8b6e9349215691b74d9041e3420d0
+m1fit_c5_end/schema.json	test/Target/EBPF/Inputs/m1fit/c5_end/schema.json	b40f8cabb35dc310bce68749759874d9a16b1bd1
+nonroot_idx/idx_const.mlir	kernel/nonroot/idx/idx_const.mlir	2aad7a25d84e98a0ff992085a4444c5397984220
+nonroot_idx/schema.json	kernel/nonroot/idx/schema.json	1b6e932fe5ae4f8437170e0bf5aee22c18d22c83

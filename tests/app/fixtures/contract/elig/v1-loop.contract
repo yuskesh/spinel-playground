@@ -1,0 +1,7 @@
+core-contract 1
+root v1-loop.rb
+entry lb_ne
+result i64
+param cnt buffer i64 inout count n_cnt
+param n_cnt scalar u64
+param n scalar i64

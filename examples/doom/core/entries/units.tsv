@@ -1,0 +1,57 @@
+# examples/doom/core/entries/units.tsv — the units the three entries are packed from.
+#
+# sources.tsv's units, in its order, less four: `thinkers.rb`, `bspwalk.rb`
+# and `random.rb` (decision 0007's extractions, which other lanes compile) and
+# `rvgpu.rb` (the GPU refusal's executor run, which no entry calls). The
+# kernel refuses an entry when a definition outside its closure calls into it,
+# and each of those calls into the step or render closure (`bspwalk.rb`'s
+# `dc_point_on_side` calls `fixed_to_i32`; `rvgpu.rb` calls `dc_rv_run_jobs`).
+# Two columns, path and sha256, as sources.tsv; tools/doom/pack-core.rb checks
+# each digest. EVERY UNIT OF sources.tsv IS EITHER HERE, in sources.tsv's order
+# and with its digest, OR on an `#excluded` line with its reason;
+# tests/doom-core/entry-fields.rb refuses anything else, so a unit added to
+# sources.tsv and not considered here fails rather than being left out.
+#
+#excluded	thinkers.rb	decision 0007's extraction; calls into no entry, and no entry needs it
+#excluded	bspwalk.rb	decision 0007's extraction; dc_point_on_side and dc_sight_side call fixed_to_i32, inside the step closure
+#excluded	random.rb	decision 0007's extraction; the step entry draws through dc_st_p_random and dc_st_m_random
+#excluded	rvgpu.rb	the GPU refusal's executor run, which no entry calls; it calls dc_rv_run_jobs, inside the render closure
+#
+# EACH ENTRY IS PACKED ON ITS OWN (decision 0022 §2.6), at the Integer width
+# its `#width` line gives: `int64`, or `target` once its units compute at the
+# target's 32 bits. tools/doom/pack-core.rb --entry NAME reads it; an entry not
+# yet moved stays int64 whatever the units it shares declare.
+#
+#width	doom_core_input	target
+#width	doom_core_step	target
+#width	doom_core_render	target
+#
+# AN ENTRY AT THE TARGET WIDTH IS PACKED FROM ITS OWN UNITS: its `#units` line
+# names them. A 32-bit body refuses every top-level constant past 32 bits in its
+# file, closure or not, and the units it does not reach carry such tables.
+#units	doom_core_input	inputport.rb,doomentry.rb
+#
+#path	sha256
+fixed.rb	de01ccc38fc45e9504f6148bdfb323c3d8301663f8f65457656c3308708e5a9d
+source.rb	796f4fba9d28920d63601ee81346a5e2b498eb9e7a9b2b800e962521cfdc3da6
+zone.rb	1bf33c2177e488a09ed386f5fcf88125dc06c699c8982ab3600593b4e43b22b7
+executor.rb	cae9060eeb54c7796bd9353b918c491759948105f57ca1e38659473dff7db129
+jobs.rb	d80b9453895bcc0e5e711a3f3502465cdb948e24544b7f415f75cb51e2bfda91
+checks.rb	ccf251b8310b97e5a684c922287137e63467b5a77b2493389a568e41e3f23f1c
+planespan.rb	fc19b103f6b7ef96265d10b085b4227dd86333731bed22d2d36ad04124fbdf66
+planes.rb	de2e189d0a884dfd5c0a1f721d96178cc162a9fda010cf8b6c1bbbbbcb92f452
+statusbar.rb	a3e2d77b400d8d554a35b4cab74773cbb9d6f37723fdff649799a4c498fbb0d4
+hud.rb	0b809cedadeab130024bd2afc424f63c5b1a612ccdd54140821fa88656a730d8
+leaves.rb	11e38d4eae3bab5a05f8bae798e3609619a2ed73d9d8a88356777392569722da
+segs.rb	45dd4d59bd2046e570f0f7a805614c9312201ad2d0cbc1d89b49e5afcd738d7b
+stepcore.rb	0fea3b3866fca28e1280ba2d13084557d4f39632cca0aadd2c17edf58490a9cb
+stepwork.rb	86ecf4900bea28449804be762d0f34c2cb82c5fd9d33923d8eb2fd88fc3a00db
+stepmap.rb	423f9a2b0e280ff6c318e26a715722ae1dc6603d2f8715420ed455a4d5614b9f
+stepspec.rb	a4808bad43b37d7239e1b4363fbb9bc75b003659af2b802b84f2731e96001608
+stepaux.rb	5077892e9f283feeccbd81af21268c32a56251e43dff732880c5927144677f4d
+stepknot.rb	9c034d22f1b6c891663440736a5a345bb2a369f5af43795f626f71fcf47d93ce
+stepplay.rb	1f2d94f6c458c018173464b4a855584c7f1cbc6148b742991f19ee7996103dfe
+rvcopies.rb	fade4d978817de5e3ebe8a785b68d618fe33ce6268df03be0588bc8e633df072
+rview.rb	d13f6215bf603318e44dcde21adfac8498d7f5ae49670e8b0449ce14eaa81e49
+inputport.rb	66fd92b3b9ee35e633d9553a9bd9988be8752d6ae2f39646e50871b4c385c33b
+doomentry.rb	e2947b8a398455e548089e722e5686a5de4c310ebc2584f05cab3a8e93e69f9d

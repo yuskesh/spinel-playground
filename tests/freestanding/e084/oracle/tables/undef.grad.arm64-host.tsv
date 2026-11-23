@@ -1,0 +1,2 @@
+verdict	object	symbol	reason
+ALLOW	grad.arm64-host.o	_spinel_trap	platform extern declared by the profile

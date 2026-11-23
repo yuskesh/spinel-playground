@@ -1,0 +1,2 @@
+function	source	note
+none	hw:0	Adc.latest is one atomic_get in tools/app/adapters/adc/adapter.c; no Zephyr call

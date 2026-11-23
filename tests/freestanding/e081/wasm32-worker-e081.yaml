@@ -1,0 +1,64 @@
+# E081 (P003 Phase 4): the shipped wasm32-worker.yaml plus the same callable
+# extern surface as the two Zephyr profiles -- the "platform extern" mechanism
+# is NOT Zephyr-specific, and this file is the proof by instance: the same
+# kernel, the same extern declarations, and layer 3 is a JS host instead of a
+# C wrapper.  Every extern becomes a wasm IMPORT (`env.<symbol>`), which the
+# module's import section then names -- the wasm spelling of "a freestanding
+# object may only import what the profile allows" (E063 s4), now with seven
+# more names in the allowance.
+#
+# `symbol:` is EXPLICIT here, twice over: (a) platform.type is `none`, so there
+# is no platform namespace to default into (the generator refuses to invent
+# one); (b) the symbols are spelled identically to the Zephyr profiles so that
+# ONE kernel object surface exists across all four legs of the differential --
+# which is itself the point being measured.
+
+target:
+  triple: wasm32-wasip1
+  cpu:
+  data_layout: "e-m:e-p:32:32-p10:8:8-p20:8:8-i64:64-i128:128-n32:64-S128-ni:1:10:20"
+  cflags:
+    - -Os
+
+abi:
+  boundary: c-abi
+  int_width: i32-internal
+  overflow: trap
+  trap_hook: spinel_trap
+
+runtime:
+  libc: none
+  libm: none
+  compiler_rt: allow
+
+platform:
+  type: none                  # the JS host links and supplies the platform API
+  externs:
+    - name: uptime_ms
+      symbol: spinel_zephyr_uptime_ms
+      params: []
+      returns: i64
+    - name: sleep_ms
+      symbol: spinel_zephyr_sleep_ms
+      params: [i32]
+      returns: i32
+    - name: print_i64
+      symbol: spinel_zephyr_print_i64
+      params: [i64]
+      returns: i32
+    - name: gpio_set
+      symbol: spinel_zephyr_gpio_set
+      params: [i32, i32]
+      returns: i32
+    - name: gpio_get
+      symbol: spinel_zephyr_gpio_get
+      params: [i32]
+      returns: i32
+    - name: sense_scale
+      symbol: spinel_zephyr_sense_scale
+      params: [f32, f64]
+      returns: f64
+    - name: checksum32
+      symbol: spinel_zephyr_checksum32
+      params: [u32]
+      returns: u32

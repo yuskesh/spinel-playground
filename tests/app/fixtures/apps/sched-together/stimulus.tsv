@@ -1,0 +1,5 @@
+# two entries due together: a's every release costs 400 us and ends before
+# b's next release, so b records no skip at all.
+horizon_us 5000
+drain_us 1000
+cost a * 400

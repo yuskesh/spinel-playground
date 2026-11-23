@@ -1,0 +1,79 @@
+# tools/app/lib/core_app/trace_schema.tsv -- the one trace schema of decision
+# 0014 (plan, "Trace"). Three row forms:
+#   <kind_id>	<kind>	<field>	<type>[	<length field>]   one field of a record kind, in order
+#   code	<kind>	<field>	<name>	<value>                 a code of an enumerated u8 field
+#   limit	<what>	<value>                               a decoder limit
+# Types are exactly u8 u16 u32 u64 i32 i64 bytes args, little-endian. `bytes`
+# is a u32 length then the bytes, and decodes to two fields: the length under
+# the fifth column's name and the bytes under the field's name. `args` is a u8
+# count then tagged values: tag 0 a scalar i64, tag 1 a buffer as `bytes`; it
+# decodes to `argc` and `args` (the text form: scalars as decimal, buffers as
+# x<hex>, comma-separated). Every record has the common header
+#   u32 magic "SPTR"; u16 schema_version; u16 kind; u32 body_len; u32 seq; u8 context; u8 entry; u16 pad
+# and body_len is exactly the bytes of the fields below. The C recorder
+# header (recorder.h) is generated from this file; the Ruby decoder reads it;
+# tests/app/fixtures/trace/ holds one byte fixture per kind.
+0	HEADER	epoch	u64
+0	HEADER	clock_hz	u32
+0	HEADER	horizon	u64
+0	HEADER	drain	u64
+0	HEADER	contexts	u8
+0	HEADER	entries	u8
+0	HEADER	states	u8
+0	HEADER	channels	u8
+1	SELECT	clock	u64
+1	SELECT	release	u32
+1	SELECT	skipped_from	u32
+1	SELECT	skipped_to	u32
+2	START	release	u32
+3	END	release	u32
+4	LOAD	state	u8
+4	LOAD	index	u32
+4	LOAD	value	i64
+5	STORE	state	u8
+5	STORE	index	u32
+5	STORE	value	i64
+6	XCALL	extern	u16
+6	XCALL	args	args
+7	XRET	extern	u16
+7	XRET	value	i64
+8	ENQ	channel	u8
+8	ENQ	msg_id	u32
+8	ENQ	result	u8
+8	ENQ	payload	bytes	length
+9	DEQ	channel	u8
+9	DEQ	msg_id	u32
+9	DEQ	result	u8
+9	DEQ	payload	bytes	length
+10	RX	channel	u8
+10	RX	stimulus_id	u32
+10	RX	length	u32
+11	TX	channel	u8
+11	TX	msg_id	u32
+12	DROP	channel	u8
+12	DROP	stimulus_id	u32
+12	DROP	reason	u8
+13	STATUS	status	i32
+14	FAIL	status	i32
+14	FAIL	release	u32
+15	CANCEL	entry	u8
+15	CANCEL	from	u32
+15	CANCEL	to	u32
+15	CANCEL	fail_seq	u32
+16	CUT	entry	u8
+16	CUT	from	u32
+16	CUT	to	u32
+17	PRIVATE	state	u8
+17	PRIVATE	payload	bytes	bytes
+18	OVERFLOW	context	u8
+19	ENDMARK	quiescent	u8
+19	ENDMARK	drained	u8
+code	ENQ	result	queued	0
+code	ENQ	result	full	1
+code	DEQ	result	dequeued	0
+code	DEQ	result	empty	1
+code	DROP	reason	oversize	1
+code	DROP	reason	channel_full	2
+limit	schema_version	1
+limit	body_len	4096
+limit	args	16

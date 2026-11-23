@@ -1,0 +1,30 @@
+core-contract 1
+root src/packed.rb
+entry dc_sp_fplane
+result i64
+param state buffer i64 inout count n_state
+param n_state scalar u64
+param pl_height buffer i32 inout count n_pl_height
+param n_pl_height scalar u64
+param pl_picnum buffer u8 inout count n_pl_picnum
+param n_pl_picnum scalar u64
+param pl_lightlevel buffer u8 inout count n_pl_lightlevel
+param n_pl_lightlevel scalar u64
+param pl_minx buffer u16 inout count n_pl_minx
+param n_pl_minx scalar u64
+param pl_maxx buffer i16 inout count n_pl_maxx
+param n_pl_maxx scalar u64
+param pl_top buffer u16 inout count n_pl_top
+param n_pl_top scalar u64
+param skyflatnum buffer u8 in count n_skyflatnum
+param n_skyflatnum scalar u64
+param sw buffer u16 in count n_sw
+param n_sw scalar u64
+param plw buffer u16 in count n_plw
+param n_plw scalar u64
+param plempty buffer u8 in count n_plempty
+param n_plempty scalar u64
+param i_lastvisplane scalar i64
+param height scalar i64
+param picnum scalar i64
+param lightlevel scalar i64

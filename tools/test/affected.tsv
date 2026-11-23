@@ -1,0 +1,285 @@
+# tools/test/affected.tsv -- which tests a changed file reaches.
+#
+# COLUMNS
+#   glob    a path from the repository root, matched with File.fnmatch
+#           (FNM_PATHNAME and FNM_EXTGLOB: `*` stays in one directory, `**/`
+#           crosses them; a trailing `/**` is everything under the directory,
+#           at any depth). THE FIRST ROW THAT MATCHES APPLIES, so a specific
+#           row comes before the general one it narrows
+#   tests   ids of tools/test/tests.tsv, comma-separated, or `@core-src`: the
+#           file is CORE source, and affected.rb finds the definitions the
+#           change touches and the entries that reach them
+#   reason  why a change here reaches those tests
+#
+# A changed file no row matches is UNMAPPED: affected.rb lists it and exits 1,
+# so a file this table does not know is never read as needing no test.
+# vendor/spinel's row selects every suite but the export tool's two, because
+# the pin is the compiler under all of them; a vendor change stays the owner's.
+#
+#glob	tests	reason
+third_party/spinel-mlir/**	imports	verbatim copies of spinel-mlir's spinel_facts contract and patch ledger (docs/provenance.md, Patch 2 and the consumer): nothing reads them, and the import register lists them
+examples/doom/core/src/*.rb	@core-src	CORE source packed into the entries
+examples/doom/core/sources.tsv	doom-source-pack,doom-entries,doom-board	the packing manifest and its digests
+examples/doom/core/entries/**	doom-entries,doom-source-pack,doom-board	the entries' contracts, units and field maps
+examples/doom/core/*.tsv	doom-entries,doom-state,doom-board	the manifests the entries and the schema are generated from
+examples/doom/core/README.md	doom-source-pack	source-pack.sh holds the README to the units
+examples/doom/core/NOTICE.md	doom-source-pack	source-pack.sh holds the NOTICE to the units
+examples/doom/core/knot/**	doom-source-pack,doom-board	the knot's generated source
+examples/doom/core/board/frame_digests.c	doom-board,doom-profile,doom-rt1186-profile,doom-net-viewer	the board's frame digests: the board lanes build it, and net-viewer.sh compiles it for the host to check the viewer's digests against
+examples/doom/core/board/play.rb	doom-play-board	decision 0025's play application: rt1186-play.sh runs tests/app/play.sh and builds it
+examples/doom/core/board/**	doom-board,doom-profile,doom-rt1186-profile,doom-play-board,doom-pair-controls	the board application and its profile and play variants: rt1186.sh, profile.sh (on the host), rt1186-profile.sh, rt1186-play.sh and rt1186-pair-controls.sh build them
+examples/doom/core/full/**	doom-state,doom-audit	Full's session side: state.sh's subject, and the audit counts its definitions
+examples/doom/lib/doom/video.rb	doom-audit,doom-state,doom-net-view	Full's library, and the SDL2 interface examples/doom/net_view shows the board's frames through
+examples/doom/native/sp_sdl_shim.c	doom-sources,doom-net-view	the SDL2 shim: its digest is in tests/doom/manifest.tsv, and net-view.sh links it into the viewer
+examples/doom/net_view/**	doom-net-view	decision 0024's SDL2 viewer of the board's frames
+examples/doom/lib/**	doom-audit,doom-state	Full's library: the audit's closure, and the session's fields
+examples/README.md	docs-check	the index of the examples
+examples/ghostty-terminal/**	ghostty-terminal	the example the suite builds and draws
+tests/ghostty-terminal/**	ghostty-terminal	the suite, its --link fixture and its pixel checks
+tools/shader/**	shader,ghostty-terminal,compute	the generator, its comparison tools, the draw harness and the subjects tests/shader/run.sh builds and draws
+tests/shader/**	shader	the shader lane's own suite and its scene and image checkers
+tests/compute/**	compute	the compute route's suite, kernels, hosts and refusal cases
+examples/doom/build.sh	raster,doom-native	DOOM's build script: tests/raster/run.sh builds DOOM through it with RASTER_GPU=1, and doom-native (excluded) runs on its build
+examples/doom/bin/**	doom-audit	Full's entry point, the audit's root file
+examples/{tensor,image}/**	tensor	the tensor and image examples, which tests/tensor/run.sh builds and runs
+tools/doom/audit-core.rb	doom-audit	the audit itself
+tools/doom/pack-core.rb	doom-source-pack,doom-board	the packer
+tools/doom/buffer-names.rb	doom-source-pack,doom-board	the buffer-name check every pack runs
+tools/doom/core-entries.rb	doom-entries,doom-board	the entries' generator
+tools/doom/session-image.rb	doom-session-image,doom-board	the session image
+tools/doom/nor-image.rb	doom-board	the board's NOR image
+tools/doom/objects-kernel.rb	doom-objects-kernel,doom-board,doom-rt1186-profile	the reused objects' kernel check, which rt1186.sh and rt1186-profile.sh run
+tools/doom/board-frames.rb	doom-board,doom-board-controls,doom-profile,doom-rt1186-profile,doom-play-board	the board console's reader, which board-controls.sh drives, board-profile.rb calls, and play.sh drives with --play
+tools/doom/key-sender.rb	doom-play-board	decision 0025's scripted controller, which play.sh runs on the loopback and rt1186-play.sh against the board
+tools/doom/board-profile.rb	doom-board,doom-profile,doom-rt1186-profile	the stage-time reader, which judges frames with board-frames.rb
+tools/doom/net-probe/**	docs-check	the M33 UDP probe of decision 0024: a measurement image with no suite of its own, built and run on the board by hand (its README); its README is checked as documentation
+tools/doom/ocram-ring/**	docs-check	the OCRAM ring test of decision 0024: a measurement pair with no suite of its own, built and run on the board by hand (its README); its README is checked as documentation
+tools/doom/net-ring/**	docs-check	the network path's test pair of decision 0024 (a synthetic stream through the ring and the M33 network firmware): no suite of its own, built and run on the board by hand (its README); its README is checked as documentation
+tools/doom/net-viewer.rb	doom-net-viewer,doom-net-view	decision 0024's host viewer; net-view.sh reads the SDL2 viewer's recording with it
+tools/doom/net_frames.rb	doom-net-viewer,doom-net-view	the viewer's wire, reassembly and digests; net-view.sh plants its datagrams with it
+tools/doom/core-store-widths.rb	doom-widths,doom-verify	decision 0018's store scan, which widths.sh runs under verify.sh
+tools/doom/core-widths.rb	doom-widths,doom-verify	the width table's writer and check, which widths.sh runs under verify.sh
+tools/doom/*	doom-audit,doom-source-pack,doom-entries,doom-state	a DOOM tool with no row of its own: the lanes that read tools/doom
+tools/mlir/native/build.sh	source-stamp	the kernel build: its last step writes the source stamp, which is all this row selects for
+tools/mlir/native/{lib/Frontend/Scalar/{SubsetTables,FreestandingSubset}.cpp,lib/Core/SubsetRefusals.cpp,include/spinel-mlir/Core/SubsetRefusals.h}	subset-tables,subset-map,subset-reasons,lowering-locations,lowering-duplicate,lowering-split,lowering-reopened,source-stamp,core-eligibility,core-run,core-report,core-stack,core-boundary,core-intrinsics,core-intrinsics-board,app-cross,doom-control-flow,doom-borrowed-calls,doom-board,doom-loop-reports,freestanding,native-core-driver,native-core-ledger,native-core-run,native-core-arith,core-blocks,core-bitwise,fs-helper-buffers	the freestanding subset refusal tables (owned and inherited) and the walk: the table is checked against its pin and the map against the table, and the reasons are its text; and the kernel, as the row below
+tools/mlir/native/**	subset-reasons,lowering-locations,lowering-duplicate,lowering-split,lowering-reopened,source-stamp,core-eligibility,core-run,core-report,core-stack,core-boundary,core-intrinsics,core-intrinsics-board,app-cross,doom-control-flow,doom-borrowed-calls,doom-board,doom-loop-reports,freestanding,native-core-driver,native-core-ledger,native-core-run,native-core-arith,fiber-core,core-blocks,core-bitwise,doom-source-pack,fs-helper-buffers,scratch,contract-rewrites,core-upstream-fields	the kernel, and spinel-fs-emit and spinel-fs-grad built with it
+tools/freestanding/**	freestanding,subset-reasons,lowering-locations,lowering-duplicate,lowering-split,lowering-reopened,core-bitwise,fs-helper-buffers	the freestanding profiles and declarations the lanes compile with
+tools/contract/build.sh	source-stamp	the reader build: its last step writes the source stamp, which is all this row selects for
+tools/contract/**	subset-reasons,lowering-locations,lowering-duplicate,lowering-split,lowering-reopened,source-stamp,core-eligibility,core-run,core-report,doom-audit,native-core-driver,native-core-ledger,native-core-run,native-core-arith,fiber-core,core-blocks,core-bitwise,fs-helper-buffers,scratch,contract-rewrites,core-upstream-fields	the contract reader
+tools/app/lib/core_app/console.rb	app-board,app-contract,app-effects,app-host,app-build,app-reserves,app-cross,app-udp,doom-board,doom-profile,doom-net-viewer	the console demultiplexer: as tools/app/**, and the viewer reads the board's F and N lines through it
+tools/app/zephyr/v4.5.0/**	npu	the versions the NPU lane pins
+tools/app/**	app-board,app-contract,app-effects,app-host,app-build,app-reserves,app-cross,app-udp,app-core-channel,doom-board,doom-profile,doom-play-board,fiber-core,scratch	the application tool (profile.sh runs profile.rb, and play.sh play.rb, through its session host)
+tests/core/**	core-run	the suite itself
+tests/lowering/**	lowering-locations,lowering-duplicate,lowering-split,lowering-reopened	the suite and its fixtures
+tests/subset/**	subset-map,subset-reasons	the map, its fixtures and the two suites
+tools/core/subset-coverage.rb	subset-map,subset-reasons	the map's check, and the reason texts reasons.sh asserts
+tests/core-report/**	core-report	the suite itself
+tests/core-blocks/**	core-blocks	the suite itself
+tests/core-bitwise/**	core-bitwise	the suite itself
+tests/fs-helper-buffers/**	fs-helper-buffers	the suite itself
+tests/contract/rewrites.sh	contract-rewrites	the suite itself
+tests/core-stack/**	core-stack	the suite itself
+tests/freestanding/*/oracle/**	oracle-check	the lanes' oracle scripts and their recorded outputs: oracles (tests/ORACLES.tsv) run by hand with ALLOW_ORACLE=1; tests/freestanding/run.sh does not run them
+tests/freestanding/{stamps.sh,stamp-controls.sh,lane-env.sh,run.sh}	freestanding-stamps,freestanding	the lanes' tool resolution and stamp check, their controls, and the runner
+tests/freestanding/**	freestanding,fs-helper-buffers	the lanes, their kernels and fixtures
+tests/core-boundary/intrinsics.sh	core-intrinsics	the suite itself
+tests/core-boundary/intrinsics-board.sh	core-intrinsics-board	the suite itself
+tests/core-boundary/fixtures/intrinsics/**	core-intrinsics,core-intrinsics-board	their cases and fixtures
+tests/core-boundary/**	core-boundary	the status boundary's suites and fixtures
+tests/native-core/driver.sh	native-core-driver	the suite itself
+tests/native-core/ledger.sh	native-core-ledger	the suite itself
+tests/native-core/run.sh	native-core-run	the suite itself
+tests/native-core/arith.sh	native-core-arith	the suite itself
+tests/native-core/arith.md	native-core-arith,docs-check	arith.sh's results table, which it checks every row of
+tests/native-core/fixtures/arith/**	native-core-arith	its fixtures
+tests/native-core/fixtures/**	native-core-driver,native-core-ledger,native-core-run,native-core-arith	the fixtures the four suites build (arith.sh also builds lower.rb)
+tests/native-core/task2-probe.sh	docs-check	a measurement with no suite of its own, run by hand: it reproduces docs/native-core/task2-binding-report.md
+tests/native-core/macos-probe.*	docs-check	the Mac-only fixture probe docs/native-core/reproducing.md names; no runner calls it, and it runs on macOS arm64 only
+tests/core-eligibility/upstream-fields.sh	core-upstream-fields	the suite itself
+tests/core-eligibility/**	core-eligibility	the suite itself
+tests/ORACLES.tsv	oracle-check	the oracle list
+tools/spinel-bpf-mlir/{.gitignore,third_party/bpf-mlir-loader/.gitignore}	imports	which files of the imported trees are tracked
+tools/spinel-bpf-mlir/third_party/bpf-mlir-loader/scripts/**	spinel-bpf-mlir,oracle-check	bml's scripts: its library build, which the suite's archives come from, and its oracles, gated (tests/ORACLES.tsv)
+tools/spinel-bpf-mlir/{examples/bcc,ruby/lib}/**	spinel-bpf-mlir,bcc-facts	the bcc tools and the library they require: their Go tests, and their facts modules
+tools/spinel-bpf-mlir/**	spinel-bpf-mlir	spinel-bpf-mlir and bml, imported for the bcc tools (docs/provenance.md): their Go tests run in the suite
+tools/spinel-mlir/.gitignore	imports	which files of the imported tree are tracked
+tools/spinel-mlir/**	spinel-mlir,bcc-facts	spinel-mlir's consumer: its tests, and the bcc tools' modules it accepts
+tests/spinel-mlir/**	spinel-mlir,oracle-check	the consumer's suite and its class list
+tools/bcc-facts/**	bcc-facts	the facts script for the bcc tools
+tests/bcc-facts/**	bcc-facts	the facts script's suite
+tests/spinel-bpf-mlir/**	spinel-bpf-mlir,oracle-check	the suite, its class list and its gated CRuby section
+tests/ebpf/**	ebpf	the suite (live.sh, which needs privilege, is run by hand)
+tools/ebpf/examples/amp_m33_firmware/**	docs-check	the STM32MP2 M33 firmware example: built by hand with Zephyr, no suite of its own
+tools/ebpf/include/spnl/amp_abi_stm32mp2m33.h	ebpf	the STM32MP2 board profile's AMP ABI header: include/spnl/amp_abi.h includes it under that board, and bin/spinel-ebpf names it
+tools/ebpf/examples/amp_m7_firmware/**	docs-check	the i.MX95 M7 firmware example: built by hand with Zephyr and a container (build-amp-blob.sh), no suite of its own
+tools/ebpf/tests/runtime/run_otlp_{endpoint,enrich}.sh	docs-check,ebpf	the two OTLP harnesses that tests/ebpf/run.sh runs (its RUNTIME list); the harness row below covers the rest
+tools/ebpf/tests/runtime/{mock_*.rb,run_otlp_*.sh,run_gpu_host_probe.sh}	docs-check	the OTLP harnesses and their mock receivers, not oracles (decision 0020, 2026-10-24): run by hand with protoc and the user-local pins (tools/ebpf/README.md), no suite of their own
+tools/ebpf/tests/runtime/run_amp_{ring,trace,s3}.sh	docs-check	the AMP drain harnesses, which decode their OTLP payload with protoc: run by hand with protoc and the user-local pins (tools/ebpf/README.md), no suite of their own; run_amp_s3.sh needs an AOT driver and a manifest this tree lacks
+tools/metal/{tests/run_gpu_bridge.sh,tests/run_gpu_metal_exec.sh,tests/gpu_oracle.rb,tests/gpu_compare.rb,examples/host_saxpy.rb}	oracle-check,docs-check	spinel-metal's oracles (tests/ORACLES.tsv), run by hand on macOS with ALLOW_ORACLE=1
+tools/metal/**	docs-check	spinel-metal: its examples and tests need macOS or are run by hand, and no suite compiles them
+tools/ebpf/{README.md,examples/observability/otlp/README.md}	docs-check	the eBPF tree's documentation
+tools/ebpf/benchmarks/results/**	docs-check	recorded measurements, read by no test
+tools/ebpf/examples/o11y_backend/**	docs-check	the observability backend's provisioning, run by hand
+tools/ebpf/examples/observability/otlp/incident_probe.rb	docs-check	an example built and run by hand (no suite compiles it)
+tools/ebpf/go/**	ebpf-go	the Go path to eBPF (the spbpf builder, bindgen, spbpf-bindgen): tests/ebpf-go/run.sh runs their Go tests and generates the example with them
+tools/ebpf/**	ebpf	spinel-ebpf (the compiler, its runtime, tools, examples and tests): tests/ebpf/run.sh runs its minitest files and runtime harnesses
+examples/ebpf-go/**	ebpf-go	the Go examples: tests/ebpf-go/run.sh generates xdp-counter and runs its Go tests; otlp-agent is kept as files and is not run
+tests/ebpf-go/**	ebpf-go	the suite (live.sh, which needs privilege, is run by hand)
+README.md	docs-check	the top-level documentation
+THIRD_PARTY.md	imports,docs-check	the licence list tools/provenance/third-party.rb writes; the imports suite checks it is current
+tools/core/intrinsics.rb	core-intrinsics,doom-board	the CRuby route's prelude: intrinsics.sh checks it, and the session host loads it
+tools/core/hosted-prelude.rb	subset-reasons,lowering-locations,lowering-duplicate,lowering-split,lowering-reopened,source-stamp,core-eligibility,core-run,core-report,core-stack,core-boundary,core-intrinsics,core-intrinsics-board,app-cross,doom-control-flow,doom-borrowed-calls,doom-board,doom-loop-reports,freestanding,native-core-driver,native-core-ledger,native-core-run,native-core-arith,fiber-core,core-blocks,core-bitwise,doom-source-pack,fs-helper-buffers,scratch	the hosted prelude (decision 0042 stage 4): embedded in the kernel tools at their build and stamped with them, so it reaches what the kernel reaches; the product driver also snapshots it for every build, and intrinsics.sh checks it
+tools/core/int64-allow.tsv	freestanding,app-int-width,app-cross,app-build,doom-board	decision 0019's table: which sources keep `# spinel: int64` on a 32-bit target; the freestanding lanes build e081 by it, and every 32-bit build reads it
+tools/core/spinel-core-build	native-core-driver,native-core-arith,doom-source-pack	the product driver: driver.sh and arith.sh build through it, and source-pack.sh's kernel lane
+tools/core/core-artifact-gate	native-core-driver,native-core-arith,doom-source-pack,app-cross,app-lowering	the artifact gate: the driver runs it, and cross.sh and lowering.sh call it
+tools/core/object-symbols	native-core-driver,native-core-arith,doom-source-pack,app-board,app-contract,app-effects,app-host,app-build,app-reserves,app-cross,app-udp,app-lowering,doom-board,doom-profile	the object's symbols: the artifact gate reads them, the app suites call it, and spinel-core-app reads the objects it builds through it
+tools/core/compare-lowering	oracle-check	decision 0026's before/after comparison of the lowering tools: an oracle the owner authorized for steps 4 and 5, run by hand with ALLOW_ORACLE=1; the oracle list's check holds its gate call
+tests/compare-lowering/**	oracle-check	the comparison's counts baseline and declared skips, read by tools/core/compare-lowering: an oracle run by hand with ALLOW_ORACLE=1, so no routine suite selects them
+tools/core/README.md	docs-check	the driver's documentation
+tests/app/board.sh	app-board	the suite itself
+tests/app/contract.sh	app-contract	the suite itself
+tests/app/effects.sh	app-effects	the suite itself
+tests/app/host.sh	app-host	the suite itself
+tests/app/build.sh	app-build	the suite itself
+tests/app/reserves.sh	app-reserves	the suite itself
+tests/app/cross.sh	app-cross	the suite itself
+tests/app/wrapper32.rb	app-cross	cross.sh's item 7 driver
+tests/app/session.sh	doom-board	rt1186.sh runs it in its part 3
+tests/app/play.sh	doom-play-board	rt1186-play.sh runs it in its part 1
+tests/app/fixtures/apps/**	app-host,app-channel	read by host.sh and channel.sh
+tests/app/fixtures/udp/**	app-udp	read by udp.sh
+tests/app/fixtures/play/**	doom-play-board	read by play.sh, which rt1186-play.sh runs
+tests/app/fixtures/boards/**	app-board	read by board.sh
+tests/app/fixtures/build/**	app-build,doom-board,app-verify,app-core-channel	read by build.sh, session.sh (in rt1186.sh), verify.sh and core-channel.sh
+tests/app/fixtures/channel/**	app-channel	read by channel.sh
+tests/app/fixtures/contract/**	app-contract,app-lowering	read by contract.sh and lowering.sh
+tests/app/fixtures/cross/wrapper/**	app-cross	read by wrapper32.rb and cross.sh's item 7
+tests/app/fixtures/cross/**	app-cross,app-build	read by cross.sh and build.sh
+tests/app/fixtures/dts/**	app-board,app-reserves	read by board.sh and reserves.sh
+tests/app/fixtures/effects/**	app-effects	read by effects.sh
+tests/app/fixtures/int-width/**	app-int-width	read by int-width.rb
+tests/app/fixtures/lowering/**	app-lowering	read by lowering.sh
+tests/app/fixtures/platform/**	app-platform-facts	read by platform-facts.sh
+tests/app/fixtures/session/**	doom-board	read by session.sh, which rt1186.sh runs
+tests/app/fixtures/stimulus/**	app-verify	read by verify.sh
+tests/app/fixtures/synthetic-board/**	app-channel,app-udp,fiber-core,scratch	read by channel.sh, udp.sh and tests/fiber/core.sh
+tests/app/fixtures/trace/**	app-verify	read by verify.sh
+tests/app/int-width.sh	app-int-width	the suite itself
+tests/app/int-width.rb	app-int-width	int-width.sh's driver
+tests/app/lowering.sh	app-lowering	the suite itself
+tests/app/stress.sh	app-stress	the suite itself
+tests/app/stress/**	app-stress	read by stress.sh
+tests/app/platform-facts.sh	app-platform-facts	the suite itself
+tests/app/udp.sh	app-udp	the suite itself
+tests/app/core-channel.sh	app-core-channel	the suite itself
+tests/app/channel.sh	app-channel	the suite itself (excluded)
+tests/app/verify.sh	app-verify	the suite itself (excluded)
+tests/app/mutate.rb	app-verify	verify.sh's mutations (excluded)
+tests/app/doom-admission.sh	app-doom-admission	the suite itself (excluded)
+tests/app/run.sh	app-run	the aggregate (excluded)
+tests/doom-core/rt1186.sh	doom-board	the suite itself
+tests/doom-core/host-frames.sh	doom-host-frames	the suite itself
+tests/doom-core/net-viewer.sh	doom-net-viewer	the suite itself
+tests/doom-core/net-view.sh	doom-net-view	the suite itself
+tests/doom-core/board-controls.sh	doom-board-controls,doom-board	the suite itself; rt1186.sh runs it
+tests/doom-core/objects-kernel.sh	doom-objects-kernel	the suite itself
+tests/doom-core/harness/artifacts.sh	doom-board,doom-state	sourced by rt1186.sh and state.sh for the entry builds
+tests/doom-core/fixtures/screens/**	doom-board,doom-profile,doom-screens,doom-verify,doom-native,doom-bound-resources	the recording: the board's frames, and the comparisons that read it
+tests/doom-core/fixtures/audit/**	doom-audit,doom-abort-controls	read by audit.sh
+tests/doom-core/fixtures/borrowed-calls/**	doom-borrowed-calls	read by borrowed-calls.sh
+tests/doom-core/fixtures/control-flow/**	doom-control-flow	read by control-flow.sh
+tests/doom-core/fixtures/random/**	doom-loop-reports,doom-tick	read by loop-reports.sh and tick.sh
+tests/doom-core/fixtures/source-pack/**	doom-source-pack,doom-abort-controls	read by source-pack.sh
+tests/doom-core/fixtures/state/**	doom-state,doom-loop-reports	read by state.sh and loop-reports.sh
+tests/doom-core/fixtures/source/**	doom-board,doom-entries,doom-source-pack,doom-loop-reports,doom-tick,doom-screens	the source contracts: rt1186.sh, entries.sh, source-pack.sh and loop-reports.sh build from them
+tests/doom-core/harness/rt1186-board.sh	doom-board,doom-board-controls	the board part's judgment: rt1186.sh runs it, board-controls.sh drives it
+tests/doom-core/harness/rt1186-*	doom-board	the board lane's harness
+tests/doom-core/harness/build-artifacts.sh	doom-screens,doom-loop-reports	builds screens.sh's directories
+tests/doom-core/harness/retired.sh	doom-tick,doom-screens	sourced by tick.sh and screens.sh
+tests/doom-core/harness/*.rb	doom-tick	the frame lane's case runner (tick.sh)
+tools/test/source-stamp.sh	source-stamp	the lanes' check of their kernel and reader, sourced by every lane that takes one
+tests/doom-core/cases/**	doom-tick	the frame lane's cases
+tests/doom-core/expect/**	doom-tick	the frame lane's expectations
+tests/doom-core/fork/**	doom-fork-compat-controls	the forked compiler's rows and fixtures
+tests/doom-core/native/bound.rb	doom-board,doom-bound-resources	the host session program rt1186.sh and bound-resources.sh build
+tests/doom-core/native/bound_map.c	doom-board,doom-bound-resources	its mapping, built by rt1186.sh and bound-resources.sh
+tests/doom-core/native/open.rb	doom-native	read by native.sh
+tests/doom-core/rebirth-guard.rb	doom-entries	read by entries.sh
+tests/doom-core/object-relocs.rb	doom-object-relocs,doom-verify,app-lowering	read by object-relocs.sh, verify.sh and tests/app/lowering.sh
+tests/doom-core/{build-prepared,build-reference,build-session,core-state,initial-sets,lump-directory,partial-session,partition,prepared-domain,slice-snapshot,slot-model,source-select,stored-layout}.rb	doom-state	read by state.sh
+tests/doom-core/compare-state.rb	doom-state,doom-native,doom-verify	read by state.sh, native.sh and verify.sh
+tests/doom-core/{bsp-model,random-model,render-model,sound-model,source-adapter,source-edges,source-registry,zone-alias,zone-ring}.rb	doom-tick	read by tick.sh
+tests/doom-core/{copy-check,dup-check,leaf-modes,statusbar-branches,source-port}.rb	doom-screens	read by screens.sh
+tests/doom-core/one-closure.rb	doom-screens	read by screens.sh and build-artifacts.sh
+tests/doom-core/{graph-guard,refusals,route-demo,route-reference,route-lane,route-prep,step-coverage,mode-one,input-diff,step-diff,render-diff,content-scan,scenarios}.rb	doom-verify	verify.sh's comparisons with the original
+tests/doom-core/{renderall,stepall}.rb	doom-tick,doom-screens	the source contracts' entry files (fixtures/source/src/entries.rb)
+tests/doom-core/native-scenario-diff.rb	doom-native-scenario-diff	read by native-scenario-diff.sh
+tests/doom-core/abort-controls.sh	doom-abort-controls	the suite itself
+tests/doom-core/fork-compat.sh	doom-fork-compat-controls	the subject of fork-compat-controls.sh
+tests/doom-core/fork-compat-controls.sh	doom-fork-compat-controls	the suite itself
+tests/doom-core/profile.sh	doom-profile	the suite itself
+tests/doom-core/rt1186-profile.sh	doom-rt1186-profile	the suite itself
+tests/doom-core/rt1186-play.sh	doom-play-board	the suite itself
+tests/doom-core/rt1186-pair-controls.sh	doom-pair-controls	the suite itself
+tests/doom-core/native.sh	doom-native	the suite itself (excluded)
+tests/doom-core/native-scenario-diff.sh	doom-native-scenario-diff	the suite itself (excluded)
+tests/doom-core/bound-resources.sh	doom-bound-resources	the suite itself (excluded)
+tests/doom-core/widths.sh	doom-widths	the suite itself (excluded)
+tests/doom/manifest.tsv	doom-sources	the imported sources' digests
+tests/doom-core/audit.sh	doom-audit	the suite itself
+tests/doom-core/source-pack.sh	doom-source-pack	the suite itself
+tests/doom-core/entries.sh	doom-entries	the suite itself
+tests/doom-core/entry-fields.rb	doom-entries	entries.sh's second generator
+tests/doom-core/state.sh	doom-state	the suite itself
+tests/doom-core/session-image.sh	doom-session-image	the suite itself
+tests/doom-core/control-flow.sh	doom-control-flow	the suite itself
+tests/doom-core/borrowed-calls.sh	doom-borrowed-calls	the suite itself
+tests/doom-core/capacity.sh	doom-capacity	the suite itself
+tests/doom-core/object-relocs.sh	doom-object-relocs	the suite itself
+tests/doom-core/loop-reports.sh	doom-loop-reports	the suite itself
+tests/doom-core/lanes.tsv	doom-run-controls	the runner's table
+tests/doom-core/run.sh	doom-run-controls	the runner
+tests/doom-core/run-controls.sh	doom-run-controls	the suite itself
+tests/doom-core/verify.sh	doom-verify	the suite itself (excluded)
+tests/doom-core/screens.sh	doom-screens	the suite itself (excluded)
+tests/doom-core/tick.sh	doom-tick	the suite itself (excluded)
+tools/raster/ab/**	oracle-check	the raster tools against the Python predecessor's recorded output: an oracle (tests/ORACLES.tsv) run by hand with ALLOW_ORACLE=1, so no routine suite selects it
+tools/raster/**	raster	the raster lane's tools and C seam, which the suite builds and runs
+tests/raster/string-borrow.sh	raster-string-borrow	the suite itself
+tests/raster/**	raster	the suite and its screenshot checks
+tools/tensor/**	tensor,npu,npu-stm32mp2	the tensor lane front and shim, which tests/tensor/run.sh builds and runs
+tools/npu/stm32mp2/**	npu-stm32mp2	the STM32MP257 half of the NPU tool, which tests/npu/stm32mp2/run.rb builds
+tools/npu/**	npu,npu-stm32mp2,bare-full,zephyr-full	the NPU lane's tool and Zephyr host, which both NPU suites run; tools/zephyr-full reads its header stand-ins
+tests/npu/stm32mp2/**	npu-stm32mp2	the suite itself
+tests/npu/sides.rb	npu,npu-stm32mp2	the program both NPU suites build
+tests/npu/**	npu	the suite itself
+tests/tensor/**	tensor	the suite itself
+docs/imports.tsv	imports,docs-check	the import register
+docs/provenance.md	imports,docs-check	the batches the register names by heading
+tools/provenance/**	imports	the register's check
+tests/imports/**	imports	the check's controls
+docs/**	docs-check	documentation
+tools/test/source-stamp.rb	source-stamp,freestanding-stamps	the source stamp: written by the two build scripts, checked by the lanes
+tests/source-stamp/**	source-stamp	its controls
+tests/spinel-fork/**	spinel-fork-argv-fill	the fork patch suites and their planted controls
+tests/subset-tables/**	subset-tables	the check and its pin
+vendor/spinel	shader,ghostty-terminal,compute,core-run,core-report,core-stack,core-intrinsics,core-boundary,freestanding,freestanding-stamps,native-core-driver,native-core-ledger,native-core-run,core-eligibility,oracle-check,native-core-arith,app-board,app-contract,app-effects,app-host,app-build,app-reserves,app-cross,app-udp,app-core-channel,doom-source-pack,doom-entries,doom-state,doom-session-image,doom-control-flow,doom-borrowed-calls,doom-object-relocs,doom-run-controls,doom-abort-controls,doom-fork-compat-controls,doom-profile,doom-sources,app-int-width,app-lowering,app-stress,app-platform-facts,doom-board-controls,doom-net-viewer,doom-net-view,doom-objects-kernel,doom-host-frames,raster,raster-string-borrow,tensor,docs-check,affected-controls,imports,spinel-bpf-mlir,bcc-facts,ebpf,ebpf-go,spinel-mlir,subset-map,subset-reasons,lowering-locations,lowering-reopened,lowering-split,lowering-duplicate,source-stamp,subset-tables,edge,edge-arena,edge-isolation,fiber,core-intrinsics-board,doom-rt1186-profile,doom-play-board,doom-pair-controls,doom-board,doom-audit,doom-capacity,doom-loop-reports,gc-arena,npu,npu-stm32mp2,fiber-core,gcviz,bare-full,zephyr-full,core-blocks,core-bitwise,fs-helper-buffers,scratch,spinel-fork-argv-fill,contract-rewrites,core-upstream-fields	the pinned compiler, under every suite: a pin move is the owner's decision and its approval boundary, and it is accepted by one run of every suite here, the board suites' board-free parts and the long ones once at the end; the export tool's own two are selected by tools/dist/manifest.json, which a pin move changes, and are not named here because the exported tables drop them
+tools/wasm/{.gitignore,fastly/package-template/.gitignore,worker-template/.gitignore}	imports	which files of the wasm tool's trees and templates are tracked
+tools/wasm/**	edge,edge-arena,edge-isolation,ghostty-terminal,compute,fiber	spinel-wasm and its runtime shims: the edge examples, the arena build and the Fiber programs are built with it
+tests/edge/**	edge,edge-arena,edge-isolation	the edge suites, their fixtures and helpers
+tools/fiber/**	fiber,fiber-core,scratch	the stackless Fiber rewrite, which tests/fiber builds every program through; spinel-fiber-core is stage 2's CORE rewrite, which tests/fiber/core.sh runs; tests/scratch reaches it too
+tests/fiber/core.sh	fiber-core	the CORE Fiber suite itself
+tests/fiber/core/**	fiber-core	read by core.sh: its applications, stimuli, expected values and refusals
+tests/fiber/core-reject.tsv	fiber-core	core.sh's refusal table
+tests/scratch/**	scratch	the data stack suite of decision 0041 stage 2 and everything it reads
+tests/fiber/**	fiber	the Fiber suite, its programs, expected output and refusal table
+tools/platform/**	edge-arena	spinel-capcheck and its tier rules: arena.sh's row 4 runs the GC-semantics refusal
+tools/gcviz/**	gcviz	the event record's build driver, reader and example, which tests/gcviz runs
+tests/gcviz/**	gcviz	the suite and its planted controls
+vendor/spinel-modular	bare-full,zephyr-full,imports	the pin of spinel-modular: its tools/bare-full is the bare-metal full build tests/bare-full runs, and tests/zephyr-full builds four programs of its tests/bare-full; the ledger names the pin (the export manifest names it too, and a pin move edits that file, which selects the export checks)
+tests/bare-full/**	bare-full	the lane that runs spinel-modular's bare-full suite with this repository's Spinel
+tools/zephyr-full/**	zephyr-full	the Zephyr POSIX full driver and its Zephyr host, which tests/zephyr-full builds
+tests/zephyr-full/**	zephyr-full	the suite, its programs, their hand-written expected output and the board-log check
+tests/gc-arena/**	gc-arena	the suite and its fixtures: the collector / --gc=none pair, whose reference-interpreter half is gated
+tools/test/**	affected-controls	this preprocessor and its tables
+tests/affected/**	affected-controls	this preprocessor's controls

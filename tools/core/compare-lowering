@@ -1,0 +1,782 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+#
+# tools/core/compare-lowering -- decision 0026 steps 4 and 5: the old and the
+# new lowering tools, run side by side over the route suites.
+#
+#   compare-lowering freeze --tree TREE --to DIR
+#   ALLOW_ORACLE=1 compare-lowering run --old DIR --new DIR --work DIR \
+#       [--route NAME]... [--perturb object|mlir|text] [--counts FILE|none]
+#   compare-lowering report --work DIR [--counts FILE|none]
+#
+# Decision 0026's Validation: "compare the old and the new tool's output: the
+# generic-printed MLIR with implicit file locations stripped and explicit Ruby
+# locations kept, and the object bytes. Both arms must exit 0 with non-empty
+# output, and a 1-byte test-only change must be refused by name. Refusal
+# diagnostics are compared as full text." The owner authorized that before/after
+# comparison for 0026 steps 4 and 5 only (2026-10-23); it is gated as an oracle
+# (tests/ORACLES.tsv) so that it runs only when asked.
+#
+# FREEZE copies a tree's built tools into DIR in the tree's own layout:
+# tools/mlir/native/build/bin/* and tools/contract/build/spinel-typedump with
+# its stamp. DIR/SHA256SUMS lists every copied file; `run` refuses an arm whose
+# files no longer match it.
+#
+# THE ARMS. The tools find files by walking up from their own executable: the
+# ledger (tools/platform/menus.yaml), the profiles it names, the int64 table
+# (tools/core/int64-allow.tsv, whose rows name sources from the root it is
+# found under), the reader and spinel-fs-codegen. So `run` makes each arm a
+# tree at WORK/arms/ARM: its frozen files copied in (and checked against
+# SHA256SUMS again), everything else a link into this checkout. Both arms find
+# the same ledger, profiles and table, this checkout's; only the binaries
+# differ.
+#
+# RUN drives the route suites with a build directory, WORK/build, whose
+# spinel-core-kernel, spinel-core-emit, spinel-fs-emit, spinel-fs-grad,
+# spinel-core-boundary, spinel-core-adapter, spinel-core-package,
+# spinel-core-check and spinel-core-stack are wrappers (TOOLS; every one links
+# a library steps 4 and 5 change); every other tool there is a link to the
+# new arm's, and the new
+# arm's source stamp sits beside them, so a suite's stamp check sees the new
+# tool exactly as it would see the real one. Each wrapper call runs the old
+# and the new tool on the same arguments, each arm with its output files sent
+# to its own directory (same base names), and compares:
+#
+#   * the exit status, and stdout and stderr as full text;
+#   * every output file the arguments name, byte for byte;
+#   * the MLIR: the call's own --emit-mlir, or one this adds where the tool
+#     takes it (spinel-core-kernel, spinel-core-emit, spinel-fs-emit outside
+#     its product and probe forms) as a side output. Each is re-printed by
+#     mlir-opt in generic form with locations, and the locations mlir-opt gave
+#     from the file it parsed (the implicit ones) are removed; a location the
+#     tool wrote (`loc("x.rb":L:C)`) is kept.
+#
+# In text, each arm's own output directory is read as the path the call named,
+# each arm's install root as <TOOLS> and the digest of its own tool as
+# <TOOL-SHA256> (the kernel's report names its executable and records its
+# digest). Then the new arm's outputs and status are handed to the suite,
+# which goes on as with the new tool. ALLOW_ORACLE is removed before any suite
+# runs: the suites' own oracle sections stay gated.
+#
+# One row per call in WORK/calls.tsv: route, tool, verdict, the two statuses,
+# the call's directory under WORK/calls. A verdict is `same` (both exit 0,
+# every named output non-empty), `same-refusal` (both refuse, the same text),
+# `DIFF <what>` or `EMPTY <what>`.
+#
+# A RUN THAT DOES NOT COMPARE EVERY CALL MUST NOT SAY "no difference". Two
+# checks see to it:
+#
+#   * the counts. The report counts calls per route and tool (WORK/counts.tsv)
+#     and checks them against tests/compare-lowering/counts.tsv, the tracked
+#     baseline, or against --counts FILE; a count that differs fails by route
+#     and tool (`COUNT`). Only the routes the run ran are checked. `--counts
+#     none` writes the counts without checking them, to make a new baseline:
+#     its report says NOT CHECKED.
+#   * the route logs. A lane that could not run, a skip, or a tool built from
+#     other source than the tree's fails by route and lane (`NOT-RUN`,
+#     `STALE`), unless the suite declares it: a gated oracle section that
+#     tests/ORACLES.tsv lists, or a skip tests/compare-lowering/skips.tsv
+#     names by route, lane and reason. A summary that counts more skips or
+#     lanes that could not run than the log names fails too. The declared
+#     skips are listed by name in the report.
+#
+# Exits 1 on any DIFF or EMPTY row, COUNT, NOT-RUN or STALE, or a route that
+# called none of the wrapped tools.
+#
+# WHAT THE ROUTES READ FROM A TREE BUILD. Each path a route suite resolves
+# under tools/.../build or vendor/, and whether the comparison covers it:
+#
+#   wrapped (WORK/build/bin, through SPINEL_CORE_BUILD and the variable named):
+#     tools/mlir/native/build/bin/spinel-core-kernel     KERNEL
+#     tools/mlir/native/build/bin/spinel-core-emit       SPINEL_CORE_BUILD
+#     tools/mlir/native/build/bin/spinel-fs-emit         SPINEL_CORE_BUILD
+#     tools/mlir/native/build/bin/spinel-fs-grad         SPINEL_CORE_BUILD
+#     tools/mlir/native/build/bin/spinel-core-boundary   BOUNDARY
+#     tools/mlir/native/build/bin/spinel-core-adapter    ADAPTER
+#     tools/mlir/native/build/bin/spinel-core-package    PACKAGE
+#     tools/mlir/native/build/bin/spinel-core-check      CORE_CHECK, SPINEL_CORE_BUILD
+#     tools/mlir/native/build/bin/spinel-core-stack      STACK_TOOL
+#   the new arm's, not compared:
+#     tools/mlir/native/build/bin/spinel-fs-check, and spinel-fs-codegen
+#       (found by spinel-fs-emit beside itself), spinel-rtcheck: object gates
+#       and code generation that link none of SpinelMLIRScalar,
+#       SpinelCoreEligibility or SpinelCoreKernel (spinel-fs-check takes two
+#       inline AST readers from lib/Frontend/Scalar/ScalarAst.h). None of
+#       their sources changed from 8c38624 to step 5, and the three binaries
+#       are byte for byte the same in the frozen c7affd5 and step 5 arms.
+#     tools/contract/build/spinel-typedump (SPINEL_TYPEDUMP, or found from the
+#       tool's own directory): the reader, which no step of 0026 changes.
+#   the tree's own, not compared: none of them is lowering code.
+#     tools/contract/build/spinel-typedump where tests/freestanding/stamps.sh
+#       and lane-env.sh name it with no override (the same reader, held to the
+#       tree by its stamp)
+#     tools/llvm/build/libspinel_rt_lto.a (BC_DIR), the runtime bitcode
+#     tools/llvm/passes/build/libSpinelGCRoots.so, the GC-roots pass
+#     tools/grad/spinel-gradgen and Enzyme (ENZYME), the gradient generator
+#     vendor/spinel/bin/spinel (SPINEL_SEAM, SPINEL), the pinned compiler
+#
+# THE TREE MUST BE THE NEW ARM'S SOURCE. The suites check the source stamp of
+# the tools they resolve, and the wrappers present the new arm's; an identity
+# pass (old and new both copies of one build) therefore runs with the tree at
+# that build's source, or the suites refuse before calling anything (the
+# report then shows routes with no calls).
+#
+# --perturb is the control that a difference is found and named: it changes
+# one byte of the new arm's object (object), of its MLIR (mlir), or adds one
+# to its stderr (text), after the new arm ran and before the comparison.
+#
+# Routes (--route, default all): native-core-driver, native-core-ledger,
+# native-core-run, native-core-arith, core-boundary, doom-control-flow,
+# doom-borrowed-calls, doom-entries (the three entries packed and built for
+# this host and for the Cortex-M7, as rt1186.sh builds them), app-cross,
+# app-lowering, lowering (tests/lowering), freestanding (tests/freestanding/
+# run.sh, with FS_WORK under WORK). The suites take LLVM_PREFIX and the lane
+# tools (ENZYME, ZEPHYR_BASE, ...) from the environment, as each one's header
+# says.
+
+require "digest"
+require "fileutils"
+require "json"
+require "open3"
+require "rbconfig"
+require "shellwords"
+require "tmpdir"
+require_relative "../oracle/gate"
+
+ROOT = File.expand_path("../..", __dir__)
+SELF = File.expand_path(__FILE__)
+BIN = "tools/mlir/native/build/bin"
+TOOLS = %w[spinel-core-kernel spinel-core-emit spinel-fs-emit spinel-fs-grad
+           spinel-core-boundary spinel-core-adapter spinel-core-package spinel-core-check
+           spinel-core-stack].freeze
+# The environment variable through which the suites take each tool, where one
+# names it alone (SPINEL_CORE_BUILD names them all, as WORK/build).
+TOOL_ENV = { "KERNEL" => "spinel-core-kernel", "BOUNDARY" => "spinel-core-boundary",
+             "ADAPTER" => "spinel-core-adapter", "PACKAGE" => "spinel-core-package",
+             "CORE_CHECK" => "spinel-core-check", "STACK_TOOL" => "spinel-core-stack" }.freeze
+BASELINE = File.join(ROOT, "tests/compare-lowering/counts.tsv")
+SKIPS = File.join(ROOT, "tests/compare-lowering/skips.tsv")
+# The arguments that name an output, per tool: a file, or a directory.
+OUTPUTS = {
+  "spinel-core-kernel" => { "-o" => :file, "--header" => :file, "--extern-header" => :file,
+                            "--emit-mlir" => :file, "--emit-optimised-ir" => :file,
+                            "--failure-sites" => :file, "--report" => :file },
+  "spinel-core-emit" => { "-o" => :file, "--emit-mlir" => :file, "--inputs-out" => :file,
+                          "--header-out" => :file, "--shim-out" => :file },
+  "spinel-fs-emit" => { "-o" => :file, "--emit-llvm" => :file, "--emit-header" => :file,
+                        "--emit-mlir" => :file, "--emit-undef-tsv" => :file },
+  "spinel-fs-grad" => { "-o" => :dir, "--out" => :dir, "--emit-header" => :file },
+  "spinel-core-boundary" => { "--header" => :file },
+  "spinel-core-adapter" => { "--outdir" => :dir },
+  "spinel-core-package" => { "-o" => :file },
+  "spinel-core-check" => { "--inputs-out" => :file },
+  "spinel-core-stack" => {}
+}.freeze
+MLIR_OPT = File.join(ENV.fetch("LLVM_PREFIX", "/opt/llvm-23.1.1"), "bin", "mlir-opt")
+
+def die(msg, code = 2)
+  warn "compare-lowering: #{msg}"
+  exit code
+end
+
+def sha_list(dir)
+  Dir.glob("**/*", File::FNM_DOTMATCH, base: dir).sort.filter_map do |rel|
+    path = File.join(dir, rel)
+    next if !File.file?(path) || File.symlink?(path) || rel == "SHA256SUMS"
+    "#{Digest::SHA256.file(path).hexdigest}  #{rel}\n"
+  end.join
+end
+
+# ---- freeze --------------------------------------------------------------
+
+def freeze(argv)
+  tree = to = nil
+  until argv.empty?
+    case (a = argv.shift)
+    when "--tree" then tree = argv.shift
+    when "--to" then to = argv.shift
+    else die("freeze: unknown argument #{a}")
+    end
+  end
+  tree && to or die("usage: compare-lowering freeze --tree TREE --to DIR")
+  tree = File.expand_path(tree)
+  to = File.expand_path(to)
+  die("freeze: #{to} exists") if File.exist?(to)
+  die("freeze: #{to} is inside the tree") if to.start_with?(tree + "/")
+  copies = Dir.children(File.join(tree, BIN)).sort.map { |f| File.join(BIN, f) } +
+           ["tools/contract/build/spinel-typedump", "tools/contract/build/source-stamp.tsv"]
+  copies.each do |rel|
+    src = File.join(tree, rel)
+    next unless File.file?(src)
+    FileUtils.mkdir_p(File.dirname(File.join(to, rel)))
+    FileUtils.cp(src, File.join(to, rel), preserve: true)
+  end
+  TOOLS.each { |t| File.executable?(File.join(to, BIN, t)) or die("freeze: no #{t} in #{tree}/#{BIN}") }
+  rev = `git -C #{Shellwords.escape(tree)} rev-parse HEAD`.strip
+  dirty = `git -C #{Shellwords.escape(tree)} status --porcelain -- tools/mlir/native`.lines.size
+  File.write(File.join(to, "FROZEN"), "tree #{tree}\nrevision #{rev}\nuncommitted under tools/mlir/native: #{dirty}\n")
+  File.write(File.join(to, "SHA256SUMS"), sha_list(to))
+  puts "compare-lowering: froze #{copies.size} file(s) of #{tree} (#{rev[0, 12]}, #{dirty} uncommitted) at #{to}"
+end
+
+# WORK/arms/ARM: this checkout, with the frozen files of `frozen` in place of
+# its own. A directory on the way to a frozen file is real, everything else a
+# link.
+def make_arm(dst, frozen)
+  files = File.readlines(File.join(frozen, "SHA256SUMS")).map { |l| l.chomp.split("  ", 2)[1] } - ["FROZEN"]
+  dirs = files.flat_map { |f| d = File.dirname(f); a = []; (a << d; d = File.dirname(d)) while d != "."; a }.uniq
+  fill = lambda do |rel|
+    here = rel.empty? ? dst : File.join(dst, rel)
+    FileUtils.mkdir_p(here)
+    src = rel.empty? ? ROOT : File.join(ROOT, rel)
+    names = File.directory?(src) ? Dir.children(src) : []
+    (files + dirs).each do |p|
+      next unless rel.empty? || p.start_with?("#{rel}/")
+      names << (rel.empty? ? p : p.delete_prefix("#{rel}/")).split("/").first
+    end
+    names.uniq.each do |c|
+      r = rel.empty? ? c : File.join(rel, c)
+      if files.include?(r) then FileUtils.cp(File.join(frozen, r), File.join(here, c), preserve: true)
+      elsif dirs.include?(r) then fill.call(r)
+      else File.symlink(File.join(src, c), File.join(here, c))
+      end
+    end
+  end
+  fill.call("")
+  sums = files.map { |r| "#{Digest::SHA256.file(File.join(dst, r)).hexdigest}  #{r}\n" }.sort.join
+  want = File.readlines(File.join(frozen, "SHA256SUMS")).reject { |l| l.end_with?("  FROZEN\n") }.sort.join
+  sums == want or die("#{dst}: the copied files do not match #{frozen}/SHA256SUMS")
+  dst
+end
+
+def verify_frozen(dir)
+  sums = File.join(dir, "SHA256SUMS")
+  File.file?(sums) or die("#{dir} has no SHA256SUMS; freeze it first")
+  File.read(sums) == sha_list(dir) or die("#{dir} no longer matches its SHA256SUMS")
+end
+
+# ---- exec: one wrapped call -----------------------------------------------
+
+def binary?(bytes)
+  bytes.include?("\0")
+end
+
+# The MLIR in generic form, with the locations mlir-opt took from the file it
+# parsed removed. nil when mlir-opt cannot read it; the raw text then stands.
+def generic_mlir(path)
+  out, err, st = Open3.capture3(MLIR_OPT, "--allow-unregistered-dialect", "--mlir-print-op-generic",
+                                "--mlir-print-debuginfo", "--mlir-print-local-scope", path)
+  return [nil, err] unless st.success?
+  [out.gsub(/loc\(#{Regexp.escape(path.inspect)}:\d+:\d+\)/, "loc(implicit)"), nil]
+end
+
+class Call
+  attr_reader :tool, :args, :dir
+
+  def initialize(state, tool, args)
+    @state = state
+    @config = JSON.parse(File.read(File.join(state, "config.json")))
+    @tool = tool
+    @args = args
+    FileUtils.mkdir_p(File.join(state, "calls"))
+    @dir = Dir.mktmpdir("#{tool}-", File.join(state, "calls"))
+    @outputs = find_outputs
+  end
+
+  # [index of the value, kind] for each output argument, before any `--`.
+  def find_outputs
+    spec = OUTPUTS.fetch(@tool)
+    found = []
+    i = 0
+    while i < @args.size
+      break if @args[i] == "--"
+      if (kind = spec[@args[i]]) && i + 1 < @args.size
+        found << [i + 1, kind]
+        i += 2
+      else
+        i += 1
+      end
+    end
+    found
+  end
+
+  def wants_mlir?
+    return false if @outputs.any? { |i, _| @args[i - 1] == "--emit-mlir" }
+    case @tool
+    when "spinel-core-kernel", "spinel-core-emit" then true
+    when "spinel-fs-emit" then !%w[--probe --admit].include?(@args[0]) && @args[1] != "--freestanding"
+    else false
+    end
+  end
+
+  def arm_argv(arm)
+    argv = @args.dup
+    @outputs.each_with_index do |(i, kind), k|
+      d = File.join(@dir, arm, "out#{k}")
+      FileUtils.mkdir_p(d)
+      base = File.basename(@args[i])
+      base = "null" if @args[i] == "/dev/null"
+      argv[i] = File.join(d, base)
+      FileUtils.mkdir_p(argv[i]) if kind == :dir && File.directory?(@args[i])
+    end
+    if wants_mlir?
+      extra = ["--emit-mlir", File.join(@dir, arm, "forced.mlir")]
+      at = argv.index("--") || argv.size
+      argv.insert(at, *extra)
+    end
+    argv
+  end
+
+  def run_arm(arm)
+    root = @config.fetch(arm)
+    argv = arm_argv(arm)
+    exe = File.join(root, BIN, @tool)
+    out, err, st = Open3.capture3(exe, *argv, stdin_data: "")
+    { argv: argv, out: out, err: err, rc: st.exitstatus || 128 + st.termsig.to_i, root: root,
+      digest: Digest::SHA256.file(exe).hexdigest }
+  end
+
+  # Text as the call named it: the arm's output directory read as the named
+  # path, the arm's install root as <TOOLS>, and the digest of the arm's own
+  # tool (the kernel's report records it) as <TOOL-SHA256>.
+  def plain(text, arm, run)
+    s = text.dup
+    @outputs.each { |i, _| s = s.gsub(run[:argv][i], @args[i]) }
+    s = s.gsub(File.join(@dir, arm), "<CALL>")
+    s = s.gsub(run[:root], "<TOOLS>").gsub(run[:digest], "<TOOL-SHA256>")
+    # a tool's own temporary directory, a path component `spinel-<tool>-` (or
+    # `.spinel-inputs.`) and six random characters
+    s.gsub(%r{(?<=/)(\.?spinel-[a-z0-9-]+?)([-.])[0-9A-Za-z]{6}(?=/|$)}, "\\1\\2XXXXXX")
+  end
+
+  def perturb(run)
+    case @config["perturb"]
+    when "object"
+      i, = @outputs.find { |j, k| k == :file && @args[j - 1] == "-o" && File.size?(run[:argv][j]) }
+      flip(run[:argv][i]) if i
+    when "mlir"
+      m = @outputs.find { |j, _| @args[j - 1] == "--emit-mlir" }
+      path = m ? run[:argv][m[0]] : File.join(@dir, "new", "forced.mlir")
+      flip(path, text: true) if File.size?(path)
+    when "text"
+      run[:err] += "x"
+    end
+  end
+
+  # One byte changed. In MLIR, the last letter of a function name the module
+  # names only once (its definition), so the file still parses and verifies;
+  # elsewhere the middle byte.
+  def flip(path, text: false)
+    b = File.binread(path)
+    at = b.size / 2
+    if text
+      names = b.scan(/func\.func (?:private )?@([A-Za-z_][A-Za-z0-9_]*)/).flatten
+      name = names.reverse.find { |x| b.scan(/@#{x}\b/).size == 1 }
+      at = b.index(/@#{name}\b/) + name.size if name
+    end
+    b.setbyte(at, text ? (b[at] == "x" ? "y" : "x").ord : b.getbyte(at) ^ 1)
+    File.binwrite(path, b)
+  end
+
+  def compare(old, new)
+    diffs = []
+    diffs << "status (#{old[:rc]} vs #{new[:rc]})" if old[:rc] != new[:rc]
+    diffs << "stdout" if plain(old[:out], "old", old) != plain(new[:out], "new", new)
+    diffs << "stderr" if plain(old[:err], "old", old) != plain(new[:err], "new", new)
+    empty = []
+    @outputs.each do |i, kind|
+      a = old[:argv][i]
+      b = new[:argv][i]
+      name = "#{@args[i - 1]} #{File.basename(@args[i])}"
+      if kind == :dir
+        fa = File.directory?(a) ? Dir.glob("**/*", base: a).sort : nil
+        fb = File.directory?(b) ? Dir.glob("**/*", base: b).sort : nil
+        if fa != fb then diffs << "#{name}: the files differ"
+        elsif fa
+          fa.each do |f|
+            next unless File.file?(File.join(a, f))
+            diffs << "#{name}/#{f}" unless same_file(File.join(a, f), File.join(b, f), old, new)
+          end
+          empty << name if new[:rc].zero? && fa.empty?
+        end
+        next
+      end
+      ea = File.exist?(a)
+      eb = File.exist?(b)
+      if ea != eb then diffs << "#{name}: written by one arm only"
+      elsif ea
+        diffs << name unless same_file(a, b, old, new)
+        empty << name if new[:rc].zero? && @args[i] != "/dev/null" && File.size(b).zero?
+      elsif new[:rc].zero? && @args[i] != "/dev/null"
+        empty << "#{name}: not written"
+      end
+    end
+    mlirs = @outputs.filter_map { |i, _| [old[:argv][i], new[:argv][i]] if @args[i - 1] == "--emit-mlir" }
+    mlirs << [File.join(@dir, "old", "forced.mlir"), File.join(@dir, "new", "forced.mlir")] if wants_mlir?
+    mlirs.each do |a, b|
+      next unless File.exist?(a) || File.exist?(b)
+      next diffs << "mlir: written by one arm only" unless File.exist?(a) && File.exist?(b)
+      ga, ea = generic_mlir(a)
+      gb, eb = generic_mlir(b)
+      if ga && gb
+        diffs << "mlir (generic)" if ga != gb
+      elsif ga || gb
+        File.write(File.join(@dir, "mlir-opt.err"), "old:\n#{ea}new:\n#{eb}")
+        diffs << "mlir (mlir-opt read one arm only)"
+      else
+        File.write(File.join(@dir, "mlir-opt.err"), "old:\n#{ea}new:\n#{eb}")
+        diffs << "mlir (raw; mlir-opt could not read it)" if File.binread(a) != File.binread(b)
+      end
+    end
+    return "DIFF #{diffs.join('; ')}" unless diffs.empty?
+    return "same-refusal" unless new[:rc].zero?
+    empty << "no output file and no output" if @outputs.empty? && new[:out].empty? && new[:err].empty?
+    return "EMPTY #{empty.join('; ')}" unless empty.empty?
+    "same"
+  end
+
+  def same_file(a, b, old, new)
+    x = File.binread(a)
+    y = File.binread(b)
+    return x == y if binary?(x) || binary?(y)
+    plain(x, "old", old) == plain(y, "new", new)
+  end
+
+  # The new arm's outputs where the call named them, and its status.
+  def hand_back(new)
+    @outputs.each do |i, kind|
+      dst = @args[i]
+      src = new[:argv][i]
+      next if dst == "/dev/null" || !File.exist?(src)
+      if kind == :dir
+        FileUtils.mkdir_p(dst)
+        FileUtils.cp_r(File.join(src, "."), dst)
+      else
+        FileUtils.cp(src, dst)
+      end
+    end
+    # a line naming the MLIR this added is not the call's to see
+    forced = File.join(@dir, "new", "forced.mlir")
+    out = new[:out].lines.reject { |l| l.include?(forced) }.join
+    err = new[:err].lines.reject { |l| l.include?(forced) }.join
+    @outputs.each do |i, _|
+      out = out.gsub(new[:argv][i], @args[i])
+      err = err.gsub(new[:argv][i], @args[i])
+    end
+    $stdout.write(out)
+    $stderr.write(err)
+    new[:rc]
+  end
+
+  def run
+    old = run_arm("old")
+    new = run_arm("new")
+    perturb(new) if @config["perturb"]
+    verdict = compare(old, new)
+    File.write(File.join(@dir, "argv"), ([@tool] + @args).shelljoin + "\n")
+    { "old" => old, "new" => new }.each do |arm, r|
+      File.write(File.join(@dir, "#{arm}.stdout"), r[:out])
+      File.write(File.join(@dir, "#{arm}.stderr"), r[:err])
+    end
+    row = [ENV.fetch("CL_ROUTE", "-"), @tool, verdict, old[:rc], new[:rc],
+           @dir.delete_prefix(@state + "/")].join("\t") + "\n"
+    File.open(File.join(@state, "calls.tsv"), "a") do |f|
+      f.flock(File::LOCK_EX)
+      f.write(row)
+    end
+    hand_back(new)
+  end
+end
+
+# ---- run -----------------------------------------------------------------
+
+def routes(work)
+  tests = File.join(ROOT, "tests")
+  {
+    "native-core-driver" => ["sh", "#{tests}/native-core/driver.sh"],
+    "native-core-ledger" => ["sh", "#{tests}/native-core/ledger.sh"],
+    "native-core-run" => ["sh", "#{tests}/native-core/run.sh"],
+    "native-core-arith" => ["sh", "#{tests}/native-core/arith.sh"],
+    "core-boundary" => ["sh", "#{tests}/core-boundary/run.sh"],
+    "doom-control-flow" => ["sh", "#{tests}/doom-core/control-flow.sh"],
+    "doom-borrowed-calls" => ["sh", "#{tests}/doom-core/borrowed-calls.sh"],
+    "doom-entries" => [RbConfig.ruby, SELF, "doom-entries", File.join(work, "doom-entries")],
+    "app-cross" => ["sh", "#{tests}/app/cross.sh"],
+    "app-lowering" => ["sh", "#{tests}/app/lowering.sh"],
+    "lowering" => ["sh", "-c", "rc=0; for s in #{tests}/lowering/*.sh; do d=$(mktemp -d #{work}/lowering.XXXXXX); " \
+                               "echo \"== $s\"; sh \"$s\" \"$d\" || rc=1; done; exit $rc"],
+    "freestanding" => ["sh", "#{tests}/freestanding/run.sh"]
+  }
+end
+
+# DOOM's three entries, packed and built as tests/doom-core/harness/
+# artifacts.sh builds them for this host and as tests/doom-core/rt1186.sh
+# builds them for the Cortex-M7, through the wrapped kernel.
+def doom_entries(dir)
+  kernel = ENV.fetch("KERNEL")
+  reader = ENV.fetch("SPINEL_TYPEDUMP")
+  clang = ENV["CLANG"] || File.join(ENV.fetch("LLVM_PREFIX"), "bin", "clang")
+  core = File.join(ROOT, "examples/doom/core")
+  entries = %w[doom_core_input doom_core_step doom_core_render]
+  FileUtils.mkdir_p(File.join(dir, "unit"))
+  File.readlines(File.join(core, "entries/units.tsv")).each do |l|
+    next if l.start_with?("#") || l.strip.empty?
+    FileUtils.cp(File.join(core, "src", l.split("\t")[0].strip), File.join(dir, "unit"))
+  end
+  FileUtils.cp(File.join(core, "entries/units.tsv"), File.join(dir, "manifest.tsv"))
+  ok = true
+  entries.each do |e|
+    st = File.join(dir, "stage", e)
+    FileUtils.mkdir_p(File.join(st, "src"))
+    ok &&= system(RbConfig.ruby, File.join(ROOT, "tools/doom/pack-core.rb"), "--manifest", File.join(dir, "manifest.tsv"),
+                  "--root", File.join(dir, "unit"), "--reader", reader, "--entry", e,
+                  "--output", File.join(st, "src/packed.rb"), "--map", File.join(st, "map.tsv"))
+    FileUtils.cp(File.join(core, "entries", "#{e}.contract"), st)
+  end
+  return 1 unless ok
+  m7 = %w[--target=thumbv7em-none-eabi -mcpu=cortex-m7 -mfloat-abi=soft -mthumb -Os -ffreestanding]
+  allow = File.join(ROOT, "tools/core/int64-allow.tsv")
+  # three at a time, as rt1186.sh builds them: the host builds, then the M7's
+  builds = entries.flat_map do |e|
+    st = File.join(dir, "stage", e)
+    host = File.join(dir, "host")
+    m7d = File.join(dir, "cm7")
+    FileUtils.mkdir_p([host, m7d])
+    [[kernel, "#{st}/#{e}.contract", "--root", st, "--typedump", reader, "--int64-allow", allow,
+      "-o", "#{host}/#{e}.o", "--header", "#{host}/#{e}.h", "--clang", clang],
+     [kernel, "#{st}/#{e}.contract", "--root", st, "--typedump", reader, "-o", "#{m7d}/#{e}.o",
+      "--header", "#{m7d}/#{e}.h", "--layout", "ptr32-i64-32long", "--report", "#{m7d}/report_#{e}.json",
+      "--profile", "hosted-stage2", "--clang", clang, "--", *m7]]
+  end
+  results = [builds.select.with_index { |_, i| i.even? }, builds.select.with_index { |_, i| i.odd? }].flat_map do |group|
+    group.map { |cmd| Thread.new { system(*cmd, out: File::NULL) } }.map(&:value)
+  end
+  puts "doom-entries: #{results.count(true)} of #{results.size} builds exit 0"
+  results.all? ? 0 : 1
+end
+
+# --counts: a file, `none` (the counts are written and not checked: only to
+# make a new baseline), or by default the tracked baseline.
+def counts_option(arg)
+  return nil if arg == "none"
+  path = File.expand_path(arg || BASELINE)
+  File.file?(path) or die("no counts baseline at #{path}")
+  path
+end
+
+# The gated sections tests/ORACLES.tsv lists, as [path, section].
+def oracle_sections
+  File.readlines(File.join(ROOT, "tests/ORACLES.tsv")).filter_map do |l|
+    next if l.start_with?("#") || l.strip.empty?
+    f = l.chomp.split("\t")
+    [f[0], f[1]]
+  end
+end
+
+# The skips the suites declare (SKIPS): [route, lane, the start of the reason].
+def declared_skips
+  File.readlines(SKIPS).filter_map do |l|
+    next if l.start_with?("#") || l.strip.empty?
+    l.chomp.split("\t", 3)
+  end
+end
+
+# What a route's log says about checks that did not run: [known, bad], each a
+# list of "route lane: text". A tool built from other source than the tree's
+# is always bad; a gated oracle section is known when tests/ORACLES.tsv lists
+# it; any other lane that could not run, and any skip, is known only when
+# SKIPS names it. A summary that counts more skips, or more lanes that could
+# not run, than the log names is bad as well, so nothing is passed by count.
+def scan_route_log(route, log, suite)
+  known = []
+  bad = []
+  oracles = oracle_sections
+  skips = declared_skips
+  named = Hash.new(0)
+  counted = Hash.new(0)
+  judge = lambda do |lane, text, line|
+    if text.include?("built from other source")
+      bad << "STALE #{route} #{lane}: #{text}"
+    elsif skips.any? { |r, l, why| r == route && l == lane && text.start_with?(why) }
+      known << "#{route} #{lane}: #{text}"
+    else
+      bad << "NOT-RUN #{route} #{lane}: #{line.strip}"
+    end
+  end
+  File.foreach(log) do |line|
+    line = line.chomp
+    case line
+    when /NOT RUN \(oracle\): (\S+) (\S+?): (.*)/
+      if oracles.include?([$1, $2]) then known << "#{route} oracle #{$1} #{$2}"
+      else bad << "NOT-RUN #{route} oracle: #{line.strip}"
+      end
+    when /^\s*NOT RUN\s{2,}(\S+): (.*)/ # a core-boundary lane that could not start
+      named[:notrun] += 1
+      judge.call($1, $2, line)
+    when /^\s*SKIP\s{2,}(\S+): (.*)/ # a core-boundary lane's named skip
+      named[:skip] += 1
+      judge.call($1, $2, line)
+    when /^\s*SKIP (.*)/
+      named[:skip] += 1
+      judge.call(suite, $1, line)
+    when /^(\S+): .*NOT RUN: (.*?)(?: \[[^\]]*\])?$/ # a freestanding lane
+      judge.call($1, $2, line)
+    when /built from other source/ # a suite with no lanes, refusing a tool
+      bad << "STALE #{route} #{suite}: #{line.strip}"
+    when /NOT RUN/
+      bad << "NOT-RUN #{route} #{suite}: #{line.strip}"
+    end
+    counted[:skip] += $1.to_i if line =~ /\b(\d+) skipped\b/
+    counted[:notrun] += $1.to_i if line =~ /\b(\d+) could not run\b/
+  end
+  { skip: "skip(s)", notrun: "lane(s) that could not run" }.each do |k, what|
+    next if counted[k] <= named[k]
+    bad << "NOT-RUN #{route} #{suite}: the log counts #{counted[k]} #{what} and names #{named[k]}"
+  end
+  [known, bad]
+end
+
+def summarize(work, counts_file)
+  rows = File.exist?(File.join(work, "calls.tsv")) ? File.readlines(File.join(work, "calls.tsv")).map { |l| l.chomp.split("\t") } : []
+  routes_ran = File.exist?(File.join(work, "routes.tsv")) ? File.readlines(File.join(work, "routes.tsv")).map { |l| l.chomp.split("\t") } : []
+  counts = Hash.new(0)
+  rows.each { |r| counts[[r[0], r[1]]] += 1 }
+  File.write(File.join(work, "counts.tsv"),
+             "#route\ttool\tcalls\n" + counts.sort.map { |(r, t), n| "#{r}\t#{t}\t#{n}\n" }.join)
+  bad = 0
+  known = []
+  puts "== routes"
+  routes_ran.each do |name, rc, secs|
+    calls = rows.count { |r| r[0] == name }
+    per = TOOLS.filter_map { |t| "#{t.sub('spinel-', '')} #{counts[[name, t]]}" if counts[[name, t]].positive? }.join(", ")
+    puts "  #{name}: suite exit #{rc}, #{secs} s, #{calls} call(s): #{per}"
+    if calls.zero?
+      puts "    FAIL #{name} called none of the wrapped tools"
+      bad += 1
+    end
+    log = File.join(work, "routes", "#{name}.log")
+    next unless File.file?(log)
+    # A line no lane claims is the suite's own: name it by its script.
+    argv = routes(work)[name] || []
+    suite = argv[0] == "sh" && argv[1].to_s.end_with?(".sh") ? argv[1].delete_prefix("#{ROOT}/") : name
+    k, b = scan_route_log(name, log, suite)
+    known.concat(k)
+    b.each { |m| puts "    #{m}" }
+    bad += b.size
+  end
+  puts "== skips the suites declare (#{known.size}), by name"
+  known.each { |m| puts "  #{m}" }
+  verdicts = Hash.new(0)
+  rows.each { |r| verdicts[r[2].split.first] += 1 }
+  puts "== calls: #{rows.size}; " + verdicts.sort.map { |v, n| "#{v} #{n}" }.join(", ")
+  TOOLS.each { |t| puts "  #{t}: #{rows.count { |r| r[1] == t }}" }
+  rows.each do |r|
+    next unless r[2].start_with?("DIFF", "EMPTY")
+    puts "  #{r[2].split.first} #{r[0]} #{r[1]}: #{r[2].split(' ', 2)[1]} (#{r[5]})"
+    bad += 1
+  end
+  if counts_file
+    base = Hash.new(0)
+    File.readlines(counts_file).each do |l|
+      next if l.start_with?("#") || l.strip.empty?
+      r, t, n = l.chomp.split("\t")
+      base[[r, t]] = n.to_i
+    end
+    keys = (base.keys | counts.keys).select { |r, _| routes_ran.any? { |x| x[0] == r } }
+    keys.sort.each do |k|
+      next if base[k] == counts[k]
+      puts "  COUNT #{k[0]} #{k[1]}: #{counts[k]} call(s), #{base[k]} in #{counts_file}"
+      bad += 1
+    end
+    puts "== counts: checked against #{counts_file}"
+  else
+    puts "== counts: NOT CHECKED (--counts none); WORK/counts.tsv is a candidate baseline"
+  end
+  puts "compare-lowering: #{bad.zero? ? 'no difference' : "#{bad} failure(s)"}"
+  bad.zero? ? 0 : 1
+end
+
+def run(argv)
+  old = new = work = perturb = counts = nil
+  only = []
+  until argv.empty?
+    case (a = argv.shift)
+    when "--old" then old = File.expand_path(argv.shift)
+    when "--new" then new = File.expand_path(argv.shift)
+    when "--work" then work = File.expand_path(argv.shift)
+    when "--route" then only << argv.shift
+    when "--perturb" then perturb = argv.shift
+    when "--counts" then counts = argv.shift
+    else die("run: unknown argument #{a}")
+    end
+  end
+  old && new && work or die("usage: compare-lowering run --old DIR --new DIR --work DIR [--route NAME]... [--perturb object|mlir|text] [--counts FILE|none]")
+  counts = counts_option(counts)
+  die("run: --perturb is object, mlir or text") if perturb && !%w[object mlir text].include?(perturb)
+  exit 0 unless OracleGate.allow?("tools/core/compare-lowering", "whole")
+  ENV.delete("ALLOW_ORACLE")
+  verify_frozen(old)
+  verify_frozen(new)
+  File.executable?(MLIR_OPT) or die("no mlir-opt at #{MLIR_OPT}; set LLVM_PREFIX")
+  die("run: #{work} exists") if File.exist?(work)
+  all = routes(work)
+  unknown = only - all.keys
+  die("run: unknown route(s) #{unknown.join(', ')}") unless unknown.empty?
+  bin = File.join(work, "build", "bin")
+  FileUtils.mkdir_p(bin)
+  old = make_arm(File.join(work, "arms", "old"), old)
+  new = make_arm(File.join(work, "arms", "new"), new)
+  File.write(File.join(work, "config.json"), JSON.generate("old" => old, "new" => new, "perturb" => perturb))
+  Dir.children(File.join(new, BIN)).each do |f|
+    if TOOLS.include?(f)
+      File.write(File.join(bin, f), "#!/bin/sh\nCL_STATE=#{work.shellescape} exec #{RbConfig.ruby.shellescape} " \
+                                    "#{SELF.shellescape} exec #{f} \"$@\"\n")
+      File.chmod(0o755, File.join(bin, f))
+    elsif f == "source-stamp.tsv"
+      FileUtils.cp(File.join(new, BIN, f), bin)
+    else
+      File.symlink(File.join(new, BIN, f), File.join(bin, f))
+    end
+  end
+  env = TOOL_ENV.transform_values { |t| File.join(bin, t) }.merge(
+    "SPINEL_CORE_BUILD" => File.join(work, "build"),
+    "SPINEL_TYPEDUMP" => File.join(new, "tools/contract/build/spinel-typedump"),
+    "FS_WORK" => File.join(work, "fs")
+  )
+  FileUtils.mkdir_p(File.join(work, "routes"))
+  (only.empty? ? all.keys : only).each do |name|
+    t0 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    log = File.join(work, "routes", "#{name}.log")
+    ok = system(env.merge("CL_ROUTE" => name), *all[name], chdir: ROOT, out: log, err: %i[child out])
+    rc = ok ? 0 : ($?.exitstatus || 1)
+    secs = (Process.clock_gettime(Process::CLOCK_MONOTONIC) - t0).round
+    File.open(File.join(work, "routes.tsv"), "a") { |f| f.puts([name, rc, secs].join("\t")) }
+    puts "compare-lowering: #{name}: suite exit #{rc}, #{secs} s"
+  end
+  exit summarize(work, counts)
+end
+
+case ARGV.shift
+when "freeze" then freeze(ARGV)
+when "run" then run(ARGV)
+when "report"
+  work = counts = nil
+  until ARGV.empty?
+    case (a = ARGV.shift)
+    when "--work" then work = File.expand_path(ARGV.shift)
+    when "--counts" then counts = ARGV.shift
+    else die("report: unknown argument #{a}")
+    end
+  end
+  work or die("usage: compare-lowering report --work DIR [--counts FILE|none]")
+  exit summarize(work, counts_option(counts))
+when "exec"
+  state = ENV.fetch("CL_STATE") { die("exec runs only under its wrapper") }
+  tool = ARGV.shift
+  TOOLS.include?(tool) or die("exec: unknown tool #{tool}")
+  exit Call.new(state, tool, ARGV).run
+when "doom-entries"
+  exit doom_entries(ARGV.fetch(0))
+else
+  die("usage: compare-lowering freeze|run|report ...; see the header")
+end

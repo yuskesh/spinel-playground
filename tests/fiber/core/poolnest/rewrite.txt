@@ -1,0 +1,33 @@
+def tick(frame, turn, spl_node_live, spl_node_free, spl_node_top, sfb_keeper_st, sfb_keeper_v)
+  t = turn[0]
+  v = -1
+  if t == 0
+    a = spl_node_alloc(spl_node_live, spl_node_free, spl_node_top)
+    spl_node_release(spl_node_alloc(spl_node_live, spl_node_free, spl_node_top), spl_node_live, spl_node_free, spl_node_top)
+    v = (used(0, spl_node_live) + used(1, spl_node_live) + used(2, spl_node_live)) * 100 + spl_node_alloc(spl_node_live, spl_node_free, spl_node_top) * 10 + a
+  elsif t == 1
+    v = 0
+    v = 1000 if (spl_node_used(pick(spl_node_live, spl_node_free, spl_node_top), spl_node_live) != 0)
+    spl_node_release(2, spl_node_live, spl_node_free, spl_node_top)
+    v += 100 if (spl_node_used(swap(spl_node_alloc(spl_node_live, spl_node_free, spl_node_top), spl_node_live, spl_node_free, spl_node_top), spl_node_live) != 0)
+    spl_node_release(2, spl_node_live, spl_node_free, spl_node_top)
+    v += (swap(spl_node_alloc(spl_node_live, spl_node_free, spl_node_top), spl_node_live, spl_node_free, spl_node_top)) * 10
+    v += used(0, spl_node_live) + used(1, spl_node_live) + used(2, spl_node_live)
+  elsif t == 2
+    spl_node_release(spl_node_release(0, spl_node_live, spl_node_free, spl_node_top) + 1, spl_node_live, spl_node_free, spl_node_top)
+    v = sfb_keeper_resume(0, sfb_keeper_start(0, 7, sfb_keeper_st, sfb_keeper_v), sfb_keeper_st, sfb_keeper_v) * 10 + used(0, spl_node_live) + used(1, spl_node_live)
+  elsif t == 3
+    v = spl_node_alloc(spl_node_live, spl_node_free, spl_node_top) * 10 + spl_node_alloc(spl_node_live, spl_node_free, spl_node_top)
+  elsif t == 4
+    spl_node_release(2, spl_node_live, spl_node_free, spl_node_top)
+    v = 0
+    v = 10 if (spl_node_used(spl_node_release(spl_node_alloc(spl_node_live, spl_node_free, spl_node_top), spl_node_live, spl_node_free, spl_node_top), spl_node_live) != 0)
+    v += used(0, spl_node_live) + used(1, spl_node_live) + used(2, spl_node_live)
+  end
+  if t < 5
+    n = put_i32(frame, 0, v)
+    Telemetry.put(frame, n)
+    turn[0] = t + 1
+  end
+  0
+end

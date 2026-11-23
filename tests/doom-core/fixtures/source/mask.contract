@@ -1,0 +1,12 @@
+core-contract 1
+root src/packed.rb
+entry dc_sp_mask
+result i64
+param state buffer i64 inout count n_state
+param n_state scalar u64
+param i_res scalar i64
+param i_base scalar i64
+param post_ofs scalar i64
+param lump_end scalar i64
+param queued scalar i64
+param zone_slot scalar i64

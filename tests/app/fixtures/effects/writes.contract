@@ -1,0 +1,11 @@
+core-contract 2
+root writes.rb
+entry run
+context thread
+result none
+param direct buffer i32 inout count const 4
+param viahelper buffer i32 inout count const 4
+param viaextern buffer u8 inout count const 16
+param ro buffer i32 inout count const 4
+extern Adc.latest symbol spc_board_adc_latest arg ch u32 returns i32 isr_ok guard ch < 1 else bounds bound iterations 1 evidence e/adc.json
+extern Telemetry.get symbol spc_channel_telemetry_get arg data buffer u8 inout returns i32 isr_ok static len(data) >= 16 else channel-buffer bound iterations 16 evidence e/get.json

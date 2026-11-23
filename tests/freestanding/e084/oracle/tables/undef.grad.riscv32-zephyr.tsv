@@ -1,0 +1,9 @@
+verdict	object	symbol	reason
+ALLOW	grad.riscv32-zephyr.o	__adddf3	compiler-rt builtin
+ALLOW	grad.riscv32-zephyr.o	__divdf3	compiler-rt builtin
+ALLOW	grad.riscv32-zephyr.o	__floatundidf	compiler-rt builtin
+ALLOW	grad.riscv32-zephyr.o	__floatunsidf	compiler-rt builtin
+ALLOW	grad.riscv32-zephyr.o	__gtdf2	compiler-rt builtin
+ALLOW	grad.riscv32-zephyr.o	__muldf3	compiler-rt builtin
+ALLOW	grad.riscv32-zephyr.o	__subdf3	compiler-rt builtin
+ALLOW	grad.riscv32-zephyr.o	spinel_trap	platform extern declared by the profile

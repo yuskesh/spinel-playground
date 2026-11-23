@@ -1,0 +1,9 @@
+core-contract 1
+root src/dc_once.rb
+entry dc_once
+result i64
+param buf buffer i32 inout count n_buf
+param n_buf scalar u64
+param counter buffer i32 inout count n_counter
+param n_counter scalar u64
+param i scalar i64

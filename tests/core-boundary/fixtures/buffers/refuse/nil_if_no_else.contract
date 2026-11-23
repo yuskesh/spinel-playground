@@ -1,0 +1,6 @@
+core-contract 1
+root refuse/nil_if_no_else.rb
+entry nil_if_no_else
+result i64
+param link buffer i32 in count n_link
+param n_link scalar u64

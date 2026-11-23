@@ -1,0 +1,17 @@
+name = "edge-twin"
+main = "index.mjs"
+compatibility_date = "2026-01-01"
+
+# kern.wasm arrives as an already-compiled WebAssembly.Module rather than as
+# bytes.  It matters more here than for a full Ruby worker: the module is ~2 KB,
+# so if compilation were on the request path it would be most of the cost.
+[[rules]]
+type = "CompiledWasm"
+globs = ["**/*.wasm"]
+fallthrough = false
+
+# NOTE WHAT IS NOT IN THIS FILE.  No [vars] (the kernel has no ENV), no KV/R2/D1
+# bindings (it has no host API), no node compatibility, no wasi shim.  A
+# freestanding module's entire contract with the platform is the ONE import the
+# worker supplies in code -- `env.spinel_trap` -- and everything else in this
+# example is ordinary JavaScript.

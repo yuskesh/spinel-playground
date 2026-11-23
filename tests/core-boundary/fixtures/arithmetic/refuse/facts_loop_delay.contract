@@ -1,0 +1,9 @@
+core-contract 1
+root refuse/facts_loop_delay.rb
+entry loop_delay
+result i64
+param a scalar i64
+param b scalar i64
+param c scalar i64
+param d scalar i64
+param n scalar i64

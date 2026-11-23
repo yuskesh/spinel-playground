@@ -1,0 +1,12 @@
+what	bytes
+kernel_only.arm64	3236
+kernel_plus_adjoint.arm64	3720
+kernel_only.cortex-m33-zephyr	4026
+kernel_plus_adjoint.cortex-m33-zephyr	4610
+kernel_only.riscv32-zephyr	4094
+kernel_plus_adjoint.riscv32-zephyr	5264
+kernel_only.wasm32-worker	2626
+kernel_plus_adjoint.wasm32-worker	3041
+wasm.raw	4354
+wasm.gzip	1530
+alloca_in_adjoint	0

@@ -1,0 +1,8 @@
+/build/
+*.bpf.o
+!docs/experiments/results/**/*.bpf.o
+*.a
+*.o
+.DS_Store
+._*
+.claude/

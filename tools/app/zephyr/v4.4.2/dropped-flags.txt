@@ -1,0 +1,9 @@
+# tools/app/zephyr/v4.4.2/dropped-flags.txt -- the flags of the Zephyr SDK GCC compile line that the
+# official clang rejects or ignores, dropped when the build compiles the glue and the providers
+# against Zephyr headers (decision 0014 Task 2; the same list as tests/app/fixtures/cross/dropped-flags.txt).
+-fno-printf-return-value
+-fno-reorder-functions
+-mfp16-format=ieee
+-fno-defer-pop
+--param=min-pagesize=0
+-specs=picolibc.specs

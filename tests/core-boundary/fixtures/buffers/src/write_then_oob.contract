@@ -1,0 +1,7 @@
+core-contract 1
+root src/write_then_oob.rb
+entry write_then_oob
+result i64
+param dst buffer u8 inout count n_dst
+param n_dst scalar u64
+param i scalar i64

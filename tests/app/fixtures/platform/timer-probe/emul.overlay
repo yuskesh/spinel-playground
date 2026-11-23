@@ -1,0 +1,20 @@
+/* The two emulators 0014 relies on, added to a board that has neither. */
+/ {
+	spinel_adc_emul: adc-emul {
+		compatible = "zephyr,adc-emul";
+		nchannels = <2>;
+		ref-internal-mv = <3300>;
+		#io-channel-cells = <1>;
+		status = "okay";
+	};
+
+	spinel_gpio_emul: gpio-emul {
+		compatible = "zephyr,gpio-emul";
+		rising-edge;
+		falling-edge;
+		gpio-controller;
+		#gpio-cells = <2>;
+		ngpios = <8>;
+		status = "okay";
+	};
+};

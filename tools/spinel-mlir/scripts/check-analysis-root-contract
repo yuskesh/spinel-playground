@@ -1,0 +1,108 @@
+#!/usr/bin/env ruby
+require 'fileutils'
+require 'json'
+compiler,tool,actual,output,resume=ARGV
+abort 'usage: check-analysis-root-contract compiler tool actual-v2 new-output' unless output
+abort 'unknown resume mode' unless [nil,'--resume-after-stop-a','--resume-after-stop-b'].include?(resume)
+abort 'output exists' if File.exist?(output)
+FileUtils.mkdir_p(output)
+log=File.open(File.join(output,'contract.jsonl'),'w')
+base="class RootCtx\n  def ping; 7; end\nend\ndef requested(ctx)\n  ctx.ping\nend\ndef keep(x)\n  x + 1\nend\ndef unused(z)\n  z\nend\nkeep(3)\n"
+fixture=File.join(output,'independent.rb');File.binwrite(fixture,base)
+run=lambda do |name,input,flags,expected,diagnostic=nil,emit=true|
+  target=File.join(output,"#{name}.mlir")
+  args=emit ? ["--emit-mlir=#{target}"] : ['-S']
+  system(compiler,*args,*flags,input,out:File.join(output,"#{name}.stdout"),err:File.join(output,"#{name}.stderr"))
+  status=$?;text=File.file?(target)?File.binread(target):''
+  named=!diagnostic || File.binread(File.join(output,"#{name}.stderr")).include?(diagnostic)
+  row={name:name,rc:status.exitstatus,signal:status.termsig,artifact_bytes:text.bytesize,
+    stdout_bytes:File.size(File.join(output,"#{name}.stdout")),expected_diagnostic:diagnostic,named_observation:named}
+  log.puts(JSON.generate(row));log.flush
+  abort "STOP #{name} status/diagnostic" unless status.exitstatus==expected && !status.signaled? && named && row[:stdout_bytes]==0
+  if expected==1
+    abort "STOP #{name} rejected metadata" unless text.include?('spinel_facts.status = "rejected"') &&
+      text.include?('spinel_facts.version = 2 : i64') && !text.lines.first.include?('def_node_id') &&
+      !text.lines.first.include?('resolved_arg_types') && !text.include?('"spinel_facts.table"')
+    system(tool,'--verify-only',target,out:File.join(output,"#{name}.verify.stdout"),err:File.join(output,"#{name}.verify.stderr"))
+    abort "STOP #{name} rejected verifier" unless $?.success?
+  elsif expected==2
+    abort "STOP #{name} usage artifact" unless text.empty? && !File.exist?(target)
+  end
+  text
+end
+unless ['--resume-after-stop-a','--resume-after-stop-b'].include?(resume)
+none=run.call('independent-none',fixture,[],0)
+root=run.call('independent-root',fixture,['--analysis-root=requested:obj_RootCtx'],0)
+table=lambda do |text|
+  start=text.index('  "spinel_facts.table"() ({') or abort 'missing table'
+  finish=text.index('}) {phase = "analyzed"',start) or abort 'missing analyzed end'
+  tables=text.byteslice(start,finish-start).split('}) {phase = "pristine"',2)
+  tables.last.lines.filter_map do |line|
+    next unless line.include?('"spinel_facts.node"')
+    [line[/\bid = (\d+) : i64/,1].to_i,line]
+  end.to_h
+end
+projection=lambda do |text,name|
+  nodes=table.call(text)
+  defpair=nodes.find{|_,line|line.include?('kind = "DefNode"') && line.include?("\"name\" = \"#{name}\"")}
+  abort "missing def #{name}" unless defpair
+  ids={};queue=[defpair.first]
+  until queue.empty?
+    id=queue.pop;next if ids[id] || !nodes[id];ids[id]=true
+    line=nodes[id]
+    %w[refs arrays].each do |key|
+      body=line[/#{key} = \{(.*?)\}/,1] || ''
+      body.scan(/(-?\d+) : i64/).flatten.each {|child|queue << child.to_i if child.to_i>=0}
+    end
+  end
+  text.lines.select do |line|
+    if line.include?('"spinel_facts.type"') || line.include?('"spinel_facts.evidence"')
+      ids[line[/node_id = (\d+) : i64/,1].to_i]
+    elsif line.include?('"spinel_facts.node"')
+      ids[line[/\bid = (\d+) : i64/,1].to_i]
+    end
+  end
+end
+%w[keep unused].each do |name|
+  before=projection.call(none,name);after=projection.call(root,name)
+  equal=before==after
+  log.puts(JSON.generate({name:"independent-#{name}",projection_lines:before.length,equal:equal}));log.flush
+  abort "STOP independent #{name} changed" unless equal && !before.empty?
+end
+run.call('unknown-method',fixture,['--analysis-root=missing:obj_RootCtx'],1,'analysis root: unknown top-level method')
+run.call('unknown-class',fixture,['--analysis-root=requested:obj_NoSuchClass'],1,'analysis root: unknown argument class')
+run.call('arity',fixture,['--analysis-root=requested:int,int'],1,'analysis root: argument arity mismatch')
+run.call('unknown-type',fixture,['--analysis-root=requested:mystery'],1,'analysis root: unknown argument type')
+end
+duplicate=File.join(output,'duplicate.rb');File.binwrite(duplicate,base+"def requested(ctx); ctx; end\n")
+run.call('ambiguous-method',duplicate,['--analysis-root=requested:obj_RootCtx'],1,'analysis root: ambiguous top-level method') unless resume == '--resume-after-stop-b'
+ambiguous=File.join(output,'ambiguous.rb')
+File.binwrite(ambiguous,"module A\n class Ctx; end\nend\nmodule B\n class Ctx; end\nend\ndef requested(ctx); ctx; end\n")
+run.call('ambiguous-class',ambiguous,['--analysis-root=requested:obj_Ctx'],1,'analysis root: ambiguous argument class')
+run.call('qualified-class',ambiguous,['--analysis-root=requested:obj_A::Ctx'],0)
+system(tool,'--verify-only',File.join(output,'qualified-class.mlir'),out:File.join(output,'qualified-class.verify.stdout'),err:File.join(output,'qualified-class.verify.stderr'))
+abort 'STOP qualified-class verifier' unless $?.success?
+{'default'=>'ctx=nil','rest'=>'*ctx','keyword'=>'ctx:','block'=>'&ctx'}.each do |name,signature|
+  input=File.join(output,"#{name}.rb");File.binwrite(input,"def requested(#{signature}); ctx; end\n")
+  run.call(name,input,['--analysis-root=requested:int'],1,'analysis root: requires fixed positional signature')
+end
+run.call('duplicate-flag',fixture,['--analysis-root=requested:int','--analysis-root=requested:int'],2,'duplicate analysis root request')
+run.call('malformed',fixture,['--analysis-root=bad'],2,'analysis root requires emit-mlir and valid')
+run.call('without-emit',fixture,['--analysis-root=requested:int'],2,'analysis root requires emit-mlir and valid',false)
+refused=File.join(output,'refused.rb');File.binwrite(refused,"def requested(ctx)\n Object.const_get(ctx)\nend\n")
+run.call('early-body-refusal',refused,['--analysis-root=requested:int'],1,'const_get with a name known only at run time')
+facts=File.binread(actual)
+mutations=[['M-root-id',facts.sub(/def_node_id = \d+ : i64/,'def_node_id = 2144 : i64'),
+  'analysis root def_node_id must reference an analyzed DefNode'],
+ ['M-root-arity',facts.sub('resolved_arg_types = ["obj_XdpMd"]','resolved_arg_types = []'),
+  'analysis root argument array length mismatch']]
+mutations.each do |name,bytes,diagnostic|
+  abort "unchanged mutation #{name}" if bytes==facts
+  input=File.join(output,"#{name}.mlir");File.binwrite(input,bytes)
+  system(tool,'--verify-only',input,out:File.join(output,"#{name}.stdout"),err:File.join(output,"#{name}.stderr"))
+  status=$?;named=File.binread(File.join(output,"#{name}.stderr")).include?(diagnostic)
+  log.puts(JSON.generate({name:name,rc:status.exitstatus,named_observation:named,diagnostic:diagnostic}));log.flush
+  abort "STOP #{name} unexpected rejection" unless status.exitstatus==1 && named
+end
+log.close
+puts "GREEN: #{resume || 'full suite'}; named observations and rejected verification; two distinct shape mutations"

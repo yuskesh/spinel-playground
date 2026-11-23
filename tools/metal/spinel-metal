@@ -1,0 +1,29 @@
+#!/bin/sh
+# spinel-metal -- Ruby compute kernels for Apple GPUs (Metal).
+#
+#   spinel-metal compile KERNEL.rb [-o DIR]
+#       KERNEL.rb to DIR/KERNEL.metal (MSL) and DIR/KERNEL_host.rb (its binding).
+#   spinel-metal host HOST.rb [-o DIR]
+#       HOST.rb, the Ruby program that drives the kernel, to a native binary.
+#
+# DIR defaults to build. The kernel generator is the gpu-metal target of the
+# compiler in tools/ebpf, so vendor/spinel has to be built. See README.md.
+set -eu
+HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+COMPILER=$HERE/../ebpf/bin/spinel-ebpf
+
+usage() {
+  echo "usage: spinel-metal compile KERNEL.rb [-o DIR]" >&2
+  echo "       spinel-metal host HOST.rb [-o DIR]" >&2
+  exit 2
+}
+
+[ $# -ge 2 ] || usage
+command=$1
+input=$2
+shift 2
+case $command in
+  compile) exec ruby "$COMPILER" compile "$input" --target gpu-metal "$@" ;;
+  host)    exec ruby "$COMPILER" compile "$input" --native-only --build "$@" ;;
+  *)       usage ;;
+esac

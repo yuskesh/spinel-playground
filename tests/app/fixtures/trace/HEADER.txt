@@ -1,0 +1,1 @@
+0	HEADER	0	255	epoch=0	clock_hz=25000000	horizon=30000	drain=5000	contexts=4	entries=3	states=4	channels=2

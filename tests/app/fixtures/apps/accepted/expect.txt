@@ -1,0 +1,9 @@
+HEADER	0	255	epoch=0	clock_hz=1000000	horizon=30000	drain=5000	contexts=4	entries=3	states=4	channels=2
+STORE	3	0	state=0	index=0	value=3300
+LOAD	0	1	state=0	index=0	value=3300
+DEQ	0	2	channel=1	msg_id=2	result=0	length=1	payload=09
+SELECT	0	1	clock=25000	release=5	skipped_from=0	skipped_to=0
+SELECT	3	0	clock=29000	release=29	skipped_from=0	skipped_to=0
+ENDMARK	1	255	quiescent=1	drained=1
+summary selected 36 skipped 0 cancelled 0 cut 0
+summary failures as declared: 0

@@ -1,0 +1,16 @@
+name: sys_enter_newfstatat
+ID: 816
+format:
+	field:unsigned short common_type;	offset:0;	size:2;	signed:0;
+	field:unsigned char common_flags;	offset:2;	size:1;	signed:0;
+	field:unsigned char common_preempt_count;	offset:3;	size:1;	signed:0;
+	field:int common_pid;	offset:4;	size:4;	signed:1;
+
+	field:int __syscall_nr;	offset:8;	size:4;	signed:1;
+	field:int dfd;	offset:16;	size:8;	signed:0;
+	field:const char * filename;	offset:24;	size:8;	signed:0;
+	field:struct stat * statbuf;	offset:32;	size:8;	signed:0;
+	field:int flag;	offset:40;	size:8;	signed:0;
+	field:__data_loc char[] __filename_val;	offset:48;	size:4;	signed:0;
+
+print fmt: "dfd: 0x%08lx, filename: 0x%08lx \"%s\", statbuf: 0x%08lx, flag: 0x%08lx", ((unsigned long)(REC->dfd)), ((unsigned long)(REC->filename)), __get_str(__filename_val), ((unsigned long)(REC->statbuf)), ((unsigned long)(REC->flag))

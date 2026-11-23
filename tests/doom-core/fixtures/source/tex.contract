@@ -1,0 +1,11 @@
+core-contract 1
+root src/packed.rb
+entry dc_sp_tex
+result i64
+param state buffer i64 inout count n_state
+param n_state scalar u64
+param i_res scalar i64
+param i_base scalar i64
+param atlas_base scalar i64
+param widthmask scalar i64
+param col scalar i64

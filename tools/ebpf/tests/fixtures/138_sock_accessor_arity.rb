@@ -1,0 +1,8 @@
+# E395 negative: a sock_* accessor called with no pointer.
+#
+# These are flat calls that take the `struct sock *` explicitly (E395 D3) — the
+# argument is not optional and there is no implicit receiver, so dropping it has
+# to fail loudly rather than pick some `sk` out of scope.
+def kprobe__tcp_sendmsg(sk)
+  @dport = sock_dport
+end

@@ -1,0 +1,6 @@
+core-contract 1
+root golden/none.rb
+entry gd_none
+result i64
+param a scalar i64
+param b scalar i64

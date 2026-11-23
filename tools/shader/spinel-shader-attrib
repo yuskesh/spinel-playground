@@ -1,0 +1,330 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+#
+# tools/shader/spinel-shader-attrib — the R3 attributor: finds automatically where the GPU placed FMA contractions
+#
+#   spinel-shader-attrib <src.rb> --gpu <f32.rgba> --out <dir> [--res N] [--tsv PATH]
+#
+# The last open item of the shader plan's first phase. It automates the research's manual work (r011_probes/src/attrib.c
+# wrote the candidate forms **by hand**). In the vocabulary of the shader comparison contract this is
+# **R3 = the attributor in explicit fmaf form**, not the gate's correct answer (R2) — its output is the
+# **observation** "the GPU's readback is bitwise equal to the f32 evaluation that spells these contraction positions with fmaf",
+# and a driver update can break it. When it breaks, attribute again.
+#
+# How it works:
+#   1. Each addf/subf node of the expression tree has at most 3 contraction choices
+#      ({separate, fold the left multiplication, fold the right multiplication} — an FMA is "one multiplication melts into an addition",
+#      so there is no "both"). The candidate space is their direct product.
+#   2. Each candidate is lowered to C in explicit fmaf form and built with clang -O2 -ffp-contract=off
+#      (fmaf is an explicit call, so off does not remove it. With anything but off, clang's own contraction
+#      spoils the candidate's spelling — exactly what happened in the research, where -ffp-contract=fast folded
+#      positions different from the GPU's).
+#   3. Compares every pixel bitwise with the GPU's RGBA32Float readback; the candidate with nd=0 = the attribution.
+#
+# Exits:
+#   exit 0  every channel was attributed (attrib.tsv + summary)
+#   exit 1  attribution failed (a channel has no candidate with nd=0) — the GPU chose a form outside
+#           the candidate space. **Never a silent failure** (this is the signal to extend
+#           the enumeration model)
+#   exit 3  input refused (outside the subset / the candidate space explodes)
+#   exit 4  something missing in the environment (die)
+#
+# The front end (Ast/Types/DeclReader/Subset/Expr/seed_source) is borrowed from spinel-rb2spv
+# with `load` — so that the subset definition and the type reading (the id-based contract) are not written
+# in two places. On the rb2spv side the CLI is wrapped in a __FILE__ guard.
+
+require "fileutils"
+require "tmpdir"
+
+load File.expand_path("spinel-rb2spv", __dir__)
+
+# The upper bound of the candidate space (per channel). It is a direct product, so it explodes for expressions with many additions —
+# beyond it, no partial search: a loud refusal (not "cannot attribute" but "does not enumerate").
+MAX_CANDS = (ENV["SP_SHADER_MAX_CANDS"] || "4096").to_i
+
+# ---------------------------------------------------------------- preparing the expression tree
+#
+# Single-use lets are inlined before candidates are enumerated. The model is the same as the depth refusal's
+# (naga folds SSA bindings used only once) — to match the form the GPU actually sees.
+# A let referenced more than once stays an opaque temporary. The addf/subf **inside** that binding
+# are candidates, but **fusion across a binding is not in the candidate space** (an honest boundary).
+def ref_count(e, name, acc = 0)
+  return acc + 1 if e.op == "var" && e.name == name
+  e.kids.each { |k| acc = ref_count(k, name, acc) }
+  acc
+end
+
+def subst(e, name, rep)
+  return rep if e.op == "var" && e.name == name
+  return e if e.kids.empty?
+  Expr.new(e.op, e.kids.map { |k| subst(k, name, rep) }, e.val, e.name)
+end
+
+# m = the return value of Subset#method_body { name:, params:, lets:, result: }
+# → { params:, lets: (the multi-use lets that remain), result: } (single-use ones already folded)
+def inline_single_use(m)
+  lets = m[:lets].map { |nm, e| [nm, e] }
+  result = m[:result]
+  kept = []
+  until lets.empty?
+    nm, e = lets.shift
+    uses = lets.sum { |_n, le| ref_count(le, nm) } + ref_count(result, nm) +
+           kept.sum { |_n, ke| ref_count(ke, nm) }
+    if uses == 1
+      lets = lets.map { |n2, e2| [n2, subst(e2, nm, e)] }
+      kept = kept.map { |n2, e2| [n2, subst(e2, nm, e)] }
+      result = subst(result, nm, e)
+    else
+      kept << [nm, e]
+    end
+  end
+  { params: m[:params], lets: kept, result: result }
+end
+
+# ---------------------------------------------------------------- enumerating the candidates
+#
+# Site = an addf/subf node. Sites are numbered in walk order (let order → pre-order of the expression),
+# and the direct product of each site's choices is the candidate space.
+def collect_sites(e, sites)
+  if %w[addf subf].include?(e.op)
+    opts = [:sep]
+    opts << :left  if e.kids[0].op == "mulf"
+    opts << :right if e.kids[1].op == "mulf"
+    sites << [e, opts]
+  end
+  e.kids.each { |k| collect_sites(k, sites) }
+end
+
+def channel_sites(m)
+  sites = []
+  m[:lets].each { |_nm, e| collect_sites(e, sites) }
+  collect_sites(m[:result], sites)
+  sites
+end
+
+# choice: an array mapping site index → :sep | :left | :right. Emitting an expression descends while
+# reading choice (this relies on the order of sites being the same as collect_sites' walk order,
+# so the walk lives in a single function).
+class CandEmit
+  def initialize(sites, choice, env)
+    @site_ix = {}
+    sites.each_with_index { |(node, _o), i| @site_ix[node.object_id] = i }
+    @choice = choice
+    @env = env
+  end
+
+  def emit(e)
+    case e.op
+    when "const" then "#{f32_lit(e.val)}f"
+    when "var"   then @env.fetch(e.name)
+    when "mulf"  then "(#{emit(e.kids[0])} * #{emit(e.kids[1])})"
+    when "addf", "subf"
+      c = @choice[@site_ix.fetch(e.object_id)]
+      a, b = e.kids
+      case c
+      when :sep
+        "(#{emit(a)} #{e.op == 'addf' ? '+' : '-'} #{emit(b)})"
+      when :left
+        # (x*y) + B → fmaf(x, y, B) / (x*y) - B → fmaf(x, y, -B).
+        # Negating an f32 is exact, so -B does not spoil the contraction semantics.
+        x, y = a.kids
+        rhs = e.op == "addf" ? emit(b) : "-#{emit(b)}"
+        "fmaf(#{emit(x)}, #{emit(y)}, #{rhs})"
+      when :right
+        # A + (x*y) → fmaf(x, y, A) / A - (x*y) → fmaf(-x, y, A)
+        x, y = b.kids
+        xs = e.op == "addf" ? emit(x) : "-#{emit(x)}"
+        "fmaf(#{xs}, #{emit(y)}, #{emit(a)})"
+      end
+    else
+      die("op that cannot be emitted: #{e.op}")
+    end
+  end
+end
+
+def candidate_source(m, sites, choice)
+  env = { m[:params][0] => "u", m[:params][1] => "v" }
+  em = CandEmit.new(sites, choice, env)
+  body = []
+  m[:lets].each do |nm, e|
+    body << "float #{nm} = #{em.emit(e)};"
+    env[nm] = nm
+  end
+  body << "return #{em.emit(m[:result])};"
+  body
+end
+
+# The one-line normal form frozen into the golden (C spelling with spaces squeezed out)
+def canon(body_lines)
+  body_lines.join(" ").gsub(/\s+/, "")
+end
+
+# ---------------------------------------------------------------- CLI
+def usage
+  warn File.read(__FILE__).lines[1, 6].map { |l| l.sub(/^# ?/, "") }.join
+  exit 2
+end
+
+src = nil
+gpu = nil
+outdir = nil
+res = 256
+tsv_path = nil
+i = 0
+while i < ARGV.size
+  case ARGV[i]
+  when "--gpu" then gpu = ARGV[i + 1]; i += 2
+  when "--out" then outdir = ARGV[i + 1]; i += 2
+  when "--res" then res = ARGV[i + 1].to_i; i += 2
+  when "--tsv" then tsv_path = ARGV[i + 1]; i += 2
+  when "-h", "--help" then usage
+  else
+    if ARGV[i].start_with?("-")
+      warn "spinel-shader-attrib: unknown argument #{ARGV[i]}"
+      usage
+    end
+    src = ARGV[i]
+    i += 1
+  end
+end
+usage if src.nil? || gpu.nil? || outdir.nil?
+die("no input: #{src}") unless File.exist?(src)
+die("no readback: #{gpu}") unless File.exist?(gpu)
+want = res * res * 4 * 4
+got = File.size(gpu)
+die("the readback has the wrong size: #{gpu} is #{got}B, --res #{res} should be #{want}B") if got != want
+die("bin/spinel is missing: #{SPINEL}") unless File.executable?(SPINEL)
+die("spinel-typedump is missing: #{TYPEDUMP}") unless File.executable?(TYPEDUMP)
+
+# ---- front end (the same 2 passes as rb2spv: declarations → seeding → id-based type reading) ----
+decls = DeclReader.new(Ast.new(src), File.read(src)).read_all
+die("#{src} has no shader_def") if decls.empty?
+die("#{decls.size} shader_defs (the attributor takes one at a time)") if decls.size != 1
+decl = decls.first
+if decl.textured?
+  warn "spinel-shader-attrib: REFUSE :#{decl.name}: this shader samples a texture and has no CPU reference to attribute against"
+  exit 3
+end
+
+seeded = File.join(Dir.tmpdir, "sp_attrib_seed_#{Process.pid}.rb")
+at_exit { File.unlink(seeded) if File.exist?(seeded) }
+File.write(seeded, seed_source(src, decls))
+ast = Ast.new(seeded)
+types = Types.new(seeded)
+types.cross_check!(ast)
+
+sub = Subset.new(ast, types)
+chans = %w[r g b].map { |ch| [ch, inline_single_use(sub.method_body(decl.channels[ch]))] }
+
+# ---- enumerating the candidates ----
+plans = chans.map do |ch, m|
+  sites = channel_sites(m)
+  n = sites.map { |_e, o| o.size }.reduce(1, :*)
+  if n > MAX_CANDS
+    warn "spinel-shader-attrib: REFUSE channel #{ch}: candidate space #{n} > limit #{MAX_CANDS} " \
+         "(the product of #{sites.size} sites). No partial search — SP_SHADER_MAX_CANDS moves the limit"
+    exit 3
+  end
+  choices = sites.map { |_e, o| o }.reduce([[]]) { |acc, o| acc.product(o).map { |a, x| a + [x] } }
+  cands = choices.map { |cho| [cho, candidate_source(m, sites, cho)] }
+  [ch, m, sites, cands]
+end
+
+# ---- generate C in explicit fmaf form → build with -ffp-contract=off → compare bitwise ----
+FileUtils.mkdir_p(outdir)
+csrc = ["/* Generated by spinel-shader-attrib: the R3 attributor's candidate table.",
+        " * Build with -ffp-contract=off — only the fmaf spellings are contractions. */",
+        "#include <stdio.h>", "#include <stdlib.h>", "#include <string.h>",
+        "#include <math.h>", ""]
+table = []
+plans.each do |ch, _m, _sites, cands|
+  cands.each_with_index do |(_cho, body), ci|
+    csrc << "static float cand_#{ch}_#{ci}(float u, float v) {"
+    body.each { |l| csrc << "  #{l}" }
+    csrc << "}"
+    table << [ch, ci]
+  end
+end
+csrc << ""
+csrc << "typedef struct { const char *ch; int idx; int chan; float (*f)(float, float); } Cand;"
+csrc << "static Cand cands[] = {"
+table.each do |ch, ci|
+  csrc << "  { \"#{ch}\", #{ci}, #{%w[r g b].index(ch)}, cand_#{ch}_#{ci} },"
+end
+csrc << "};"
+csrc << <<~CMAIN
+  int main(int argc, char **argv) {
+    if (argc < 2) return 2;
+    FILE *f = fopen(argv[1], "rb");
+    if (!f) { perror(argv[1]); return 2; }
+    size_t n = (size_t)#{res} * #{res} * 4;
+    float *gpu = malloc(n * 4);
+    if (fread(gpu, 4, n, f) != n) { fprintf(stderr, "short read\\n"); return 2; }
+    fclose(f);
+    for (size_t k = 0; k < sizeof(cands) / sizeof(cands[0]); k++) {
+      long nd = 0; double maxabs = 0.0;
+      for (int y = 0; y < #{res}; y++) for (int x = 0; x < #{res}; x++) {
+        float u = ((float)x + 0.5f) * #{f32_lit(1.0 / res)}f;
+        float v = ((float)y + 0.5f) * #{f32_lit(1.0 / res)}f;
+        float got = gpu[((size_t)y * #{res} + x) * 4 + cands[k].chan];
+        float ref = cands[k].f(u, v);
+        if (memcmp(&got, &ref, 4) != 0) {
+          nd++;
+          double d = fabs((double)got - (double)ref);
+          if (d > maxabs) maxabs = d;
+        }
+      }
+      printf("%s\\t%d\\t%ld\\t%.6e\\n", cands[k].ch, cands[k].idx, nd, maxabs);
+    }
+    return 0;
+  }
+CMAIN
+cpath = File.join(outdir, "attrib_gen.c")
+File.write(cpath, csrc.join("\n") + "\n")
+bin = File.join(outdir, "attrib_bin")
+# -lm: glibc keeps libm separate, so fmaf's definition is needed here.
+# On macOS it lives in libSystem, so this is a harmless no-op and the output does not change.
+run!(["cc", "-O2", "-ffp-contract=off", "-o", bin, cpath, "-lm"], "building the attribution candidates")
+raw = `#{bin} #{gpu}`
+die("the attribution binary failed") unless $?.success?
+
+# ---- verdict and report ----
+nd_of = {}
+raw.each_line do |l|
+  ch, ci, nd, maxabs = l.chomp.split("\t")
+  nd_of[[ch, ci.to_i]] = [nd.to_i, maxabs]
+end
+
+rows = ["ch\tcand\tnd\tmax_abs\tfused\tspelling"]
+attributed = {}
+plans.each do |ch, _m, sites, cands|
+  cands.each_with_index do |(cho, body), ci|
+    nd, maxabs = nd_of.fetch([ch, ci])
+    nfused = cho.count { |c| c != :sep }
+    rows << [ch, ci, nd, maxabs, nfused, canon(body)].join("\t")
+    (attributed[ch] ||= []) << [ci, cho, body] if nd.zero?
+  end
+  matches = attributed[ch] || []
+  if matches.empty?
+    best = cands.each_index.map { |ci| nd_of.fetch([ch, ci])[0] }.min
+    warn "spinel-shader-attrib: cannot attribute: channel #{ch} has no candidate with nd=0 " \
+         "(#{cands.size} candidates, smallest nd=#{best}). The GPU took a form outside the candidate space — " \
+         "the enumeration model (E136) needs extending"
+  else
+    matches.each do |ci, cho, body|
+      puts "#{ch}  cand=#{ci + 1}/#{cands.size}  #{cho.join(',')}  #{canon(body)}  nd=0"
+    end
+  end
+end
+
+tsv_path ||= File.join(outdir, "attrib.tsv")
+File.write(tsv_path, rows.join("\n") + "\n")
+warn "spinel-shader-attrib: #{tsv_path} (#{rows.size - 1} candidates)"
+
+# The machine-readable attribution result (the gate matches it against the golden). Only candidates with nd=0.
+att_rows = %w[r g b].flat_map do |ch|
+  (attributed[ch] || []).map { |_ci, _cho, body| "#{ch}\t#{canon(body)}" }
+end
+File.write(File.join(outdir, "attributed.tsv"), att_rows.join("\n") + "\n")
+
+exit(%w[r g b].all? { |ch| attributed[ch] } ? 0 : 1)

@@ -1,0 +1,7 @@
+core-contract 1
+root src/collision.rb
+entry collision
+result i64
+param src buffer u8 in count n_src
+param n_src scalar u64
+param src_id scalar i64

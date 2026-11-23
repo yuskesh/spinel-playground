@@ -1,0 +1,6 @@
+core-contract 1
+root src/fixed_mul.rb
+entry fixed_mul
+result i32
+param a scalar i32
+param b scalar i32

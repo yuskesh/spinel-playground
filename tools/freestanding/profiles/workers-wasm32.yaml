@@ -1,0 +1,12 @@
+# T-5 canonical form of wasm32-worker.yaml (P008 Phase 1, E090).
+#
+# `platform: none` is abolished (T-5): the honest statement was never "nobody
+# is there" but "a platform is there and this module receives nothing from it"
+# -- the JS host / wasm-ld supply the link, the module imports only its trap
+# hook.  supplies: trap-only says exactly that.  `arch:` is omitted: workers'
+# arch menu has one entry (wasm32) and T-5 derives it.
+#
+# The old-format file stays beside this one (historical gates read it);
+# results/E090's profile_equiv gate proves byte-identity of the output.
+platform: workers
+supplies: trap-only

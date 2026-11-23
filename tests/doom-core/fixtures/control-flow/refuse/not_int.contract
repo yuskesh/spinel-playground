@@ -1,0 +1,7 @@
+core-contract 1
+root refuse/not_int.rb
+entry not_int
+result i64
+param buf buffer i32 inout count n_buf
+param n_buf scalar u64
+param i scalar i64

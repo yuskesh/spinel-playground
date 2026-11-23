@@ -1,0 +1,4 @@
+# file	line:col	text the spinel-fiber diagnostic must contain, built with spinel-typedump (written by hand)
+poly.rb	5:3	and it types this one as poly
+poly_recv.rb	16:17	`step` is a yielding method of Gen and Tap, and the analysis types the receiver as poly
+ivar_recv.rb	15:21	must be a local variable or self

@@ -1,0 +1,5 @@
+key	value	evidence
+ram_bytes	4194304	https://github.com/zephyrproject-rtos/zephyr/blob/dccb09599635bdff17633fa7e9dab014b91dce90/boards/arm/mps2/mps2_an521_cpu0.dts#L108 (zephyr,sram = &ssram2_3 at line 39, reg size 0x400000; platform-facts an521_sram_bytes)
+max_thread_stack	4194304	the board states no bound below its SRAM; the image fit check of 0014 section 6 step 10 is the finer gate
+single_core	true	https://github.com/zephyrproject-rtos/zephyr/blob/dccb09599635bdff17633fa7e9dab014b91dce90/boards/arm/mps2/mps2_an521_cpu0.dts (cpu0 target; cpu1 is a separate board target mps2/an521/cpu1 and is not started by cpu0)
+security	secure,no-tfm,cmse	https://github.com/zephyrproject-rtos/zephyr/blob/dccb09599635bdff17633fa7e9dab014b91dce90/boards/arm/mps2/mps2_an521_cpu0_defconfig#L21 (CONFIG_TRUSTED_EXECUTION_SECURE=y, CONFIG_ARM_TRUSTZONE_M=y; CONFIG_BUILD_WITH_TFM unset; platform-facts an521_CONFIG_*)

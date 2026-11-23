@@ -1,0 +1,6 @@
+check	value	verdict
+fmuladd_sites.host_module	17	INFO (clang default -ffp-contract=on)
+fmuladd_sites.kern_ll	0	PASS
+fmuladd_sites.grad_min_ll	0	PASS
+stock_vs_native	FIRST-SPLIT-LAYER=primal (87 differing rows)	INFO
+unfused_vs_native	155 shared rows, 0 differ	PASS

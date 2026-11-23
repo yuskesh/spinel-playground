@@ -1,0 +1,61 @@
+# Fixed-point cases for decision 0007 task 5.
+#
+# Columns, tab-separated:
+#   id       unique; names the case in output
+#   helper   the entry under src/
+#   args     comma-separated arguments in order
+#
+# There is no expected-value column ON PURPOSE. The expectation is whatever
+# `Doom::Fixed` -- the ORIGINAL Full helper, unmodified, in
+# examples/doom/lib/doom/fixed.rb -- answers under CRuby. Writing the values
+# out here would be a second hand copying them, and the question this table
+# exists to settle is whether the extraction still agrees with the original.
+#
+# The cases are chosen for the places the two could disagree: the saturation
+# guard and its boundary, negative division where C truncates and Ruby floors,
+# INT32_MIN, and abs at INT32_MIN.
+#
+#id	helper	args
+toi32-zero	fixed_to_i32	0
+toi32-high-bit	fixed_to_i32	2147483648
+toi32-all-ones	fixed_to_i32	4294967295
+toi32-max	fixed_to_i32	2147483647
+toi32-min	fixed_to_i32	-2147483648
+toi32-wraps	fixed_to_i32	4294967296
+mul-unit	fixed_mul	65536,65536
+mul-negative	fixed_mul	-65536,65536
+mul-both-negative	fixed_mul	-65536,-65536
+mul-half	fixed_mul	32768,65536
+mul-max	fixed_mul	2147483647,2
+mul-min	fixed_mul	-2147483648,2
+mul-min-by-min	fixed_mul	-2147483648,-2147483648
+mul-zero	fixed_mul	0,-2147483648
+cdiv-truncates-negative	fixed_cdiv	-7,2
+cdiv-truncates-positive	fixed_cdiv	7,-2
+cdiv-both-negative	fixed_cdiv	-7,-2
+cdiv-exact	fixed_cdiv	8,2
+cdiv-min	fixed_cdiv	-2147483648,1
+div-unit	fixed_div	65536,131072
+div-negative	fixed_div	-65536,65536
+div-saturates-on-zero	fixed_div	1,0
+div-saturates-on-zero-negative	fixed_div	-1,0
+div-saturates-positive	fixed_div	2147483647,1
+div-saturates-negative	fixed_div	-2147483648,1
+div-boundary-just-inside	fixed_div	16383,1
+div-boundary-just-outside	fixed_div	16384,1
+div-min-by-minus-one	fixed_div	-2147483648,-1
+div-small	fixed_div	65536,65536
+div-mixed-sign	fixed_div	-65536,131072
+bam-zero	fixed_bam	0
+bam-one	fixed_bam	1
+bam-ang90	fixed_bam	1073741824
+bam-ang180	fixed_bam	2147483648
+bam-ang180-under	fixed_bam	2147483647
+bam-ang270	fixed_bam	3221225472
+bam-full-turn	fixed_bam	4294967296
+bam-turn-less-one	fixed_bam	4294967295
+bam-negative-one	fixed_bam	-1
+bam-back-half-turn	fixed_bam	-2147483648
+bam-under-a-turn	fixed_bam	-4294967296
+bam-two-turns	fixed_bam	8589934592
+bam-quarter-back	fixed_bam	-536870912

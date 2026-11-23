@@ -1,0 +1,42 @@
+__u8 daddr[4]
+__u8 daddr_v6[16]
+u8 x[4]
+unsigned char x[4]
+__s8 x[4]
+s8 x[4]
+signed char x[4]
+char x[4]
+const __u8 x[4]
+volatile u8 x[4]
+const volatile unsigned char x[4]
+__u16 x[2]
+__u8 x[2][3]
+__u8 x[0]
+__u8 x[65]
+__u8 x[ 4 ]
+__u8 x[n]
+__u8 x[+4]
+__u8 x[04]
+__u8 x [4]
+__u8 x[4]
+__u8 x
+u32 x
+int x
+unsigned long long x
+bool x
+__data_loc __u8[] x
+__rel_loc __u8[] x
+__u8 *x
+__u8 * x[4]
+void (*fn)(void)
+int (x)
+char (x)[4]
+struct foo x[4]
+mytype_t x[4]
+unsigned x[4]
+char comm[16]
+char  comm [16]
+x[4]
+[4]
+__u8 x[4
+__u8 x]4[

@@ -1,0 +1,6 @@
+core-contract 1
+root refuse/const_in_body.rb
+entry const_in_body
+result i64
+param a scalar i64
+param b scalar i64

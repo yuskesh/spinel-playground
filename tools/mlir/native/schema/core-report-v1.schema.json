@@ -1,0 +1,412 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "spinel-core-report-v1",
+  "title": "Spinel Extended CORE build report, version 1",
+  "description": "Decision 0010. One report per CORE entry and target. docs/core/core-report.md describes every field. Uses only: type, const, enum, pattern, minimum, minItems, maxItems, required, properties, additionalProperties, items, oneOf and local $ref.",
+  "type": "object",
+  "required": ["format", "version", "entry", "target", "profile", "inputs", "object", "tools", "properties"],
+  "additionalProperties": false,
+  "properties": {
+    "format": {"const": "spinel-core-report"},
+    "version": {"const": 1},
+    "entry": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"},
+    "target": {"type": "string", "pattern": "^[^\\s]+$"},
+    "profile": {"enum": ["hosted-stage2", "realtime"]},
+    "inputs": {
+      "type": "object",
+      "required": ["contract", "source"],
+      "additionalProperties": false,
+      "properties": {
+        "contract": {
+          "type": "object",
+          "required": ["file", "sha256"],
+          "additionalProperties": false,
+          "properties": {
+            "file": {"type": "string"},
+            "sha256": {"$ref": "#/$defs/sha256"}
+          }
+        },
+        "source": {"$ref": "#/$defs/artifact"}
+      }
+    },
+    "object": {
+      "type": "object",
+      "required": ["file", "sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "file": {"type": "string"},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "tools": {
+      "type": "object",
+      "required": ["kernel", "reader", "clang"],
+      "additionalProperties": false,
+      "properties": {
+        "kernel": {"$ref": "#/$defs/digestOnly"},
+        "reader": {"$ref": "#/$defs/digestOnly"},
+        "clang": {
+          "type": "object",
+          "required": ["version", "sha256"],
+          "additionalProperties": false,
+          "properties": {
+            "version": {"type": "string"},
+            "sha256": {"$ref": "#/$defs/sha256"}
+          }
+        }
+      }
+    },
+    "properties": {
+      "type": "object",
+      "required": ["recursion", "allocation", "loop_bound", "stack_budget", "extern_effects", "undefined_symbols"],
+      "additionalProperties": false,
+      "properties": {
+        "recursion": {"$ref": "#/$defs/genericProperty"},
+        "allocation": {"$ref": "#/$defs/genericProperty"},
+        "loop_bound": {
+          "oneOf": [
+            {"$ref": "#/$defs/notEvaluated"},
+            {"$ref": "#/$defs/loopBound"}
+          ]
+        },
+        "stack_budget": {
+          "oneOf": [
+            {"$ref": "#/$defs/stackNotEvaluated"},
+            {"$ref": "#/$defs/stackAdmissionFailed"},
+            {"$ref": "#/$defs/stackMeasured"}
+          ]
+        },
+        "extern_effects": {"$ref": "#/$defs/genericProperty"},
+        "undefined_symbols": {"$ref": "#/$defs/genericProperty"}
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "digestOnly": {
+      "type": "object",
+      "required": ["sha256"],
+      "additionalProperties": false,
+      "properties": {"sha256": {"$ref": "#/$defs/sha256"}}
+    },
+    "nullableString": {"type": ["string", "null"]},
+    "mode": {"enum": ["observe", "enforce"]},
+    "verdict": {"enum": ["pass", "fail", "unknown"]},
+    "artifact": {
+      "type": "object",
+      "required": ["file", "revision", "sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "file": {"type": "string"},
+        "revision": {"$ref": "#/$defs/nullableString"},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "iterations": {
+      "type": "object",
+      "required": ["kind", "expression"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {"const": "iterations"},
+        "expression": {"type": "string", "pattern": "^[-+*(),0-9A-Za-z_ ]+$"}
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["kind", "subject", "value", "artifact"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {"enum": ["static_proof", "runtime_guard", "measurement", "declaration", "attestation"]},
+        "subject": {"type": "string"},
+        "value": {},
+        "artifact": {"$ref": "#/$defs/artifact"}
+      }
+    },
+    "iterationEvidence": {
+      "type": "object",
+      "required": ["kind", "subject", "value", "artifact"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {"const": "static_proof"},
+        "subject": {"type": "string"},
+        "value": {"$ref": "#/$defs/iterations"},
+        "artifact": {"$ref": "#/$defs/artifact"}
+      }
+    },
+    "notEvaluated": {
+      "type": "object",
+      "required": ["mode", "evaluated"],
+      "additionalProperties": false,
+      "properties": {
+        "mode": {"$ref": "#/$defs/mode"},
+        "evaluated": {"const": false}
+      }
+    },
+    "evaluated": {
+      "type": "object",
+      "required": ["mode", "evaluated", "verdict", "evidence"],
+      "properties": {
+        "mode": {"$ref": "#/$defs/mode"},
+        "evaluated": {"const": true},
+        "verdict": {"$ref": "#/$defs/verdict"},
+        "evidence": {"type": "array", "items": {"$ref": "#/$defs/evidence"}}
+      }
+    },
+    "genericProperty": {
+      "oneOf": [
+        {"$ref": "#/$defs/notEvaluated"},
+        {"$ref": "#/$defs/evaluated"}
+      ]
+    },
+    "stackNotEvaluated": {
+      "type": "object",
+      "required": ["mode", "evaluated", "reason"],
+      "additionalProperties": false,
+      "properties": {
+        "mode": {"$ref": "#/$defs/mode"},
+        "evaluated": {"const": false},
+        "reason": {"type": "string"}
+      }
+    },
+    "stackAdmissionFailed": {
+      "type": "object",
+      "required": ["mode", "evaluated", "verdict", "reason", "evidence"],
+      "additionalProperties": false,
+      "properties": {
+        "mode": {"$ref": "#/$defs/mode"},
+        "evaluated": {"const": true},
+        "verdict": {"const": "fail"},
+        "reason": {"type": "string"},
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {"$ref": "#/$defs/stackEvidence"}
+        }
+      }
+    },
+    "stackMeasured": {
+      "type": "object",
+      "required": ["mode", "evaluated", "verdict", "reason", "kernel_stack",
+                   "call_overhead", "evidence", "worst_path", "frames"],
+      "additionalProperties": false,
+      "properties": {
+        "mode": {"$ref": "#/$defs/mode"},
+        "evaluated": {"const": true},
+        "verdict": {"$ref": "#/$defs/verdict"},
+        "reason": {"type": "string"},
+        "kernel_stack": {"type": "integer", "minimum": 0},
+        "interrupt_reserve": {"type": "integer", "minimum": 0},
+        "provisioned_stack": {"type": "integer", "minimum": 0},
+        "call_overhead": {
+          "type": "object",
+          "required": ["bytes", "target", "evidence"],
+          "additionalProperties": false,
+          "properties": {
+            "bytes": {"type": "integer", "minimum": 0},
+            "target": {"type": "string"},
+            "evidence": {"type": "string"}
+          }
+        },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/stackEvidence"}
+        },
+        "worst_path": {"type": "array", "items": {"type": "string"}},
+        "frames": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["function", "bytes"],
+            "additionalProperties": false,
+            "properties": {
+              "function": {"type": "string"},
+              "bytes": {"type": ["integer", "null"], "minimum": 0}
+            }
+          }
+        }
+      }
+    },
+    "stackEvidence": {
+      "type": "object",
+      "required": ["kind", "subject"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {"enum": ["static_proof", "measurement", "declaration"]},
+        "subject": {"type": "string"},
+        "method": {"type": "string"},
+        "detail": {"type": "string"},
+        "origin": {"const": "fixture"},
+        "frame_total": {"type": "integer", "minimum": 0},
+        "call_edges": {"type": "integer", "minimum": 0},
+        "artifact": {"$ref": "#/$defs/artifact"},
+        "bytes": {"type": "integer", "minimum": 0}
+      }
+    },
+    "loopReason": {
+      "enum": [
+        "condition-not-induction",
+        "step-not-constant",
+        "step-skipped-by-next",
+        "bound-varies",
+        "bound-from-buffer-element",
+        "no-exit-condition",
+        "step-conditional",
+        "step-away-from-bound",
+        "induction-reassigned",
+        "start-not-expressible",
+        "bound-from-call",
+        "bound-not-expressible"
+      ]
+    },
+    "termReason": {
+      "enum": [
+        "condition-not-induction",
+        "step-not-constant",
+        "step-skipped-by-next",
+        "bound-varies",
+        "bound-from-buffer-element",
+        "no-exit-condition",
+        "step-conditional",
+        "step-away-from-bound",
+        "induction-reassigned",
+        "start-not-expressible",
+        "bound-from-call",
+        "bound-not-expressible",
+        "argument-not-expressible",
+        "enclosing-unknown",
+        "expression-too-large"
+      ]
+    },
+    "loopBound": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["mode", "evaluated", "verdict", "evidence", "work_bound", "loops"],
+          "additionalProperties": false,
+          "properties": {
+            "mode": {"$ref": "#/$defs/mode"},
+            "evaluated": {"const": true},
+            "verdict": {"const": "pass"},
+            "evidence": {"type": "array", "minItems": 1, "maxItems": 1, "items": {"$ref": "#/$defs/iterationEvidence"}},
+            "work_bound": {"$ref": "#/$defs/knownWork"},
+            "loops": {"type": "array", "items": {"$ref": "#/$defs/passLoop"}}
+          }
+        },
+        {
+          "type": "object",
+          "required": ["mode", "evaluated", "verdict", "evidence", "work_bound", "loops"],
+          "additionalProperties": false,
+          "properties": {
+            "mode": {"$ref": "#/$defs/mode"},
+            "evaluated": {"const": true},
+            "verdict": {"const": "unknown"},
+            "evidence": {"type": "array", "maxItems": 0},
+            "work_bound": {"$ref": "#/$defs/unknownWork"},
+            "loops": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/loop"}}
+          }
+        }
+      ]
+    },
+    "knownWork": {
+      "type": "object",
+      "required": ["expression", "limit", "terms"],
+      "additionalProperties": false,
+      "properties": {
+        "expression": {"type": "string"},
+        "limit": {"type": "null"},
+        "terms": {"type": "array", "items": {"$ref": "#/$defs/knownTerm"}}
+      }
+    },
+    "unknownWork": {
+      "type": "object",
+      "required": ["expression", "limit", "terms"],
+      "additionalProperties": false,
+      "properties": {
+        "expression": {"type": "null"},
+        "limit": {"oneOf": [{"type": "null"}, {"enum": ["too-many-terms", "expression-too-large"]}]},
+        "terms": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/term"}}
+      }
+    },
+    "context": {"type": "array", "items": {"type": "string", "pattern": "^(loop|call):"}},
+    "knownTerm": {
+      "type": "object",
+      "required": ["loop", "context", "iterations", "reason", "detail"],
+      "additionalProperties": false,
+      "properties": {
+        "loop": {"$ref": "#/$defs/loopId"},
+        "context": {"$ref": "#/$defs/context"},
+        "iterations": {"type": "string", "pattern": "^[-+*(),0-9A-Za-z_ ]+$"},
+        "reason": {"type": "null"},
+        "detail": {"type": "null"}
+      }
+    },
+    "unknownTerm": {
+      "type": "object",
+      "required": ["loop", "context", "iterations", "reason", "detail"],
+      "additionalProperties": false,
+      "properties": {
+        "loop": {"$ref": "#/$defs/loopId"},
+        "context": {"$ref": "#/$defs/context"},
+        "iterations": {"type": "null"},
+        "reason": {"$ref": "#/$defs/termReason"},
+        "detail": {"$ref": "#/$defs/nullableString"}
+      }
+    },
+    "term": {"oneOf": [{"$ref": "#/$defs/knownTerm"}, {"$ref": "#/$defs/unknownTerm"}]},
+    "loopId": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*#(0|[1-9][0-9]*)$"},
+    "conjunct": {
+      "type": "object",
+      "required": ["index", "rendering"],
+      "additionalProperties": false,
+      "properties": {
+        "index": {"type": "integer", "minimum": 0},
+        "rendering": {"type": "string"}
+      }
+    },
+    "passLoop": {
+      "type": "object",
+      "required": ["id", "method", "ordinal", "digest", "digest_version", "label", "header", "location", "parent", "verdict", "reason", "detail", "conjunct", "evidence"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"$ref": "#/$defs/loopId"},
+        "method": {"type": "string"},
+        "ordinal": {"type": "integer", "minimum": 0},
+        "digest": {"$ref": "#/$defs/sha256"},
+        "digest_version": {"const": 1},
+        "label": {"type": "null"},
+        "header": {"type": "string", "pattern": "^(while|times|upto|downto|each|each_with_index) "},
+        "location": {"type": "string", "pattern": ":[0-9]+:[0-9]+$"},
+        "parent": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/loopId"}]},
+        "verdict": {"const": "pass"},
+        "reason": {"type": "null"},
+        "detail": {"type": "null"},
+        "conjunct": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/conjunct"}]},
+        "evidence": {"type": "array", "minItems": 1, "maxItems": 1, "items": {"$ref": "#/$defs/iterationEvidence"}}
+      }
+    },
+    "unknownLoop": {
+      "type": "object",
+      "required": ["id", "method", "ordinal", "digest", "digest_version", "label", "header", "location", "parent", "verdict", "reason", "detail", "conjunct", "evidence"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"$ref": "#/$defs/loopId"},
+        "method": {"type": "string"},
+        "ordinal": {"type": "integer", "minimum": 0},
+        "digest": {"$ref": "#/$defs/sha256"},
+        "digest_version": {"const": 1},
+        "label": {"type": "null"},
+        "header": {"type": "string", "pattern": "^(while|times|upto|downto|each|each_with_index) "},
+        "location": {"type": "string", "pattern": ":[0-9]+:[0-9]+$"},
+        "parent": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/loopId"}]},
+        "verdict": {"const": "unknown"},
+        "reason": {"$ref": "#/$defs/loopReason"},
+        "detail": {"$ref": "#/$defs/nullableString"},
+        "conjunct": {"type": "null"},
+        "evidence": {"type": "array", "maxItems": 0}
+      }
+    },
+    "loop": {"oneOf": [{"$ref": "#/$defs/passLoop"}, {"$ref": "#/$defs/unknownLoop"}]}
+  }
+}

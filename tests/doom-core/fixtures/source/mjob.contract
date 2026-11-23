@@ -1,0 +1,24 @@
+core-contract 1
+root src/packed.rb
+entry dc_sp_mjob
+result i64
+param scr buffer u8 inout count n_scr
+param n_scr scalar u64
+param cmap buffer u8 in count n_cmap
+param n_cmap scalar u64
+param wad buffer u8 in count n_wad
+param n_wad scalar u64
+param zonebuf buffer u8 in count n_zonebuf
+param n_zonebuf scalar u64
+param srcres scalar i64
+param srcbase scalar i64
+param x scalar i64
+param yl scalar i64
+param yh scalar i64
+param iscale scalar i64
+param texmid scalar i64
+param colormap_row scalar i64
+param centery scalar i64
+param width scalar i64
+param vwx scalar i64
+param vwy scalar i64

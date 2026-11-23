@@ -1,0 +1,36 @@
+#!/usr/bin/env ruby
+require 'json'
+capture,output=ARGV
+abort 'usage: summarize-producer-coverage capture output' unless output
+rows=File.readlines(File.join(capture,'arms.jsonl')).map{|l|JSON.parse(l)}
+catalog={};detail=[];unknown=Hash.new(0);dispatch=Hash.new(0);unresolved=[]
+rows.each do |r|
+  path=File.join(capture,'arms',r.fetch('id'),r.fetch('arm').to_s,'inventory.json')
+  next unless File.file?(path)
+  x=JSON.parse(File.read(path))
+  x.fetch('tables').each do |phase,kinds|
+    kinds.each do |kind,data|
+      key="#{r.fetch('group')}/#{phase}/#{kind}"
+      item=(catalog[key]||={arms:0,nodes:0,fields:{}})
+      item[:arms]+=1;item[:nodes]+=data.fetch('count')
+      data.fetch('fields').each{|f,keys|item[:fields][f]=((item[:fields][f]||[])+keys).uniq.sort}
+    end
+  end
+  x.fetch('selected_nodes').each do |n|
+    unknown[n.fetch('kind')]+=1 if n.fetch('type_kinds').include?('unknown')
+    n.fetch('evidence').each{|e|dispatch[e['dispatch']||'<block/no-dispatch>']+=1}
+    absent=n.fetch('evidence').filter_map do |e|
+      missing=%w[dispatch callee candidates inlined].reject{|key|e.key?(key)}
+      missing.empty? ? nil : {kind:e.fetch('kind'),missing:missing,dispatch:e['dispatch'],callee:e['callee']}
+    end
+    if n['missing_type'] || n['missing_evidence'] || n.fetch('type_kinds').include?('unknown') || !absent.empty?
+      detail<<r.slice('id','group','arm').merge(node:n,absent_optional_evidence_fields:absent)
+    end
+  end
+  unresolved.concat(x.fetch('unresolved_helper_edges').map{|e|r.slice('id','group','arm').merge(e)})
+end
+File.write(File.join(output,'kind-field-catalog.json'),JSON.pretty_generate(catalog.sort.to_h)+"\n")
+File.open(File.join(output,'availability.jsonl'),'w'){|f|detail.each{|r|f.puts(JSON.generate(r))}}
+File.write(File.join(output,'availability-summary.json'),JSON.pretty_generate({unknown_type_nodes:unknown,dispatch_records:dispatch,unresolved_helper_edges:unresolved,
+  note:'Optional evidence absence and unknown structural nodes are observations, not automatic producer defects; failed arms have no inventory.'})+"\n")
+puts "inventory arms=#{rows.count{|r|r['artifact_bytes']>0}} catalog=#{catalog.length} detailed_availability=#{detail.length}"

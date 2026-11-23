@@ -1,0 +1,10 @@
+core-contract 1
+root src/packed.rb
+entry dc_mr
+result i64
+param rndtable buffer u8 in count n_rndtable
+param n_rndtable scalar u64
+param rndindex buffer i64 inout count n_rndindex
+param n_rndindex scalar u64
+param mcount buffer i64 inout count n_mcount
+param n_mcount scalar u64

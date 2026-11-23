@@ -1,0 +1,75 @@
+# tools/doom/core-fields.tsv — decision 0008 task 5's field dispositions.
+#
+# 0008: "The audit must classify every ivar reachable from the selected roots
+# as a stored field, immutable prepared value, eliminated reference-only trace
+# field, or Full-only value with a reason."
+#
+# MOST OF THAT IS DERIVED, not written here. The reader's own type for the
+# storage settles it: `int` and `bool` are stored scalars, `int_array` is a
+# stored array, `string` and `str_array` are prepared byte resources, and an
+# `obj_*` is a reference to something Full owns, which CORE cannot hold at all.
+# This table is only for the fields whose type the reader left `poly` or
+# `poly_array` -- it resolved the expression but not what it produces -- and a
+# field in that state with no row here fails the audit.
+#
+# disposition: stored | prepared | eliminated | full-only
+#
+# class@ivar	disposition	element	why
+Game@@bottomslope	stored	i64	A 16.16 slope bound for aiming. Fixed point is an integer here.
+Game@@topslope	stored	i64	The other end of the same aiming range.
+Game@@crushchange	stored	i64	A 0/1 flag, stored numerically per 0008 and compared explicitly.
+Game@@linetarget	stored	i64	A mobj slot index, or -1 for none. The negative is the sentinel, which is why it is i64 and not u32.
+Game@@usething	stored	i64	A mobj slot index, same shape as linetarget.
+Game@@pl_health	stored	i64	Player health. Goes negative on death in vanilla, so the domain includes it.
+Game@@pl_armorpoints	stored	i64	Player armour.
+Game@@pl_damagecount	stored	i64	The red-flash counter.
+Game@@strace_x	stored	i64	Sight-trace origin, 16.16.
+Game@@strace_y	stored	i64	Sight-trace origin, 16.16.
+Game@@t2x	stored	i64	Sight-trace far point, 16.16.
+Game@@t2y	stored	i64	Sight-trace far point, 16.16.
+Game@@tmx	stored	i64	The move being tested, 16.16.
+Game@@tmy	stored	i64	The move being tested, 16.16.
+Game@@fl_crush	stored	i64	Per-floor crush flags, one element per moving floor. An array of 0/1.
+Renderer@@basexscale	stored	i64	Plane mapping scale, 16.16.
+Renderer@@baseyscale	stored	i64	Plane mapping scale, 16.16.
+Renderer@@bottomfrac	stored	i64	Wall stepping accumulator, 16.16.
+Renderer@@bottomstep	stored	i64	Wall stepping increment, 16.16.
+Renderer@@topfrac	stored	i64	Wall stepping accumulator, 16.16.
+Renderer@@topstep	stored	i64	Wall stepping increment, 16.16.
+Renderer@@pixhigh	stored	i64	Wall stepping accumulator, 16.16.
+Renderer@@pixhighstep	stored	i64	Wall stepping increment, 16.16.
+Renderer@@pixlow	stored	i64	Wall stepping accumulator, 16.16.
+Renderer@@pixlowstep	stored	i64	Wall stepping increment, 16.16.
+Renderer@@dc_iscale	stored	i64	Column texture step, 16.16.
+Renderer@@dc_yh	stored	i64	Column span end, a screen row.
+Renderer@@dc_yl	stored	i64	Column span start, a screen row.
+Renderer@@dc_srcbase	stored	i64	An OFFSET into the texture atlas, not an address. CORE has no addresses; Full owns the atlas and CORE indexes it.
+Renderer@@dc_srcofs	stored	i64	The second half of the same offset pair.
+Renderer@@rw_distance	stored	i64	Wall distance, 16.16.
+Renderer@@rw_offset	stored	i64	Wall texture offset, 16.16.
+Renderer@@rw_scale	stored	i64	Wall scale, 16.16.
+Renderer@@rw_scalestep	stored	i64	Wall scale increment, 16.16.
+Renderer@@spryscale	stored	i64	Sprite scale, 16.16.
+Renderer@@sprtopscreen	stored	i64	Sprite top, 16.16.
+Renderer@@fuzzpos	stored	i64	The fuzz table index, 0..49 (render.rb:454, 1990, 2016-2017). Typed poly since upstream stopped calling `poly - poly` an int: `count = yh - yl` reads @dc_yl / @dc_yh, which the reader leaves poly; the values are column numbers.
+Game@@nofit	stored	i64	A flag, false or true (specials.rb:430, 471), stored numerically per 0008. Typed poly on the new pin because it is first written in change_sector, not initialize, so it is nil until then; its one read (specials.rb:443) follows the write at 430 in the same method.
+Game@@linespecials	prepared	i64	Line numbers whose special is 48 (specials.rb:63 stores `i`, an int). Typed poly_array on the new pin because an array ivar written in an included module (Specials, in Game) loses its element type there; a plain class keeps int_array.
+Textures@@anim_istexture	prepared	i64	ANIMDEFS row[0], 0 or 1 (texture.rb:183). ANIMDEFS mixes integers and names, so a row's element is poly; columns 0 and 3 are integers.
+Textures@@anim_basepic	prepared	i64	A texture or flat number from texture_num / flat_num (texture.rb:184).
+Textures@@anim_numpics	prepared	i64	picnum - basepic + 1, at least 2 (texture.rb:181-185).
+Textures@@anim_speed	prepared	i64	ANIMDEFS row[3], the cycle speed in tics (texture.rb:186).
+StatusBar@@sbar	prepared	i64	`@sbar = wad.num_for_name("STBAR")` at statusbar.rb:111 -- a LUMP NUMBER, not the patch's bytes. Measured by reading it off a StatusBar built from doom1.wad; calling it u8 made the reference route refuse it as a value outside a byte, which is what said so.
+StatusBar@@armsbg	prepared	i64	`wad.num_for_name("STARMS")` at statusbar.rb:156 -- a lump number, same as @sbar.
+StatusBar@@tallpercent	prepared	i64	`wad.num_for_name("STTPRCNT")` at statusbar.rb:112 -- a lump number, same as @sbar.
+Wad@@lumps	full-only	-	The WAD directory: an array of Lump objects. CORE receives buffers, not object references, and what it needs from a lump -- a position and a size -- Full passes as scalars or prepares as a table.
+Level@@skyflatnum	prepared	i64	The flat number that means sky. Full resolves it when it loads the map and the closure only reads it, so it is a prepared value and not storage CORE keeps.
+Level@@skytexture	prepared	i64	The sky texture index, resolved by Full at map load and only read here.
+Level@@reject	prepared	u8	The REJECT lump: one bit per sector pair, prepared by Full and read by the sight check. Bytes, not a number.
+Random@@log_tic	eliminated	-	Reference-only random trace. Allocated only by Random#trace!(cap), which only bin/sim_demo.rb calls (its rand.tsv differential oracle); bin/doom.rb never enables it, and the CORE port examples/doom/core/src/random.rb has no trace. The original and sim_demo are unchanged.
+Random@@log_before	eliminated	-	Reference-only random trace, as Random@@log_tic.
+Random@@log_after	eliminated	-	Reference-only random trace, as Random@@log_tic.
+Random@@log_value	eliminated	-	Reference-only random trace, as Random@@log_tic.
+Random@@log_site	eliminated	-	Reference-only random trace, as Random@@log_tic.
+Random@@log_n	eliminated	-	The trace's fill count, read and written only under `if @trace` in p_random and by sim_demo's log_n reader.
+Random@@trace	eliminated	-	The trace switch: false unless trace! is called; it guards only the trace writes.
+Random@@tic	eliminated	-	Set by Random#tic= and read only into @log_tic; the port's draws do not take it.

@@ -1,0 +1,13 @@
+leg	check	verdict	detail
+native	steps_sum	PASS	B=7 == sum of chunk rcs=7
+native	one_call_equals_12_chunks	PASS	F rows == S 12 rows, bitwise
+native	control_retraces	PASS	A4 rc=7 == B, W4 rows == F rows
+wasm32	steps_sum	PASS	B=7 == sum of chunk rcs=7
+wasm32	one_call_equals_12_chunks	PASS	F rows == S 12 rows, bitwise
+wasm32	control_retraces	PASS	A4 rc=7 == B, W4 rows == F rows
+m33	steps_sum	PASS	B=7 == sum of chunk rcs=7
+m33	one_call_equals_12_chunks	PASS	F rows == S 12 rows, bitwise
+m33	control_retraces	PASS	A4 rc=7 == B, W4 rows == F rows
+rv32	steps_sum	PASS	B=7 == sum of chunk rcs=7
+rv32	one_call_equals_12_chunks	PASS	F rows == S 12 rows, bitwise
+rv32	control_retraces	PASS	A4 rc=7 == B, W4 rows == F rows

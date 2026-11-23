@@ -1,0 +1,9 @@
+core-contract 1
+root src/dc_two.rb
+entry dc_two
+result i64
+param a buffer i32 in count n_a
+param n_a scalar u64
+param b buffer i32 in count n_b
+param n_b scalar u64
+param i scalar i64

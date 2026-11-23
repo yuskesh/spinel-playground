@@ -1,0 +1,440 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+#
+# record_gate.rb — S5/E372: the ringbuf record contracts may only evolve
+# append-only, and the committed derived artifacts must match the declaration.
+#
+# Two checks, both of which used to be human work:
+#
+#   (1) REGEN — src/runtime/otlp/record_mirror_gen.h and
+#       src/spinel_ebpf/record_schema_gen.json are committed derived artifacts.
+#       Editing src/codegen_c/record_schema.h without re-running
+#       `make -C src/codegen_c mirror` leaves the runtime and the Ruby affordance
+#       surface describing an older contract than the kernel emits. This rebuilds
+#       the generator and diffs its output against what is checked in.
+#
+#   (2) APPEND-ONLY — the Cap'n Proto / SBE rule the project has been applying by
+#       hand since E304 (cgid), E311 (duration_ns) and E312 (start_ktime,
+#       hdr_ext): a published field never moves, never changes type, never
+#       disappears; new fields go at the END and read as zero on an older
+#       producer. Same for what Ruby can see (`expose` / typed-consumer
+#       properties, E371's hand-off note 4) and for what leaves the process
+#       (egress attribute keys, span kind, push_fn). Violating any of those
+#       breaks somebody: a running probe, an existing consumer program, or a
+#       dashboard query.
+#
+#       The reference is tests/golden/record_schema.snapshot.json — a distilled
+#       projection of the contract (ids, offsets, widths, exposure, property
+#       names, attribute keys). Prose (`note` / `condition` / `source`) is
+#       deliberately NOT in the snapshot, so documenting a field better is not a
+#       gate event.
+#
+#   ruby tools/record_gate.rb            # gate (exit non-zero on violation)
+#   ruby tools/record_gate.rb --update   # accept the current contract as the new
+#                                        # baseline (review the snapshot diff!)
+#
+# An intentional breaking change is still possible — it just cannot be silent:
+# it becomes a reviewable diff in the snapshot, exactly like tests/golden/.
+require "json"
+require "open3"
+require "tmpdir"
+
+module RecordGate
+  ROOT     = File.expand_path("..", __dir__)
+  SCHEMA_H = File.join(ROOT, "src/codegen_c/record_schema.h")
+  GEN_C    = File.join(ROOT, "tools/gen_record_mirror.c")
+  MIRROR_H = File.join(ROOT, "src/runtime/otlp/record_mirror_gen.h")
+  JSON_OUT = File.join(ROOT, "src/spinel_ebpf/record_schema_gen.json")
+  SNAPSHOT = File.join(ROOT, "tests/golden/record_schema.snapshot.json")
+
+  SNAPSHOT_SCHEMA = "spinel-ebpf.record-contract-snapshot/1"
+
+  module_function
+
+  # --- (1) regen ------------------------------------------------------------
+
+  # Build tools/gen_record_mirror.c and run it; returns [header_text, json_text].
+  # Raises if the generator does not build or run (a schema table that does not
+  # compile is itself a failure worth reporting loudly).
+  def regenerate
+    Dir.mktmpdir("spnl-recgate") do |dir|
+      bin = File.join(dir, "gen_record_mirror")
+      cc  = ENV["CC"] || "cc"
+      out, st = Open3.capture2e(cc, "-O2", "-Wall", "-Wextra", "-o", bin, GEN_C)
+      raise "record gate: generator does not build:\n#{out}" unless st.success?
+      hdr, st1 = Open3.capture2e(bin)
+      raise "record gate: generator failed:\n#{hdr}" unless st1.success?
+      js, st2 = Open3.capture2e(bin, "--json")
+      raise "record gate: generator --json failed:\n#{js}" unless st2.success?
+      return [hdr, js]
+    end
+  end
+
+  # [] when the committed artifacts are what the generator produces now.
+  def regen_violations(hdr, js)
+    v = []
+    { MIRROR_H => hdr, JSON_OUT => js }.each do |path, want|
+      got = File.exist?(path) ? File.read(path) : nil
+      if got.nil?
+        v << "#{rel(path)} is missing (run `make -C src/codegen_c mirror`)"
+      elsif got != want
+        v << "#{rel(path)} is stale: it does not match what the current " \
+             "record_schema.h generates (run `make -C src/codegen_c mirror` and commit)"
+      end
+    end
+    v
+  end
+
+  def rel(p) = p.sub("#{ROOT}/", "")
+
+  # --- (2) append-only ------------------------------------------------------
+
+  # Distil the generated JSON into the part that is a *contract*: everything a
+  # downstream (kernel producer, userspace mirror, Ruby consumer, dashboard) can
+  # break on. Prose is dropped on purpose.
+  def project(doc)
+    chans = {}
+    Array(doc["channels"]).each do |c|
+      e = c["egress"]
+      cons = c["consumer"]
+      chans[c["id"]] = {
+        "record_struct"    => c["record_struct"],
+        "ringbuf_map"      => c["ringbuf_map"],
+        "record_bytes"     => c["record_bytes"],
+        "record_min_bytes" => c["record_min_bytes"],
+        "producers"        => Array(c["producers"]),
+        "fields"           => Array(c["fields"]).map { |f|
+          { "name" => f["name"], "ctype" => f["ctype"], "count" => f["count"],
+            "offset" => f["offset"], "bytes" => f["bytes"], "expose" => f["expose"].to_s }
+        },
+        # E434: `timing_form`, `drop_when` and each attribute's `present` are in
+        # the snapshot for the same reason the attribute KEYS are: they are what
+        # a consumer outside this process acts on. Changing `nonempty(comm)` to
+        # `always` does not move a byte in this repository and changes what every
+        # reader emits -- so it is a reviewed diff, not a quiet edit. The prose
+        # `condition` beside them stays out, like every other note.
+        "egress"           => e && {
+          "push_fn"     => e["push_fn"],
+          "span_name"   => e["span_name"],
+          "span_kind"   => e["span_kind"],
+          "timing_form" => e["timing_form"],
+          "drop_when"   => e["drop_when"],
+          "attributes"  => Array(e["attributes"]).map { |a| { "key" => a["key"], "present" => a["present"] } },
+          "enrichers"   => Array(e["enrichers"]),
+        },
+        "consumer"         => cons && {
+          "drain_fn"   => cons["drain_fn"],
+          "to_span_fn" => cons["to_span_fn"],
+          # `cap` (E378) is in the snapshot because it is a contract term, not an
+          # implementation detail: it is the width BOTH the accessor and the span
+          # builder hand the derivation, so shrinking it starts truncating values
+          # that used to arrive whole — on `ev.<name>` and on the attribute at once.
+          # nil for a field property (it reads the record's bytes; its width is the
+          # field's `bytes`, already snapshotted above).
+          # `kfilter` (E398) is in the snapshot for the same reason `expose` is:
+          # it changes what a Ruby program may WRITE. Giving a published property
+          # a kernel equivalent makes `keep_if :<chan>, <prop>: :eq` stop
+          # compiling (the transform points at `filter_by` instead), so adding
+          # one breaks programs that exist -- append-only applies to the refusal
+          # surface, not just the byte layout.
+          # E434: `residue` says whether a consumer has to implement the property
+          # itself. Moving one from "parse" to "declared" is additive (the reader
+          # gets a body it used to write); moving it the other way asks every
+          # existing reader for code it does not have.
+          "properties" => Array(cons["properties"]).map { |p|
+            { "name" => p["name"], "kind" => p["kind"], "expose" => p["expose"],
+              "ffi" => p["ffi"], "cap" => p["cap"], "kfilter" => p["kfilter"].to_s,
+              "residue" => p["residue"].to_s }
+          },
+        },
+        # E400: what the channel's records aggregate into. `series_bound` is the
+        # term that matters most here and the reason it is snapshotted at all: it
+        # is the ceiling on how many time series this metric can create, computed
+        # from the label declarations. A change to it is a change in what the
+        # probe COSTS, which is invisible in every other artifact — the spans stay
+        # correct, the exit code stays 0, and the bill moves. Putting the number in
+        # the baseline makes moving it a reviewed diff.
+        "metrics"          => Array(c["metrics"]).map { |m|
+          { "id" => m["id"], "name" => m["name"], "kind" => m["kind"], "unit" => m["unit"],
+            "value_from" => m["value_from"].to_s, "bounds" => m["bounds"].to_s,
+            "series_bound" => m["series_bound"],
+            "labels" => Array(m["labels"]).map { |l|
+              { "key" => l["key"], "from" => l["from"], "bound" => l["bound"],
+                "bound_from" => l["bound_from"], "fallback" => l["fallback"].to_s }
+            } }
+        },
+      }
+    end
+    { "schema" => SNAPSHOT_SCHEMA,
+      "note"   => "Distilled contract of the ringbuf record channels (S5/E372). Refresh with " \
+                  "`ruby tools/record_gate.rb --update` and REVIEW the diff: anything that moves, " \
+                  "retypes or removes a published entry is a breaking change for a running probe, " \
+                  "an existing consumer program, or a dashboard query.",
+      "channels" => chans }
+  end
+
+  # Compare an old projection with a new one and return the list of append-only
+  # violations (empty = the change is backward compatible).
+  def violations(old, new)
+    v = []
+    oc = old["channels"] || {}
+    nc = new["channels"] || {}
+
+    (oc.keys - nc.keys).each do |id|
+      v << "channel `#{id}` was removed (a probe that emits it loses its contract)"
+    end
+
+    nc.each do |id, nch|
+      och = oc[id]
+      next unless och   # brand-new channel: additive, nothing to check
+
+      %w[record_struct ringbuf_map].each do |k|
+        next if och[k] == nch[k]
+        v << "channel `#{id}`: #{k} changed #{och[k].inspect} -> #{nch[k].inspect} " \
+             "(the runtime looks the map up by name)"
+      end
+
+      # -- fields: append-only ------------------------------------------------
+      of = och["fields"] || []
+      nf = nch["fields"] || []
+      oname = of.map { |f| f["name"] }
+      nname = nf.map { |f| f["name"] }
+      (oname - nname).each do |f|
+        v << "channel `#{id}`: field `#{f}` was removed (existing records still carry it)"
+      end
+      if nname.first(oname.length) != oname && !(oname - nname).any?
+        v << "channel `#{id}`: fields were reordered (#{oname.join(' ')} -> " \
+             "#{nname.first(oname.length).join(' ')}); new fields must be APPENDED"
+      end
+      of.each do |o|
+        n = nf.find { |x| x["name"] == o["name"] }
+        next unless n
+        %w[offset bytes ctype count].each do |k|
+          next if o[k] == n[k]
+          v << "channel `#{id}`: field `#{o['name']}` #{k} changed #{o[k].inspect} -> #{n[k].inspect} " \
+               "(a record already on the wire is decoded at the old #{k})"
+        end
+        next if o["expose"] == n["expose"]
+        if o["expose"].to_s.empty?
+          # not exposed -> exposed: additive (a new `ev.<name>` appears)
+        else
+          v << "channel `#{id}`: field `#{o['name']}` expose changed " \
+               "#{o['expose'].inspect} -> #{n['expose'].inspect} " \
+               "(a Ruby consumer reading ev.#{o['name']} changes type or stops compiling)"
+        end
+      end
+
+      # -- a shorter record used to be accepted; it must stay accepted --------
+      if nch["record_min_bytes"].to_i > och["record_min_bytes"].to_i
+        v << "channel `#{id}`: record_min_bytes rose #{och['record_min_bytes']} -> " \
+             "#{nch['record_min_bytes']} (records an older producer writes would now be dropped; " \
+             "append fields after `required_through` instead)"
+      end
+
+      (Array(och["producers"]) - Array(nch["producers"])).each do |p|
+        v << "channel `#{id}`: producer `#{p}` no longer writes this channel"
+      end
+
+      # -- egress: what leaves the process ------------------------------------
+      oe, ne = och["egress"], nch["egress"]
+      if oe && !ne
+        v << "channel `#{id}`: the egress binding was removed (#{oe['push_fn']} no longer declared)"
+      elsif oe && ne
+        %w[push_fn span_name span_kind].each do |k|
+          next if oe[k] == ne[k]
+          v << "channel `#{id}`: egress #{k} changed #{oe[k].inspect} -> #{ne[k].inspect}"
+        end
+        # E434: attribute rows carry their presence rule, so an attribute can now
+        # break in two ways -- it can disappear, or it can start appearing on a
+        # different set of records. The second is the quieter one: every span
+        # still validates, and a query that counted on the attribute being there
+        # silently stops matching.
+        okeys = Array(oe["attributes"]).map { |a| a.is_a?(Hash) ? a["key"] : a }
+        # An OLD snapshot (committed before E434) carries bare key strings; a new
+        # one carries {key, present}. Reading both is what lets the baseline move
+        # without pretending the old file said something it did not.
+        nattr = Array(ne["attributes"]).to_h { |a| a.is_a?(Hash) ? [a["key"], a["present"]] : [a, nil] }
+        (okeys - nattr.keys).each do |k|
+          v << "channel `#{id}`: egress attribute `#{k}` was removed (queries and dashboards use it)"
+        end
+        Array(oe["attributes"]).each do |a|
+          next unless a.is_a?(Hash) && nattr.key?(a["key"])
+          next if a["present"] == nattr[a["key"]]
+          v << "channel `#{id}`: egress attribute `#{a['key']}` changed WHEN it is present " \
+               "#{a['present'].inspect} -> #{nattr[a['key']].inspect} (the key is unchanged, so " \
+               "nothing downstream errors -- it just stops appearing on records it used to describe)"
+        end
+        %w[timing_form drop_when].each do |k|
+          next if oe[k] == ne[k]
+          v << "channel `#{id}`: egress #{k} changed #{oe[k].inspect} -> #{ne[k].inspect} " \
+               "(a consumer computes span times / discards records from this)"
+        end
+        (Array(oe["enrichers"]) - Array(ne["enrichers"])).each do |k|
+          v << "channel `#{id}`: layer-2 enricher `#{k}` no longer applies"
+        end
+      end
+
+      # -- derivations: who has to implement them (E434) ------------------------
+      oc2, nc2 = och["consumer"], nch["consumer"]
+      if oc2 && nc2
+        nres = Array(nc2["properties"]).to_h { |p| [p["name"], p["residue"].to_s] }
+        Array(oc2["properties"]).each do |p|
+          o = p["residue"].to_s
+          n = nres[p["name"]]
+          next if n.nil? || o == n || o.empty?
+          # declared -> anything asks every existing consumer for code it does
+          # not have; the other direction hands it a body it used to write.
+          next unless o == "declared"
+          v << "channel `#{id}`: property `#{p['name']}` was #{o} and is now #{n} -- a consumer " \
+               "that read it from the contract now has to implement it"
+        end
+      end
+
+      # -- metrics: what the channel costs (E400) ------------------------------
+      om = Array(och["metrics"])
+      nm = Array(nch["metrics"])
+      (om.map { |m| m["id"] } - nm.map { |m| m["id"] }).each do |mid|
+        v << "channel `#{id}`: metric `#{mid}` was removed (dashboards and alerts query it by name)"
+      end
+      om.each do |o|
+        n = nm.find { |x| x["id"] == o["id"] }
+        next unless n
+        %w[name kind unit value_from].each do |k|
+          next if o[k] == n[k]
+          v << "channel `#{id}`: metric `#{o['id']}` #{k} changed #{o[k].inspect} -> #{n[k].inspect} " \
+               "(a renamed or re-typed metric is a broken query, not a new one)"
+        end
+        ol = Array(o["labels"])
+        nl = Array(n["labels"])
+        (ol.map { |l| l["key"] } - nl.map { |l| l["key"] }).each do |lk|
+          v << "channel `#{id}`: metric `#{o['id']}` lost label `#{lk}` " \
+               "(series that were distinguished by it silently merge)"
+        end
+        ol.each do |l|
+          m2 = nl.find { |x| x["key"] == l["key"] }
+          next unless m2
+          next if l["from"] == m2["from"]
+          v << "channel `#{id}`: metric `#{o['id']}` label `#{l['key']}` now reads " \
+               "`#{m2['from']}` instead of `#{l['from']}` (same key, different meaning)"
+        end
+      end
+
+      # -- typed consumer: what a Ruby program may write ----------------------
+      ocons, ncons = och["consumer"], nch["consumer"]
+      if ocons && !ncons
+        v << "channel `#{id}`: the typed consumer was withdrawn " \
+             "(`on_emit :#{id} do |ev|` programs stop compiling)"
+      elsif ocons && ncons
+        %w[drain_fn to_span_fn].each do |k|
+          next if ocons[k] == ncons[k]
+          v << "channel `#{id}`: consumer #{k} changed #{ocons[k].inspect} -> #{ncons[k].inspect}"
+        end
+        op = Array(ocons["properties"])
+        np = Array(ncons["properties"])
+        (op.map { |p| p["name"] } - np.map { |p| p["name"] }).each do |n|
+          v << "channel `#{id}`: consumer property `ev.#{n}` was removed"
+        end
+        op.each do |o|
+          n = np.find { |x| x["name"] == o["name"] }
+          next unless n
+          %w[expose kind ffi].each do |k|
+            next if o[k] == n[k]
+            v << "channel `#{id}`: consumer property `ev.#{o['name']}` #{k} changed " \
+                 "#{o[k].inspect} -> #{n[k].inspect}"
+          end
+          # E378: a derivation's output capacity may grow (nothing that fitted stops
+          # fitting) but never shrink — a narrower cap silently truncates values that
+          # a consumer and a dashboard were both getting whole.
+          # E398: gaining a kernel equivalent is a NARROWING of what may be
+          # written -- `keep_if :<chan>, <prop>: :eq` was accepted and now is
+          # refused. Losing one only widens (the refusal goes away), so only the
+          # gain is a violation.
+          if o["kfilter"].to_s.empty? && !n["kfilter"].to_s.empty?
+            v << "channel `#{id}`: consumer property `ev.#{o['name']}` gained kfilter " \
+                 "#{n['kfilter'].inspect} — `keep_if :#{id}, #{o['name']}: :eq` stops compiling " \
+                 "(the transform redirects it to `filter_by :#{n['kfilter']}`)"
+          end
+          ocap, ncap = o["cap"], n["cap"]
+          next unless ocap.is_a?(Integer) && ncap.is_a?(Integer)
+          next unless ncap < ocap
+          v << "channel `#{id}`: consumer property `ev.#{o['name']}` cap shrank #{ocap} -> #{ncap} " \
+               "(values longer than #{ncap - 1} bytes start truncating, in `ev.#{o['name']}` and in " \
+               "the span attribute it feeds)"
+        end
+      end
+    end
+    v
+  end
+
+  # --- driver ---------------------------------------------------------------
+
+  def snapshot_text(proj) = JSON.pretty_generate(proj) + "\n"
+
+  def run(update: false)
+    hdr, js = regenerate
+    problems = []
+
+    # (1) the committed artifacts must be the generator's current output.
+    regen = regen_violations(hdr, js)
+    problems.concat(regen)
+
+    # (2) append-only, against the committed snapshot. Compare the freshly
+    # generated JSON (not the committed one) so a stale artifact cannot hide a
+    # contract change behind the regen failure.
+    proj = project(JSON.parse(js))
+    if update
+      File.write(SNAPSHOT, snapshot_text(proj))
+      puts "record gate: wrote #{rel(SNAPSHOT)} (#{proj['channels'].length} channels) — REVIEW THE DIFF"
+      return regen.empty? ? 0 : (puts_problems(regen); 1)
+    end
+
+    unless File.exist?(SNAPSHOT)
+      puts_problems(["#{rel(SNAPSHOT)} is missing (create it with `ruby tools/record_gate.rb --update`)"])
+      return 1
+    end
+    old = JSON.parse(File.read(SNAPSHOT))
+    if old["schema"] != SNAPSHOT_SCHEMA
+      problems << "#{rel(SNAPSHOT)}: unknown snapshot schema #{old['schema'].inspect}"
+    else
+      problems.concat(violations(old, proj))
+      # Compare the PARSED snapshot, not its text. `JSON.pretty_generate` renders an
+      # empty array as "[]" on json >= 2.12 and as "[\n\n]" on older ones, so a text
+      # compare makes this gate unable to be green on the host and in the container at
+      # the same time (measured 2026-08-04: host json 2.12.2, spnl715 json 2.7.2 -- the
+      # E400 snapshot was written in the container and failed on the host). The
+      # contract is the structure; how the generator spaced it is not a contract term.
+      if JSON.parse(snapshot_text(proj)) != old && violations(old, proj).empty?
+        # additive change (new channel / appended field / new attribute): allowed,
+        # but the baseline has to move or the next change compares against stale data.
+        problems << "#{rel(SNAPSHOT)} is out of date (the change is append-only and allowed — " \
+                    "refresh with `ruby tools/record_gate.rb --update` and commit)"
+      end
+    end
+
+    if problems.empty?
+      nch = proj["channels"].length
+      nfl = proj["channels"].values.sum { |c| c["fields"].length }
+      mets = proj["channels"].values.flat_map { |c| Array(c["metrics"]) }
+      # E400: print the cardinality ceiling on every green run. The number a metric
+      # costs is the one property of this contract with no local symptom when it is
+      # wrong, so it gets said out loud even when nothing is wrong.
+      card = mets.empty? ? "" :
+             " / #{mets.length} metrics (<= #{mets.sum { |m| m['series_bound'] }} time series)"
+      puts "record gate: OK — #{nch} channels / #{nfl} fields#{card}; artifacts fresh, evolution append-only"
+      return 0
+    end
+    puts_problems(problems)
+    1
+  end
+
+  def puts_problems(list)
+    puts "record gate: #{list.length} problem(s)"
+    list.each { |m| puts "  - #{m}" }
+    puts "\nThe ringbuf record contract may only grow: existing fields keep their offset and type,"
+    puts "new fields go at the end and read as zero on an older producer (Cap'n Proto / SBE rule)."
+    puts "If the change really is intended, move the baseline explicitly:"
+    puts "  make -C src/codegen_c mirror && ruby tools/record_gate.rb --update"
+  end
+end
+
+exit RecordGate.run(update: ARGV.include?("--update")) if $PROGRAM_NAME == __FILE__

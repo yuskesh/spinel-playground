@@ -1,0 +1,6 @@
+# a self-overrun: a's release 1 costs 3500 us, so at the next sweep (3500)
+# a's newest pending release is 3 and release 2 is skipped; b, visited after
+# a in the same sweep, finds release 3 too and skips 1..2.
+horizon_us 6000
+drain_us 1000
+cost a 1 3500

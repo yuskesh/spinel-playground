@@ -1,0 +1,179 @@
+/* generated from tools/app/templates/transport_udp.c.erb: the UDP part of
+ * the transport thread of decision 0014 §4 and §5, for the :out channels
+ * <%= udp.map(&:name).join(", ") %>.
+ *
+ * One datagram is one channel message, its payload verbatim: no header of
+ * the transport's own. Each channel has one socket, connected to the
+ * channel's endpoint, which the build reads from the network file it is
+ * given (--net) into spc_net.h; nothing about the network is in the source.
+ * A channel whose port is 0 there is switched off: its messages are taken
+ * from the ring and discarded, counted, so the producer's copy and put are
+ * the same as when it sends.
+ *
+ * spc_transport_udp_drain() is called by spc_transport_step()
+ * (transport_uart.c) on the transport thread. It sends what the rings hold,
+ * in declaration order, each message with MSG_DONTWAIT. A send that fails
+ * for want of buffers (EAGAIN, EWOULDBLOCK, ENOBUFS, ENOMEM) keeps the
+ * message and is tried again on the next pass, so the ring, not the stack,
+ * is what fills: a full ring is the producer's put returning 0, which the
+ * application counts. Any other failure is permanent for that message: it
+ * is counted in spc_transport_udp_errors and dropped, and the board lane
+ * reads the count after the run (a run with a non-zero count does not
+ * pass). No other loss exists in this file.
+ *
+ * spc_transport_udp_open() runs once from spc_transport_start(), on the
+ * main thread before the transport thread exists: it gives the network
+ * file's interface its address and connects the sockets. The host build
+ * (-DSPC_HOST) uses the host's sockets through spc_host_send(), which the
+ * harness defines, and leaves the host's interfaces as they are. */
+#include <stdint.h>
+#include <errno.h>
+#include "spc_net.h"
+<% udp.each do |c| %>#include "channel_<%= c.name %>.h"
+<% end %>
+#define SPC_UDP_CHANNELS <%= udp.size %>u
+
+#if defined(SPC_HOST)
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#define SPC_SOCKET socket
+#define SPC_CONNECT connect
+/* send(2) through the harness, which can plant a failure (tests/app/udp.sh) */
+long spc_host_send(int fd, const void *buf, unsigned long n, int flags);
+#define SPC_SEND spc_host_send
+#define SPC_PTON inet_pton
+#define SPC_DONTWAIT MSG_DONTWAIT
+typedef struct sockaddr_in spc_sockaddr_in;
+typedef struct sockaddr spc_sockaddr;
+#else
+#include <zephyr/kernel.h>
+#include <zephyr/net/net_if.h>
+#include <zephyr/net/dhcpv4.h>
+#include <zephyr/net/socket.h>
+#define SPC_SOCKET zsock_socket
+#define SPC_CONNECT zsock_connect
+#define SPC_SEND zsock_send
+#define SPC_PTON zsock_inet_pton
+#define SPC_DONTWAIT ZSOCK_MSG_DONTWAIT
+typedef struct sockaddr_in spc_sockaddr_in;
+typedef struct sockaddr spc_sockaddr;
+#endif
+
+/* permanent send failures, each a dropped message; the lane reads it */
+volatile uint32_t spc_transport_udp_errors;
+/* datagrams sent, and messages discarded by a switched-off channel, per channel */
+uint32_t spc_transport_udp_sent[SPC_UDP_CHANNELS];
+uint32_t spc_transport_udp_discarded[SPC_UDP_CHANNELS];
+/* sends tried again for want of buffers (not losses) */
+uint32_t spc_transport_udp_retries;
+/* what spc_transport_udp_open() reached: 0 not run, 1 every socket
+ * connected, or the negative step that failed (-1 the interface, -2 its
+ * address, -3 a socket, -4 a connect), for the console and the lane */
+volatile int32_t spc_transport_udp_state;
+
+static int spc_udp_sock[SPC_UDP_CHANNELS];
+static const uint16_t spc_udp_port[SPC_UDP_CHANNELS] = { <%= udp.map { |c| "SPC_NET_#{c.name.upcase}_PORT" }.join(", ") %> };
+static const char *const spc_udp_addr[SPC_UDP_CHANNELS] = { <%= udp.map { |c| "SPC_NET_#{c.name.upcase}_ADDR" }.join(", ") %> };
+
+/* a message taken from its ring that the stack had no buffer for yet */
+static uint8_t spc_udp_pending[<%= udp.map(&:size).max %>];
+static uint32_t spc_udp_pending_len; /* 0: none */
+static uint8_t spc_udp_pending_channel;
+
+int32_t spc_transport_udp_open(void)
+{
+#if !defined(SPC_HOST)
+	struct in_addr addr, mask;
+	int index = net_if_get_by_name(SPC_NET_IFACE);
+	struct net_if *iface = index > 0 ? net_if_get_by_index(index) : NULL;
+
+	if (iface == NULL) {
+		return spc_transport_udp_state = -1;
+	}
+#if SPC_NET_DHCP
+	(void)addr;
+	(void)mask;
+	net_dhcpv4_start(iface); /* the address arrives later; a send before it fails and is counted */
+#else
+	if (SPC_PTON(AF_INET, SPC_NET_ADDRESS, &addr) != 1 || SPC_PTON(AF_INET, SPC_NET_NETMASK, &mask) != 1 ||
+	    net_if_ipv4_addr_add(iface, &addr, NET_ADDR_MANUAL, 0) == NULL ||
+	    !net_if_ipv4_set_netmask_by_addr(iface, &addr, &mask)) {
+		return spc_transport_udp_state = -2;
+	}
+#endif /* SPC_NET_DHCP */
+#endif /* !SPC_HOST */
+	for (uint32_t i = 0; i < SPC_UDP_CHANNELS; i++) {
+		spc_sockaddr_in to = { 0 };
+
+		spc_udp_sock[i] = -1;
+		if (spc_udp_port[i] == 0u) {
+			continue; /* switched off */
+		}
+		spc_udp_sock[i] = SPC_SOCKET(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+		if (spc_udp_sock[i] < 0) {
+			return spc_transport_udp_state = -3;
+		}
+		to.sin_family = AF_INET;
+		to.sin_port = htons(spc_udp_port[i]);
+		if (SPC_PTON(AF_INET, spc_udp_addr[i], &to.sin_addr) != 1 ||
+		    SPC_CONNECT(spc_udp_sock[i], (spc_sockaddr *)&to, sizeof to) != 0) {
+			return spc_transport_udp_state = -4;
+		}
+	}
+	return spc_transport_udp_state = 1;
+}
+
+/* 1 sent or dropped for good, 0 kept for the next pass */
+static int spc_transport_udp_send(uint8_t channel, const uint8_t *buf, uint32_t n)
+{
+	if (spc_udp_port[channel] == 0u) {
+		spc_transport_udp_discarded[channel] += 1u;
+		return 1;
+	}
+	if (spc_transport_udp_state != 1) {
+		spc_transport_udp_errors += 1u; /* never connected: every message is lost */
+		return 1;
+	}
+	if (SPC_SEND(spc_udp_sock[channel], buf, n, SPC_DONTWAIT) == (long)n) {
+		spc_transport_udp_sent[channel] += 1u;
+		return 1;
+	}
+	if (errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS || errno == ENOMEM) {
+		spc_transport_udp_retries += 1u;
+		return 0; /* SPC_KEEP: kept for the next pass */
+	}
+	spc_transport_udp_errors += 1u;
+	return 1;
+}
+
+static void spc_transport_udp_keep(uint8_t channel, const uint8_t *buf, uint32_t n)
+{
+	for (uint32_t i = 0; i < n; i++) {
+		spc_udp_pending[i] = buf[i];
+	}
+	spc_udp_pending_len = n;
+	spc_udp_pending_channel = channel;
+}
+
+void spc_transport_udp_drain(void)
+{
+	if (spc_udp_pending_len > 0u) {
+		if (!spc_transport_udp_send(spc_udp_pending_channel, spc_udp_pending, spc_udp_pending_len)) {
+			return; /* still no buffer: the rings wait behind it */
+		}
+		spc_udp_pending_len = 0u;
+	}
+<% udp.each_with_index do |c, i| %>	{
+		uint8_t buf[SPC_CHANNEL_<%= c.name.upcase %>_SIZE];
+		int32_t n;
+
+		while ((n = spc_channel_<%= c.name %>_get(buf, SPC_CHANNEL_<%= c.name.upcase %>_SIZE)) > 0) {
+			if (!spc_transport_udp_send(<%= i %>u, buf, (uint32_t)n)) {
+				spc_transport_udp_keep(<%= i %>u, buf, (uint32_t)n);
+				return;
+			}
+		}
+	}
+<% end %>}

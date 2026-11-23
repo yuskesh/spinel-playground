@@ -1,0 +1,7 @@
+require 'json';require 'fileutils';require_relative '../../scripts/lib/typing-probe'
+facts,out=ARGV;raise 'fresh output' if File.exist?(out);FileUtils.mkdir_p(out);good=TypingProbe.read(facts,required:true);header=good.fetch(:header);sources=good.fetch(:sources);m=good.fetch(:metadata);results=[]
+mutations={'version'=>->(p){p['version']=9},'incomplete'=>->(p){p['complete']=false},'missing-before'=>->(p){p.delete('before_json')},'json'=>->(p){p['before_json']='{'},'source-sha'=>->(p){p['source_sha256']='0'*64},'roots'=>->(p){p['analysis_roots']=[]},'type-shape'=>->(p){j=JSON.parse(p.fetch('before_json'));j.fetch('types').first['line']='no';p['before_json']=JSON.generate(j)}}
+mutations.each{|name,change|p=Marshal.load(Marshal.dump(m));change.call(p);error=nil;begin;TypingProbe.validate(header,sources,p);rescue=>e;error=e.message;end;raise 'validator accepted '+name unless error;results<<{name:name,error:error}}
+before=good.fetch(:observations).fetch('before');changed=Marshal.load(Marshal.dump(before));changed.fetch('types').first['rbs']='__e078_mutation__';error=nil;begin;TypingProbe.compare_before(changed,before);rescue=>e;error=e.message;end;raise 'before sensitivity' unless error=='probe-types-before-mismatch';results<<{name:'one-before-type',error:error}
+old=header.reject{|k,_|k=='spinel_facts.typing_probe'};raise 'optional missing contract' unless !old.key?('spinel_facts.typing_probe')
+File.write(out+'/summary.json',JSON.pretty_generate({valid:true,mutations:results,producer_runs:0})+"\n");puts 'PASS typing-probe-validator 8 rejected mutations'

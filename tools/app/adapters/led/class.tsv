@@ -1,0 +1,12 @@
+# tools/app/adapters/led/class.tsv -- the Led class (decision 0014 §3)
+# key	value
+module	Led
+source	children gpio-leds
+controller	gpios
+table	struct gpio_dt_spec
+spec	GPIO_DT_SPEC_GET(%NODE%, gpios)
+header	zephyr/drivers/gpio.h
+fn	set(index: u32, duty: u32) -> i32
+safe_state	set(index, 0)
+index_guard	on
+subsystem	CONFIG_GPIO

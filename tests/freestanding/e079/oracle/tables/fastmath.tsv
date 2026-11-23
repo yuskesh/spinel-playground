@@ -1,0 +1,3 @@
+build	differing_lines	differing_G_components	final_weights_equal	verdict
+enzyme-fast-math=0 (shipped)	0	0	yes	BIT-IDENTICAL
+enzyme-fast-math=1 (control)	70	4	no	DIVERGE

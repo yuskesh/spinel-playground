@@ -1,0 +1,2 @@
+function	source	note
+sys_clock_cycle_get_32	su	https://github.com/zephyrproject-rtos/zephyr/blob/dccb09599635bdff17633fa7e9dab014b91dce90/drivers/timer/cortex_m_systick.c#L553: k_cycle_get_32 -> sys_clock_cycle_get_32 (Clock.cycles32), the deepest of the three reads: Clock.cycles (k_cycle_get_64 -> sys_clock_cycle_get_64, L564) and Clock.uptime_us are shallower; Clock.uptime_us is k_uptime_ticks (z_impl_k_uptime_ticks, 0) -> k_ticks_to_us_floor64 inline

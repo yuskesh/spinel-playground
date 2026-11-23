@@ -1,0 +1,1 @@
+unused_bad_lru_record_hash_map.rb:5:36: rejected SB013 (MapDeclShape): the map name "Other" differs from its constant Unused — both sides look the map up by this name, so they must be the same

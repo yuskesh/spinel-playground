@@ -1,0 +1,13 @@
+core-contract 1
+root src/packed.rb
+entry dc_sp_vssort
+result i64
+param state buffer i64 in count n_state
+param n_state scalar u64
+param vs_scale buffer u32 in count n_vs_scale
+param n_vs_scale scalar u64
+param vs_taken buffer u8 inout count n_vs_taken
+param n_vs_taken scalar u64
+param vs_sorted buffer u8 inout count n_vs_sorted
+param n_vs_sorted scalar u64
+param i_vis_n scalar i64

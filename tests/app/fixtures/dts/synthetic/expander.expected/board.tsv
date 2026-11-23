@@ -1,0 +1,5 @@
+# module	index	name	node_path	compatible	bus	isr_ok	blocking	evidence
+Clock	0	timer@e000e010	/soc/timer@e000e010	arm,armv8m-systick	mmio	true	false	effects.tsv:18
+Led	0	led_0	/soc/gpio@40000000:0	arm,mmio32-gpio	mmio	true	false	effects.tsv:11
+Led	1	led_1	/soc/gpio@40000000:1	arm,mmio32-gpio	mmio	true	false	effects.tsv:11
+LedI2c	0	led_ext	/soc/i2c@40010000/pcal6416a@20:4	nxp,pcal6416a	i2c	false	true	effects.tsv:14

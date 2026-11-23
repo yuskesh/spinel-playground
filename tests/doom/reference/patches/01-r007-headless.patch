@@ -1,0 +1,324 @@
+diff --git a/doomgeneric/Makefile.headless b/doomgeneric/Makefile.headless
+new file mode 100644
+index 0000000..f62158b
+--- /dev/null
++++ b/doomgeneric/Makefile.headless
+@@ -0,0 +1,53 @@
++################################################################
++# Makefile.headless -- spinel-llvm R007 reference build
++#
++# macOS/arm64, no SDL / no X11 / no sound.  Derived from the stock
++# doomgeneric Makefile (xlib) with the platform driver swapped for
++# doomgeneric_headless.c and the GNU-ld-only link flags removed.
++################################################################
++
++ifeq ($(V),1)
++	VB=''
++else
++	VB=@
++endif
++
++CC?=cc
++CFLAGS+=-g -Os
++CFLAGS+=-Wall -DNORMALUNIX -DLINUX -D_DEFAULT_SOURCE
++CFLAGS+=-DDG_FRAME_HOOK
++# NOTE (macOS/arm64, Apple clang 21): the doomgeneric sources at dcb7a8d compile
++# clean under -Wall with *no* -Wno-* suppressions and *no* source edits.
++# The only macOS frictions are in the stock Makefile, and both are link flags
++# that ld64 does not understand -- they are simply absent here:
++#     LDFLAGS+=-Wl,--gc-sections   -> "ld: unknown options: --gc-sections"
++#     -Wl,-Map,$(OUTPUT).map       -> "ld: unknown options: -Map"
++# (plus -lX11, which is what the stock build actually dies on first).
++LIBS+=-lm
++
++OBJDIR=build_headless
++OUTPUT=doomgeneric_headless
++
++SRC_DOOM = dummy.o am_map.o doomdef.o doomstat.o dstrings.o d_event.o d_items.o d_iwad.o d_loop.o d_main.o d_mode.o d_net.o f_finale.o f_wipe.o g_game.o hu_lib.o hu_stuff.o info.o i_cdmus.o i_endoom.o i_joystick.o i_scale.o i_sound.o i_system.o i_timer.o memio.o m_argv.o m_bbox.o m_cheat.o m_config.o m_controls.o m_fixed.o m_menu.o m_misc.o m_random.o p_ceilng.o p_doors.o p_enemy.o p_floor.o p_inter.o p_lights.o p_map.o p_maputl.o p_mobj.o p_plats.o p_pspr.o p_saveg.o p_setup.o p_sight.o p_spec.o p_switch.o p_telept.o p_tick.o p_user.o r_bsp.o r_data.o r_draw.o r_main.o r_plane.o r_segs.o r_sky.o r_things.o sha1.o sounds.o statdump.o st_lib.o st_stuff.o s_sound.o tables.o v_video.o wi_stuff.o w_checksum.o w_file.o w_main.o w_wad.o z_zone.o w_file_stdc.o i_input.o i_video.o doomgeneric.o doomgeneric_headless.o
++OBJS += $(addprefix $(OBJDIR)/, $(SRC_DOOM))
++
++all: $(OUTPUT)
++
++clean:
++	rm -rf $(OBJDIR)
++	rm -f $(OUTPUT)
++
++$(OUTPUT): $(OBJS)
++	@echo [Linking $@]
++	$(VB)$(CC) $(CFLAGS) $(LDFLAGS) $(OBJS) -o $(OUTPUT) $(LIBS)
++
++$(OBJS): | $(OBJDIR)
++
++$(OBJDIR):
++	mkdir -p $(OBJDIR)
++
++$(OBJDIR)/%.o: %.c
++	@echo [Compiling $<]
++	$(VB)$(CC) $(CFLAGS) -c $< -o $@
++
++.PHONY: all clean
+diff --git a/doomgeneric/doomgeneric_headless.c b/doomgeneric/doomgeneric_headless.c
+new file mode 100644
+index 0000000..455b128
+--- /dev/null
++++ b/doomgeneric/doomgeneric_headless.c
+@@ -0,0 +1,229 @@
++//
++// doomgeneric_headless.c
++//
++// spinel-llvm / R007 (P004 Phase 0-2) reference harness.
++//
++// Headless doomgeneric platform driver:
++//   - no window, no SDL, no X11, no sound
++//   - fully virtual clock (DG_GetTicksMs never reads the wall clock),
++//     so a -timedemo run is bit-for-bit reproducible
++//   - hashes the *8bit palette-index* framebuffer (I_VideoBuffer == screens[0],
++//     320x200) once per I_FinishUpdate and writes one TSV line per frame.
++//
++// Environment variables:
++//   DG_HASH_OUT    output TSV path (default: "frames.tsv")
++//   DG_MAX_FRAMES  stop after N frames (default: 0 = unlimited)
++//   DG_DUMP_FRAMES comma separated frame numbers to dump as raw 64000-byte
++//                  palette-index images (DG_DUMP_DIR/frame_%05lu.bin)
++//   DG_DUMP_DIR    directory for the dumps (default: ".")
++//
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <stdint.h>
++
++#include "doomgeneric.h"
++#include "doomkeys.h"
++
++#ifdef __APPLE__
++#include <CommonCrypto/CommonDigest.h>
++#define HAVE_SHA256 1
++#endif
++
++// gametic lives in g_game.c (declared in doomstat.h, which we do not need here)
++extern int gametic;
++
++// ---------------------------------------------------------------- virtual clock
++
++// Monotonic virtual millisecond counter. Advanced only by DG_SleepMs() and by
++// each drawn frame; never by the real clock. This makes every time-dependent
++// code path in DOOM (TryRunTics, the D_Display screen-wipe loop, the timedemo
++// fps report) a pure function of the frame sequence.
++static uint32_t s_virtual_ms = 0;
++
++// ms added per frame. 1000/35 == one DOOM tic, matching what a perfectly
++// realtime port would see.  Any fixed value works for -timedemo (singletics
++// decouples game logic from the clock) but this keeps the fps report sane.
++#define DG_MS_PER_FRAME 28
++
++// ---------------------------------------------------------------- frame hashing
++
++static FILE *s_hash_out = NULL;
++static unsigned long s_frame = 0;
++static unsigned long s_max_frames = 0;
++
++#define DG_MAX_DUMPS 64
++static unsigned long s_dump_frames[DG_MAX_DUMPS];
++static int s_dump_count = 0;
++static const char *s_dump_dir = ".";
++
++static int should_dump(unsigned long f)
++{
++    int i;
++    for (i = 0; i < s_dump_count; i++)
++        if (s_dump_frames[i] == f)
++            return 1;
++    return 0;
++}
++
++static void dump_raw(unsigned long f, const unsigned char *buf, int n)
++{
++    char path[512];
++    FILE *fp;
++    snprintf(path, sizeof(path), "%s/frame_%05lu.bin", s_dump_dir, f);
++    fp = fopen(path, "wb");
++    if (fp == NULL)
++    {
++        fprintf(stderr, "doomgeneric_headless: cannot dump %s\n", path);
++        return;
++    }
++    fwrite(buf, 1, (size_t)n, fp);
++    fclose(fp);
++}
++
++static uint64_t fnv1a64(const unsigned char *p, size_t n)
++{
++    uint64_t h = 1469598103934665603ULL; // offset basis
++    size_t i;
++    for (i = 0; i < n; i++)
++    {
++        h ^= (uint64_t)p[i];
++        h *= 1099511628211ULL; // prime
++    }
++    return h;
++}
++
++// Called from i_video.c:I_FinishUpdate(), *before* the 8bit -> 32bit palette
++// expansion, with buf == I_VideoBuffer and n == SCREENWIDTH*SCREENHEIGHT.
++void DG_FrameHook(const unsigned char *buf, int n)
++{
++    uint64_t fh;
++    char sha_hex[65];
++
++    if (s_hash_out == NULL)
++        return;
++
++    fh = fnv1a64(buf, (size_t)n);
++
++#ifdef HAVE_SHA256
++    {
++        unsigned char md[CC_SHA256_DIGEST_LENGTH];
++        int i;
++        CC_SHA256(buf, (CC_LONG)n, md);
++        for (i = 0; i < CC_SHA256_DIGEST_LENGTH; i++)
++            snprintf(sha_hex + i * 2, 3, "%02x", md[i]);
++    }
++#else
++    strcpy(sha_hex, "-");
++#endif
++
++    fprintf(s_hash_out, "%lu\t%d\t%016llx\t%s\n",
++            s_frame, gametic, (unsigned long long)fh, sha_hex);
++    fflush(s_hash_out);
++
++    if (should_dump(s_frame))
++        dump_raw(s_frame, buf, n);
++
++    s_frame++;
++
++    if (s_max_frames != 0 && s_frame >= s_max_frames)
++    {
++        fprintf(stderr, "doomgeneric_headless: reached DG_MAX_FRAMES=%lu, exiting\n",
++                s_max_frames);
++        fclose(s_hash_out);
++        s_hash_out = NULL;
++        exit(0);
++    }
++}
++
++// ---------------------------------------------------------------- DG_* platform API
++
++void DG_Init()
++{
++    const char *path = getenv("DG_HASH_OUT");
++    const char *maxf = getenv("DG_MAX_FRAMES");
++
++    if (path == NULL || path[0] == '\0')
++        path = "frames.tsv";
++
++    if (maxf != NULL && maxf[0] != '\0')
++        s_max_frames = strtoul(maxf, NULL, 10);
++
++    {
++        const char *dumps = getenv("DG_DUMP_FRAMES");
++        const char *dir = getenv("DG_DUMP_DIR");
++        if (dir != NULL && dir[0] != '\0')
++            s_dump_dir = dir;
++        if (dumps != NULL && dumps[0] != '\0')
++        {
++            const char *p = dumps;
++            while (*p != '\0' && s_dump_count < DG_MAX_DUMPS)
++            {
++                char *end;
++                unsigned long v = strtoul(p, &end, 10);
++                if (end == p)
++                    break;
++                s_dump_frames[s_dump_count++] = v;
++                p = end;
++                while (*p == ',' || *p == ' ')
++                    p++;
++            }
++        }
++    }
++
++    s_hash_out = fopen(path, "w");
++    if (s_hash_out == NULL)
++    {
++        fprintf(stderr, "doomgeneric_headless: cannot open %s for writing\n", path);
++        exit(1);
++    }
++
++    fprintf(s_hash_out, "#frame\tgametic\tfnv1a64\tsha256\n");
++}
++
++void DG_DrawFrame()
++{
++    // The 32bit XRGB DG_ScreenBuffer is deliberately ignored: P004 compares the
++    // palette-index buffer, which DG_FrameHook already captured.
++    s_virtual_ms += DG_MS_PER_FRAME;
++}
++
++void DG_SleepMs(uint32_t ms)
++{
++    // Do not actually sleep; just advance the virtual clock so that the
++    // D_Display() wipe loop (`do { ... I_Sleep(1); } while (tics <= 0)`)
++    // terminates after a fixed number of iterations.
++    s_virtual_ms += ms;
++}
++
++uint32_t DG_GetTicksMs()
++{
++    return s_virtual_ms;
++}
++
++int DG_GetKey(int *pressed, unsigned char *key)
++{
++    (void)pressed;
++    (void)key;
++    return 0; // no input, ever
++}
++
++void DG_SetWindowTitle(const char *title)
++{
++    (void)title;
++}
++
++// ---------------------------------------------------------------- entry point
++
++int main(int argc, char **argv)
++{
++    doomgeneric_Create(argc, argv);
++
++    for (;;)
++    {
++        doomgeneric_Tick();
++    }
++
++    return 0;
++}
+diff --git a/doomgeneric/i_video.c b/doomgeneric/i_video.c
+index 84bebde..715fd9a 100644
+--- a/doomgeneric/i_video.c
++++ b/doomgeneric/i_video.c
+@@ -92,6 +92,11 @@ static struct color colors[256];
+ 
+ void I_GetEvent(void);
+ 
++#ifdef DG_FRAME_HOOK
++/* spinel-llvm R007: implemented by doomgeneric_headless.c */
++void DG_FrameHook(const unsigned char *buf, int n);
++#endif
++
+ // The screen buffer; this is modified to draw things to the screen
+ 
+ byte *I_VideoBuffer = NULL;
+@@ -333,6 +338,13 @@ void I_FinishUpdate (void)
+     //x_offset     = 0;
+     x_offset_end = ((s_Fb.xres - (SCREENWIDTH  * fb_scaling)) * s_Fb.bits_per_pixel/8) - x_offset;
+ 
++#ifdef DG_FRAME_HOOK
++    /* spinel-llvm R007: hash the 8bit palette-index buffer (screens[0]),
++       i.e. before any palette expansion happens below. */
++    DG_FrameHook((const unsigned char *) I_VideoBuffer,
++                 SCREENWIDTH * SCREENHEIGHT);
++#endif
++
+     /* DRAW SCREEN */
+     line_in  = (unsigned char *) I_VideoBuffer;
+     line_out = (unsigned char *) DG_ScreenBuffer;

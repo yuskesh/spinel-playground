@@ -1,0 +1,92 @@
+#!/bin/sh
+# The artifact gate: the three questions asked of a core object.
+#
+# A separate program because the driver and its tests must ask them the SAME
+# way. A test that re-implements the predicates checks its own copy, and a copy
+# that drifts from the gate is indistinguishable from a gate that stopped
+# working.
+#
+#   A  the externally visible symbols IN THE CORE NAMESPACE are exactly the
+#      expected set. The namespace is spc_ (spinel-core-emit and the board and
+#      channel providers of decision 0014) and spinel_core_ (the kernel's
+#      entries). Local helpers, section symbols and platform metadata are
+#      outside this check and are not constrained by it.
+#   B  there are no undefined dependencies, other than the externs named with
+#      --extern. Each is admitted by its exact name, never by a prefix: the
+#      compiler runtime helpers of decision 0014 (D1) and the board and channel
+#      externs are listed one by one by the caller that knows them.
+#   C  each expected symbol has text. A declaration-only object satisfies A and
+#      B and defines nothing to run.
+#
+# THE NAME NORMALISATION IS DECIDED BY THE OBJECT'S FORMAT, not by the host.
+# Mach-O adds one ABI underscore to every C identifier and ELF adds none, and
+# an ELF object for Cortex-M33 is gated on macOS too: the old rule, keyed on
+# uname, stripped the first character of every ELF name there and passed or
+# failed on the wrong symbols. The format is read with llvm-readobj.
+#
+# usage: core-artifact-gate [--extern <symbol>]... <object> <expected-symbol>...
+#
+# The names come from tools/core/object-symbols beside this script, which
+# reads the format and strips its prefix; NM and READOBJ name the readers there
+# (otherwise LLVM_PREFIX, then the PATH).
+set -eu
+prog=core-artifact-gate
+die() { printf '%s: %s\n' "$prog" "$*" >&2; exit 1; }
+externs=
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --extern)
+      [ $# -ge 2 ] || die "--extern needs a symbol name"
+      case "$2" in ""|-*) die "--extern needs a symbol name, not '$2'" ;; esac
+      externs="$externs
+$2"; shift 2 ;;
+    --) shift; break ;;
+    -*) die "unknown option $1" ;;
+    *) break ;;
+  esac
+done
+[ $# -ge 2 ] || die "usage: $prog [--extern <symbol>]... <object> <expected-symbol>..."
+obj=$1; shift
+[ -f "$obj" ] || die "no such object: $obj"
+
+symbols=$(dirname "$0")/object-symbols
+[ -x "$symbols" ] || die "no object-symbols beside $0"
+
+w=$(mktemp -d "${TMPDIR:-/tmp}/core-gate.XXXXXX")
+trap 'rm -rf "$w"' EXIT INT TERM
+
+# Each listing's exit status is checked BEFORE its output is parsed: a reader
+# that could not run, or an object of a format the helper refuses, produces
+# no symbols -- which is exactly what "no undefined dependencies" looks like.
+"$symbols" --exported "$obj" > "$w/ext" || die "reading the exports of $obj failed"
+"$symbols" --defined "$obj" > "$w/def" || die "reading the definitions of $obj failed"
+"$symbols" --undefined "$obj" > "$w/undef" || die "reading the undefined symbols of $obj failed"
+
+want=$(for s in "$@"; do printf '%s\n' "$s"; done | LC_ALL=C sort)
+got=$(awk '{print $NF}' "$w/ext" | grep -e '^spc_' -e '^spinel_core_' | LC_ALL=C sort || true)
+[ "$got" = "$want" ] || die "A: core-namespace exports are [$(printf '%s' "$got" | tr '\n' ' ')], expected [$(printf '%s' "$want" | tr '\n' ' ')]"
+
+printf '%s\n' "$externs" | sed '/^$/d' | LC_ALL=C sort -u > "$w/allowed"
+awk '{print $NF}' "$w/undef" | LC_ALL=C sort -u > "$w/undef.names"
+others=$(LC_ALL=C comm -23 "$w/undef.names" "$w/allowed")
+if [ -n "$others" ]; then
+  if [ -s "$w/allowed" ]; then
+    die "B: the object depends on [$(printf '%s' "$others" | tr '\n' ' ')] beyond the named externs [$(tr '\n' ' ' < "$w/allowed")]"
+  fi
+  die "B: the object depends on [$(printf '%s' "$others" | tr '\n' ' ')]"
+fi
+
+for s in "$@"; do
+  awk -v s="$s" '$NF==s && ($(NF-1)=="T" || $(NF-1)=="t") {found=1} END{exit !found}' "$w/def" \
+    || die "C: $s is exported but has no text in the object"
+done
+
+# The pass line says what it examined. "passes B" over an empty undefined set
+# is an allow that proves nothing unless the count is on the line, and for three
+# tasks it was printed for every Mach-O object while the helper dropped their
+# undefined names. The phrase is kept as the prefix; nothing compares the line.
+nA=$(printf '%s\n' "$got" | sed '/^$/d' | wc -l | tr -d ' ')
+nU=$(sed '/^$/d' "$w/undef.names" | wc -l | tr -d ' ')
+nE=$(sed '/^$/d' "$w/allowed" | wc -l | tr -d ' ')
+printf '%s: %s passes A, B and C (A: %s core export(s); B: %s undefined, %s named extern(s); C: %s symbol(s) with text)\n' \
+  "$prog" "$obj" "$nA" "$nU" "$nE" "$#"

@@ -1,0 +1,73 @@
+#!/usr/bin/env ruby
+require 'json'
+require 'digest'
+require 'fileutils'
+manifest_path, oracle, baseline, candidate, output = ARGV
+abort 'usage: compare-no-flag manifest oracle baseline-tree candidate-tree new-output' unless output
+selection = ARGV[5]
+abort 'optional selection must be --case=PATH' if selection && !selection.start_with?('--case=')
+abort 'output exists' if File.exist?(output)
+manifest = JSON.parse(File.binread(manifest_path))
+abort 'expected 105 oracle sources' unless manifest.fetch('sources').length == 105
+manifest.each_value do |files|
+  files.each do |name, hash|
+    abort "source hash mismatch: #{name}" unless Digest::SHA256.file(File.join(oracle,name)).hexdigest == hash
+  end
+end
+extras = %w[test/case_tail_all_arms_return.rb test/process_spawn.rb test/process_spawn_file_redirect.rb
+  test/chained_aset_on_poly_hash_recv.rb test/recursive_containers.rb test/unary_minus_on_negative_literal.rb
+  test/poly_dispatch_inherited_method.rb packages/json/test/json_int64_boundary.rb]
+inputs = manifest.fetch('sources').keys.map { |s| ['oracle',s,File.join(oracle,s)] }
+inputs += extras.map { |s| ['spinel',s,File.join(baseline,s)] }
+if selection
+  inputs.select! { |_,name,_| name == selection.delete_prefix('--case=') }
+  abort 'selection must name exactly one frozen input' unless inputs.length == 1
+end
+FileUtils.mkdir_p(output)
+slot = File.join(output,'invocation')
+FileUtils.mkdir_p(File.join(slot,'bin'))
+%w[src lib packages builtins].each do |d|
+  abort "missing complete compiler directory: #{d}" unless File.directory?(File.join(baseline,d))
+  File.symlink(File.join(baseline,d),File.join(slot,d))
+end
+exe = File.join(slot,'bin/spinel')
+FileUtils.cp(manifest_path,File.join(output,'inputs-and-library.json'))
+File.open(File.join(output,'comparisons.jsonl'),'w') do |ledger|
+  inputs.each_with_index do |(group,name,path),index|
+    row = {index:index,group:group,path:name,expected_rc:0,input_sha256:Digest::SHA256.file(path).hexdigest}
+    %w[baseline candidate].zip([baseline,candidate]).each do |arm,tree|
+      FileUtils.copy_file(File.join(tree,'bin/spinel'),exe)
+      File.chmod(0755,exe)
+      stdout = File.join(output,"#{index}.#{arm}.c")
+      stderr = File.join(output,"#{index}.#{arm}.stderr")
+      system({'LC_ALL'=>'C'},'/usr/bin/timeout','--kill-after=5s','60s',exe,
+        '-I',File.join(oracle,'ruby/lib'),'-S',path,out:stdout,err:stderr,chdir:oracle)
+      status = $?
+      row[arm] = {rc:status.exitstatus,signal:status.termsig,c_bytes:File.size(stdout),c_sha256:Digest::SHA256.file(stdout).hexdigest,
+        stderr_sha256:Digest::SHA256.file(stderr).hexdigest}
+    end
+    row[:raw_c_equal] = FileUtils.compare_file(File.join(output,"#{index}.baseline.c"),File.join(output,"#{index}.candidate.c"))
+    failures=[]
+    %w[baseline candidate].each do |arm|
+      observation=row.fetch(arm)
+      failures << "#{arm} rc #{observation[:rc].inspect} expected 0" unless observation[:rc]==0
+      failures << "#{arm} signal #{observation[:signal]}" unless observation[:signal].nil?
+      failures << "#{arm} C empty" unless observation[:c_bytes]>0
+    end
+    failures << 'C bytes' unless row[:raw_c_equal]
+    failures << 'stderr bytes' unless FileUtils.compare_file(File.join(output,"#{index}.baseline.stderr"),File.join(output,"#{index}.candidate.stderr"))
+    row[:failures]=failures
+    row[:equal] = failures.empty?
+    ledger.puts(JSON.generate(row)); ledger.flush
+    abort "STOP no-flag difference #{index} #{name}: #{failures.join('; ')}" unless row[:equal]
+  end
+end
+records=File.readlines(File.join(output,'comparisons.jsonl')).map { |line| JSON.parse(line) }
+summary={complete:records.length,selection:selection,arms:{}}
+%w[baseline candidate].each do |arm|
+  summary[:arms][arm]={rc_distribution:records.group_by{|r|r.fetch(arm).fetch('rc')}.transform_values(&:length),
+    nonempty_c:records.count{|r|r.fetch(arm).fetch('c_bytes')>0}}
+end
+summary[:raw_c_equal]=records.count{|r|r.fetch('raw_c_equal')}
+File.binwrite(File.join(output,'summary.json'),JSON.pretty_generate(summary)+"\n")
+puts JSON.generate(summary)

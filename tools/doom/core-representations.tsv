@@ -1,0 +1,52 @@
+# tools/doom/core-representations.tsv — fields whose schema shape is not their
+# ivar's shape.
+#
+# The schema is emitted from the audit's inventory, one row per reachable ivar,
+# named after the class and the ivar. That is right for almost every field and
+# wrong for one kind: an ivar that is PER ENTRY of something, where the class is
+# instantiated once per entry and there is no single object to read.
+# `Doom::Lump` is one WAD directory entry per lump, so `Lump@@name` names 1264
+# values in doom1.wad, not one.
+#
+# A row here REPLACES the ivar's row in the schema with the given name, element
+# and count. The `origin` column of the emitted schema keeps the ORIGINAL
+# class@ivar, so the correspondence from the ivar to what replaced it is in the
+# schema itself and not only in this table. A row matching no inventory field
+# is refused, and so is a replacement name already taken.
+#
+# docs/core/doom-lump-directory.md is the decision this implements.
+#
+# SOURCE ALIASES (docs/core/doom-source-alias.md). A `fold:` row takes an ivar out of the
+# schema because fields that already exist carry what it held; a `Class@@ivar.part`
+# row ADDS a field for a part of an ivar. The sixth column, when present, names the
+# Full producer of a field whose value is a CONVERSION of the original's:
+# `source-select:dc|ds:res|base` reads the renderer's chosen buffer and offset and
+# answers the selector (RES_NONE -1, RES_ATLAS 0, RES_WAD 1, RES_ZONE 2, RES_FLAT 3)
+# or the base into that resource. The reference converts separately.
+#
+# ONE STORAGE, TWO IVARS. An `alias:` row says the ivar IS the named field -- the
+# same object in the original, which the reference checks -- so it has no
+# allocation of its own: its element and count must be the field's, the entries
+# that reach it reach the field, and the schema records the mapping in an
+# `#alias` line. The job ring is one (docs/core/doom-source-alias.md, C):
+# The executor keeps the Jobs owner and reads its ring through zone_byte.
+# Array banks below remain direct aliases. The WAD is one (decision 0021): the
+# status bar and the HUD keep the Wad#data the renderer keeps.
+#
+#class@ivar	name	element	count	why	producer
+Lump@@name	wad_lump_name	u8	table:lumpnamebytes	Each entry's Lump.name -- the bytes Bytes.name8 read, stopping at the first NUL -- zero-padded to 8, at 8*i. Not the raw directory slot.
+Lump@@pos	wad_lump_pos	i64	table:lumps	Each entry's file position, a marker's included: E1M1's is 67500 with size 0.
+Lump@@size	wad_lump_size	i64	table:lumps	Each entry's size; 0 marks a namespace marker.
+Renderer@@dc_srcbuf	fold:renderer_dc_srcres+renderer_dc_srcbase	-	-	A reference to the column source buffer. Carried as the selector in renderer_dc_srcres and the base in renderer_dc_srcbase, the existing fields, set on every path.
+Renderer@@dc_srcres	renderer_dc_srcres	i64	fixed:1	The column source selector: which resource @dc_srcbuf is. The original sets @dc_srcres only on masked paths; the representation holds the selector for every column.	source-select:dc:res
+Renderer@@dc_srcbase	renderer_dc_srcbase	i64	fixed:1	The column source base into the selected resource: atlas_base(tex) + ofs, the post offset in the WAD, the ring slot, or 0 for @zonewin.	source-select:dc:base
+Renderer@@ds_source	renderer_ds_srcres	i64	fixed:1	The span source selector, replacing the reference to a flat buffer: RES_FLAT, or RES_NONE before any plane.	source-select:ds:res
+Renderer@@ds_source.base	renderer_ds_srcbase	i64	fixed:1	The span source base: flat_atlas_base of the plane's picture, 0 before any plane.	source-select:ds:base
+Hud@@texts.ofs	hud_text_ofs	i64	fixed:42	Where each of the 41 HUD messages starts in the joined hud_texts, and where the last ends: message m is the bytes from ofs[m] to ofs[m+1].	offsets-of:Hud@@texts
+JobExecutor@@wall	alias:jobs_wall	-	-	Jobs' wall bank, handed to the executor at construction (executor.rb: @wall = jobs.wall_bank). The executor reads the bank the renderer pushes into; one allocation, jobs_wall.
+JobExecutor@@span	alias:jobs_span	-	-	Jobs' span bank, handed to the executor at construction (executor.rb: @span = jobs.span_bank). The executor reads the bank the renderer pushes into; one allocation, jobs_span.
+JobExecutor@@masked	alias:jobs_masked	-	-	Jobs' masked bank, handed to the executor at construction (executor.rb: @masked = jobs.masked_bank). The executor reads the bank the renderer pushes into; one allocation, jobs_masked.
+JobExecutor@@sc_kind	alias:jobs_sc_kind	-	-	Jobs' sc_kind bank, handed to the executor at construction (executor.rb: @sc_kind = jobs.sched_kind_bank). The executor reads the bank the renderer pushes into; one allocation, jobs_sc_kind.
+JobExecutor@@sc_idx	alias:jobs_sc_idx	-	-	Jobs' sc_idx bank, handed to the executor at construction (executor.rb: @sc_idx = jobs.sched_idx_bank). The executor reads the bank the renderer pushes into; one allocation, jobs_sc_idx.
+StatusBar@@data	alias:renderer_wad_data	-	-	The whole IWAD the status bar draws from (statusbar.rb: @data = wad.data), the String Renderer@@wad_data also holds (render.rb: @wad_data = wad.data). One resource, renderer_wad_data (decision 0021).
+Hud@@data	alias:renderer_wad_data	-	-	The whole IWAD the HUD draws its font from (hud.rb: @data = wad.data), the String Renderer@@wad_data also holds. One resource, renderer_wad_data (decision 0021).

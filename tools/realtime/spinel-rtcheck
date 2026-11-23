@@ -1,0 +1,33 @@
+#!/bin/sh
+# spinel-rtcheck -- the entry point of the allocation proof (E169 D-4).
+#
+# **The product is native**. This file is only a wrapper that execs `build/bin/spinel-rtcheck`,
+# the same shape as `tools/mlir/spinel-mlirgen`.
+# The callers (`tools/realtime/test/run.sh`, `tools/grad/spinel-gradgen`'s G2,
+# and an earlier runner) need not change the spelling.
+#
+# **It does not fall back to Python** (design D-2 / D-4). Without the native binary it stops loudly with rc 1
+# — the allocation proof has no "default surface", and silently falling to another judge
+# changes what the proof means. The frozen Python stays read-only in `frozen/spinel-rtcheck.py`,
+# and the E169 suite runs it as the oracle for byte equality.
+#
+# Search order: SPINEL_RTCHECK_BIN > $CONTRACT_BUILD_DIR/bin > tools/mlir/native/build/bin
+set -u
+
+HERE=$(cd -- "$(dirname -- "$0")" && pwd)
+REPO=$(cd -- "$HERE/../.." && pwd)
+
+if [ -n "${SPINEL_RTCHECK_BIN:-}" ]; then
+  BIN="$SPINEL_RTCHECK_BIN"
+elif [ -n "${CONTRACT_BUILD_DIR:-}" ] && [ -x "$CONTRACT_BUILD_DIR/bin/spinel-rtcheck" ]; then
+  BIN="$CONTRACT_BUILD_DIR/bin/spinel-rtcheck"
+else
+  BIN="$REPO/tools/mlir/native/build/bin/spinel-rtcheck"
+fi
+
+if [ ! -x "$BIN" ]; then
+  echo "spinel-rtcheck: native binary not found (build tools/mlir/native)" >&2
+  exit 1
+fi
+
+exec "$BIN" "$@"

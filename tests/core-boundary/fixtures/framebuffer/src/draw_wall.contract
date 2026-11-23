@@ -1,0 +1,21 @@
+core-contract 1
+root src/draw_wall.rb
+entry draw_wall
+result i64
+param scr buffer u8 inout count n_scr
+param n_scr scalar u64
+param atlas buffer u8 in count n_atlas
+param n_atlas scalar u64
+param cmap buffer u8 in count n_cmap
+param n_cmap scalar u64
+param yl scalar i64
+param yh scalar i64
+param srcofs scalar i64
+param cmapidx scalar i64
+param iscale scalar i64
+param texmid scalar i64
+param x scalar i64
+param width scalar i64
+param viewwindowx scalar i64
+param viewwindowy scalar i64
+param centery scalar i64

@@ -1,0 +1,54 @@
+name = "@@NAME@@"
+main = "index.mjs"
+compatibility_date = "2026-01-01"
+
+# app.wasm must arrive as a compiled WebAssembly.Module, not bytes: that is what
+# keeps compilation off the request path.
+[[rules]]
+type = "CompiledWasm"
+globs = ["**/*.wasm"]
+
+# Every *string* value here shows up in the Ruby program's ENV.  Secrets
+# (`wrangler secret put`) do too -- they are strings.  Real bindings (KV, R2,
+# D1, Durable Objects, Queues, services) are objects and are NOT exported to
+# ENV; reaching those needs the explicit host bridge of R003 §2-4 layer 1.
+[vars]
+GREETING = "hello from wrangler.toml"
+
+# Optional knobs read by worker.mjs:
+#   SPINEL_ENV_ALLOW    = "GREETING,FOO"   only these names reach ENV
+#   SPINEL_CGI_HEADERS  = "1"              let the program emit a CGI header
+#                                          block (Status:/Content-Type:/...)
+#                                          before a blank line
+#   SPINEL_CONTENT_TYPE = "application/json"   default response content type
+#
+# Host API knobs (only for a module built with --host-api; see
+# examples/fetch.rb and tools/wasm/README.md):
+#   SPINEL_HOST_KV       = "MY_KV"      binding names Edge::KV may reach.
+#                                       A binding NOT listed here is invisible
+#                                       to the bridge even though it is bound:
+#                                       reachability is an explicit decision.
+#   SPINEL_HOST_FETCH    = "0"          turn outbound HTTP off (calls then
+#                                       raise ArgumentError with a reason)
+#   SPINEL_HOST_R2       = "VAULT"      R2 bucket bindings Cloudflare::R2 may
+#                                       reach (E055)
+#   SPINEL_HOST_D1       = "DB"         D1 database bindings Cloudflare::D1 may
+#                                       reach (E055)
+#   SPINEL_HOST_MAX_BODY = "1048576"    cap on a staged response / R2 object
+#                                       (default 8 MiB)
+#   SPINEL_HOST_MAX_ROWS = "10000"      cap on rows staged from one query or
+#                                       listing (default 10000)
+#
+# [[kv_namespaces]]
+# binding = "MY_KV"
+# id = "..."
+#
+# `wrangler dev --local` emulates R2 and D1 on disk -- no account, no network.
+# [[r2_buckets]]
+# binding = "VAULT"
+# bucket_name = "..."
+#
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "..."
+# database_id = "..."

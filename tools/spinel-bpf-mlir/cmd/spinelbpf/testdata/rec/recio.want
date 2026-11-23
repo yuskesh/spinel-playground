@@ -1,0 +1,15 @@
+lo true [0, -9223372036854775807, 0, -2147483648, 0, -32768, 0, -128, 0]
+hi true [9223372036854775807, 9223372036854775807, 4294967295, 2147483647, 65535, 32767, 255, 127, 0]
+small [200, 0, -5]
+get i64 -2^63 err=SpinelBPF::ValueRange
+after1 [4611686018427387904, -4611686018427387904, 0, 0, 0, -300, 0, 0, 0]
+small1 [7, 0, -100]
+get u64 2^63 err=SpinelBPF::ValueRange
+put u8 256 err=SpinelBPF::ValueRange
+put i16 -32769 err=SpinelBPF::ValueRange
+put pad 1 err=SpinelBPF::ValueRange
+put u32 -1 err=SpinelBPF::ValueRange
+put u64 -1 err=SpinelBPF::ValueRange
+put nil err=SpinelBPF::ValueRange
+small after bad puts [200, 0, -5]
+struct #<struct Small a=1, _pad0=0, b=2>

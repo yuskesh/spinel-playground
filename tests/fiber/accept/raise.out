@@ -1,0 +1,4 @@
+1
+caught boom
+false
+root: attempt to yield on a not resumed fiber

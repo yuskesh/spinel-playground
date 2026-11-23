@@ -1,0 +1,17 @@
+fill_all 4 0 0.5 1 1.5
+lend_on 5 0 1 4 9 16
+two 80 11 21 31 8 9
+past 2 1 40 a 10 20 31 b 7 9
+past 3 0 trap 4 3 3 a 10 20 30 b 7 8
+past 0 2 trap 4 2 2 a 11 20 30 b 7 8
+sum_in 12
+each_lent 3 1 2 3
+via_entry 0 0 5 0 0
+via_entry 1 trap 4 4 3 0 0 0
+checked_put 1 0 0 8 0
+checked_put 3 trap 4 3 3 0 0 0
+modes 9 4 4
+chain 1 0 0 7 0 91
+chain 3 trap 4 3 3 0 0 0 91
+chain2 1 1 0 6 0 91
+chain2 3 trap 4 3 3 0 0 0 91

@@ -1,0 +1,40 @@
+#!/bin/bash
+set -euo pipefail
+export LC_ALL=C
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+PIN=086d514d3e2f10f8349fdedbdc2dd01dbd6c0f9c
+SRC=$ROOT/third_party/spinel
+OUT=${1:?usage: build-spinel new-private-directory prism-source}
+PRISM=${2:?usage: build-spinel new-private-directory prism-source}
+[[ $(git -C "$SRC" rev-parse HEAD) == "$PIN" ]] || { echo 'M1 wrong pin' >&2; exit 2; }
+[[ -z $(git -C "$SRC" status --porcelain) ]] || { echo 'M1 dirty submodule' >&2; exit 2; }
+[[ ! -e $OUT ]] || { echo 'M1 output already exists' >&2; exit 2; }
+[[ -f $PRISM/include/prism.h ]] || { echo 'M1 missing Prism source' >&2; exit 2; }
+[[ -x /opt/llvm-23.1.1/bin/clang ]] || { echo 'M1 missing pinned clang' >&2; exit 2; }
+mkdir -p "$OUT"
+git -C "$SRC" archive "$PIN" | tar -x -C "$OUT"
+patch --dry-run --batch --fuzz=0 -d "$OUT" -p1 < "$ROOT/patches/M1-emit-mlir.patch"
+patch --batch --fuzz=0 -d "$OUT" -p1 < "$ROOT/patches/M1-emit-mlir.patch"
+if [[ -f $ROOT/patches/M2-analysis-root.patch ]]; then
+  patch --dry-run --batch --fuzz=0 -d "$OUT" -p1 < "$ROOT/patches/M2-analysis-root.patch"
+  patch --batch --fuzz=0 -d "$OUT" -p1 < "$ROOT/patches/M2-analysis-root.patch"
+  sha256sum "$ROOT/patches/M2-analysis-root.patch" > "$OUT/M2.sha256"
+fi
+if [[ -f $ROOT/patches/M3-source-map.patch ]]; then
+  [[ -f $ROOT/patches/M2-analysis-root.patch ]] || { echo 'M3 requires M2' >&2; exit 2; }
+  patch --dry-run --batch --fuzz=0 -d "$OUT" -p1 < "$ROOT/patches/M3-source-map.patch"
+  patch --batch --fuzz=0 -d "$OUT" -p1 < "$ROOT/patches/M3-source-map.patch"
+  sha256sum "$ROOT/patches/M3-source-map.patch" > "$OUT/M3.sha256"
+fi
+if [[ -f $ROOT/patches/M4-typing-probe.patch ]]; then
+  [[ -f $ROOT/patches/M3-source-map.patch ]] || { echo 'M4 requires M3' >&2; exit 2; }
+  "$ROOT/scripts/check-m4-prerequisites" "$OUT"
+  patch --dry-run --batch --fuzz=0 -d "$OUT" -p1 < "$ROOT/patches/M4-typing-probe.patch"
+  patch --batch --fuzz=0 -d "$OUT" -p1 < "$ROOT/patches/M4-typing-probe.patch"
+  sha256sum "$ROOT/patches/M4-typing-probe.patch" > "$OUT/M4.sha256"
+fi
+mkdir -p "$OUT/vendor"
+cp -a "$PRISM" "$OUT/vendor/prism"
+sha256sum "$ROOT/patches/M1-emit-mlir.patch" > "$OUT/M1.sha256"
+printf '%s\n' "$PIN" > "$OUT/SPINEL.pin"
+make -C "$OUT" -j4 bin/spinel CC=/opt/llvm-23.1.1/bin/clang

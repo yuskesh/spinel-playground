@@ -1,0 +1,11 @@
+npals=2 selected=0
+rgb(7) no colormap  = 7,248,49
+colormap rows=3 identity_row0=false brightest(7)=200
+rgb(7) colormap row0 = 200,55,120
+rgb(7) colormap row1 = 8,247,56
+rgb(7) colormap row2 = 0,255,0
+pal1 rgb(7) = 201,55,120
+rgb(7) colormap off = 7,248,49
+reject PLAYPAL: PLAYPAL size 100 is not a multiple of 768
+reject COLORMAP: COLORMAP size 100 is not a multiple of 256
+reject select: palette 9 out of range (npals=2)

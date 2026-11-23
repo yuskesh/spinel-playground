@@ -1,0 +1,9 @@
+# module	index	name	node_path	compatible	bus	isr_ok	blocking	evidence
+Adc	0	adc_ch0	/soc/adc@40000000:0	synthetic,adc	mmio	true	false	synthetic
+Adc	1	adc_ch1	/soc/adc@40000000:1	synthetic,adc	mmio	true	false	synthetic
+Button	0	button_0	/buttons/button_0	gpio-keys	mmio	true	false	synthetic
+Button	1	button_1	/buttons/button_1	gpio-keys	mmio	true	false	synthetic
+Led	0	led_0	/leds/led_0	gpio-leds	mmio	true	false	synthetic
+Led	1	led_1	/leds/led_1	gpio-leds	i2c	true	unknown	synthetic
+Pwm	0	pwm_led_0	/pwm_leds/pwm_led_0	pwm-leds	mmio	false	false	synthetic
+Flash	0	flash_0	/soc/flash@8000000	synthetic,flash	mmio	false	true	synthetic

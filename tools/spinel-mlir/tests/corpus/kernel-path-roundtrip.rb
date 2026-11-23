@@ -1,0 +1,3 @@
+require 'json';require_relative '../../scripts/lib/release-corpus'
+require_relative '../../scripts/lib/byte-comparison'
+clone,manifest=ARGV;a=ReleaseCorpus.inventory(clone,'fa8a6cffa15146cdbd0606deae4f5905077e75cf','kernel-path-addr');b=JSON.parse(File.read(manifest));abort 'FAIL kernel-path-manifest-encoding-roundtrip' unless a==b&&a==JSON.parse(JSON.generate(a));a.fetch('cases').select{|r|r.key?('derived_content')}.each{|r|file=File.expand_path('../../test/Inputs/E079/'+File.basename(r.fetch('source')),__dir__);raise 'derived source bytes' unless ByteComparison.equal?(r.fetch('derived_content'),File.binread(file))};puts 'PASS kernel-path manifest object/bytes roundtrip'

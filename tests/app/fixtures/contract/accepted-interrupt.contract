@@ -1,0 +1,9 @@
+core-contract 2
+root app.rb
+entry sample
+context interrupt
+result none
+param reading buffer i32 inout count const 1 cross
+param frame buffer u8 inout count const 16
+extern Adc.latest symbol spc_board_adc_latest arg ch u32 returns i32 isr_ok guard ch < 1 else bounds bound iterations 1 evidence evidence/spc_board_adc_latest.json
+extern Telemetry.put symbol spc_channel_telemetry_put arg data buffer u8 in arg n u32 returns i32 isr_ok guard n >= 1 else argument guard n <= 16 else bounds guard n <= len(data) else bounds bound iterations 16 evidence evidence/spc_channel_telemetry_put.json

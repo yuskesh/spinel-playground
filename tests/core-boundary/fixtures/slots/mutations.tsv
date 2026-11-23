@@ -1,0 +1,31 @@
+# Controls. Each row changes ONE point of ONE extracted source, and both
+# comparisons must then fail:
+#
+#   ruby    trace.rb must stop agreeing -- the mutated side no longer matches
+#           the original Full state, or the independent model, or both.
+#   kernel  the CORE object built from the mutated source must no longer
+#           reproduce the cells the original produced.
+#
+# `stage` says which of the two applies. `both` is an extracted kernel, which
+# has each. `ruby` is the MODEL, which has no kernel: those rows exist to show
+# that the model is load-bearing rather than decorative, by breaking it in the
+# two places the trace is built to notice -- a free list served oldest first,
+# and a list a new thinker joins at the head.
+#
+# A control that passed would mean the comparison cannot see that part of the
+# state, which is the only way a cell-for-cell check can be vacuous. The lane
+# also asserts that each row changes exactly one occurrence and exactly one
+# line, and that every extracted kernel has a control.
+#
+#id	file	old	new	stage	what it would hide
+add-at-head	src/thinker_add.rb	p = th_prev[0]	p = th_next[0]	both	inserting at the head of the list instead of the tail
+add-bump	src/thinker_add.rb	state[1] = a + 1	state[1] = a + 2	both	the bump allocator skipping a slot
+remove-mark	src/thinker_remove.rb	th_func[t] = TH_REMOVED	th_func[t] = TH_REMOVED + 1	both	a removal the sweep would never notice
+collect-back-link	src/thinker_collect.rb	th_prev[th_next[t]] = th_prev[t]	th_prev[th_next[t]] = th_next[t]	both	the successor's back link pointing the wrong way
+collect-freelist	src/thinker_collect.rb	th_prev[t] = state[0]	th_prev[t] = -1	both	a free list that forgets everything but its head
+collect-clear	src/thinker_collect.rb	th_data[t] = -1	th_data[t] = 0	both	a freed slot keeping the wrong marker
+mobj-lifo	src/mobj_alloc.rb	state[0] = thing_next[f]	state[0] = -1	both	a free list that hands out one slot and drops the rest
+mobj-chain	src/mobj_free.rb	thing_next[m] = state[0]	thing_next[m] = -1	both	a free list that never chains, so only the last free survives
+collect-bound	src/thinker_collect.rb	steps >= n_func	steps >= 8	both	an anti-runaway bound that cuts a well-formed list short
+model-queue	model.rb	t = @free.pop	t = @free.shift	ruby	a free list served oldest first instead of newest
+model-tail	model.rb	@chain.push(t)	@chain.unshift(t)	ruby	a list a new thinker joined at the head

@@ -1,0 +1,9 @@
+literal_first	rc=0	start=4	end=7	error=
+literal_second	rc=0	start=8	end=11	error=
+literal_eof	rc=1	start=-1	end=-1	error=
+capture	rc=0	start=1	end=3	error=
+zero_0	rc=0	start=0	end=0	error=
+zero_1	rc=0	start=1	end=1	error=
+zero_2	rc=0	start=2	end=2	error=
+zero_3	rc=0	start=3	end=3	error=
+invalid	rc=-1	start=-1	end=-1	error=set

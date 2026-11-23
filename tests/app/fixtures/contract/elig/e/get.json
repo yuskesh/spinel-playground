@@ -1,0 +1,7 @@
+{"format": "spinel-provider-evidence", "version": 1,
+ "symbol": "spc_channel_telemetry_get", "object": {"file": "get.o", "sha256": "7de04beac0563f4005b91f1c14d9624ec5926ede9513bff95e01a1df29bbcb01"},
+ "target": "x86_64-unknown-linux-gnu", "board": "mps2/an521/cpu0",
+ "zephyr_release": "v4.4.2", "dts_sha256": "4dbf9b5209f8cc9e1c5c9d31a74da309d058173f93ffa5ecd94031dc552ba143", "config_sha256": "b79606fb3afea5bd1609ed40b622142f1c98125abcfe89a76a661b0e8e343910", "flags_sha256": "2934fb49d6b38adef036c28fac69f188feae09259f3184e6d9cfbd0f35454fec",
+ "stack": {"bytes": 40, "method": "0010 step 2 frame sizes over the object's final IR"},
+ "effects": {"isr_ok": true, "blocking": false, "row": "effects.tsv:2"},
+ "provenance": "attested"}

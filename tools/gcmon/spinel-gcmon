@@ -1,0 +1,297 @@
+#!/usr/bin/env ruby
+# tools/gcmon/spinel-gcmon — the GC monitoring driver.
+#
+#   spinel-gcmon run    -- <cmd...>                  # run once, one TSV
+#   spinel-gcmon ab     --a "<cmd...>" --b "<cmd...>" [--expect-zero]
+#                                                    # run twice, the deltas
+#   spinel-gcmon flame  -- <cmd...> [-o out.folded]  # per-site folded stacks
+#   spinel-gcmon stress -- <cmd...>                  # a GC_STRESS + VERIFY_GEN run
+#
+# Why it exists: attaching the GC counter (SPINEL_ALLOC_REPORT) and the malloc
+# counter (malloc_count.c, DYLD interposition) at the same time is how
+# spinel-llvm found 440 reallocs the GC counter alone never saw. That was done
+# by hand once. Tests that look only at output cannot see an allocation that
+# comes back; this tool can.
+#
+# IT DOES NOT MEASURE TIME. It handles allocation and collection deltas only;
+# performance belongs to hyperfine.
+#
+# The output is one TSV:  instrument \t metric \t a \t b \t delta
+#   instrument = gc_report | malloc_count | gcmon_section[<id>]
+# A value no instrument produced is written MISSING, never 0 (below).
+#
+# MISSING: a gate that turns green when nothing ran has existed before (two
+#   empty files compared as IDENTICAL). If any instrument leaves no output, its
+#   rows are MISSING and --expect-zero always fails.
+#
+# Do not judge by bytes: malloc_count's `bytes` reacts to the length of argv and
+#   the environment (the same program at a path of different length moved by 32
+#   bytes). The verdict uses COUNTS.
+#
+# NOT PORTED: --pause, the pause-time axis. It reads SPINEL_GC_TRACE, which
+#   vendor patch L8 adds; L8 is not approved for this repository's pin, so the
+#   option is refused rather than silently producing no rows.
+#
+# The malloc counter is macOS-only (DYLD_INSERT_LIBRARIES). Elsewhere, every
+# subcommand that needs it stops with exit 2.
+
+require "open3"
+require "tmpdir"
+require "fileutils"
+
+MALLOC_SRC = File.join(__dir__, "malloc_count.c")
+WORK       = File.join(ENV["TMPDIR"] || "/tmp", "spinel-gcmon")
+CC         = ENV["CC"] && !ENV["CC"].empty? ? ENV["CC"] : "cc"
+
+# Tells "nothing was measured" apart from 0.
+MISSING = "MISSING".freeze
+
+# The instruments every ab run attaches; each must leave output on both sides.
+REQUIRED = %w[gc_report malloc_count].freeze
+
+def die(msg)
+  warn "spinel-gcmon: #{msg}"
+  exit 2
+end
+
+# --- the malloc counter: build it when absent or stale ---
+def malloc_dylib
+  die("the malloc counter uses DYLD interposition and runs on macOS only") unless RUBY_PLATFORM.include?("darwin")
+  FileUtils.mkdir_p(WORK)
+  so = File.join(WORK, "malloc_count.dylib")
+  return so if File.exist?(so) && File.mtime(so) >= File.mtime(MALLOC_SRC)
+  out, st = Open3.capture2e(CC, "-dynamiclib", "-O2", "-o", so, MALLOC_SRC)
+  die("building malloc_count.dylib failed:\n#{out}") unless st.success?
+  so
+end
+
+# --- run once and collect the instruments' raw output ---
+#
+# Every output file name has the SAME length, because path length reaches
+# malloc's bytes; the a and b runs are kept equal there.
+def measure(cmd, tag, extra_env = {})
+  FileUtils.mkdir_p(WORK)
+  d = File.join(WORK, "run_#{tag}")
+  FileUtils.rm_rf(d)
+  FileUtils.mkdir_p(d)
+
+  alloc = File.join(d, "gc.txt")
+  mall  = File.join(d, "mc.txt")
+  gcm   = File.join(d, "sc.txt")
+
+  env = {
+    "SPINEL_ALLOC_REPORT"   => alloc,
+    "R007_MALLOC_REPORT"    => mall,
+    "GCMON_OUT"             => gcm,
+    "DYLD_INSERT_LIBRARIES" => malloc_dylib,
+  }.merge(extra_env)
+
+  out, st = Open3.capture2e(env, *cmd)
+  { ok: st.success?, out: out, alloc: alloc, mall: mall, gcm: gcm, dir: d }
+end
+
+# --- raw output to a metric hash. A metric not produced is absent (= MISSING) ---
+def parse(run)
+  m = {}
+
+  # gc_report: folded lines `alloc;<Type> <count>` (plus `# bytes` comments)
+  if File.exist?(run[:alloc])
+    File.foreach(run[:alloc]) do |line|
+      next unless line.start_with?("alloc;")
+      body, count = line.chomp.split(" ", 2)
+      next if count.nil?
+      type = body.sub("alloc;", "")
+      # per-site lines (`alloc;<site>;<Type>`) fold to the Type
+      type = type.split(";").last
+      # A scan function with no registered name is keyed by its ADDRESS
+      # (the vendor's sp_alloc_name_of returned nil). ASLR changes it every run,
+      # so A and B would get different metrics and a flood of MISSING. It is
+      # one kind, so fold it; DOOM produced one such line.
+      type = "scan(anon)" if type =~ /\Ascan_0x[0-9a-f]+\z/
+      key = "gc_report\t#{type}"
+      m[key] = (m[key] || 0) + count.to_i
+    end
+  end
+
+  # malloc_count: `mallocs=N callocs=N reallocs=N frees=N bytes=N`
+  if File.exist?(run[:mall])
+    File.read(run[:mall]).scan(/(\w+)=(\d+)/) do |k, v|
+      m["malloc_count\t#{k}"] = v.to_i
+    end
+  end
+
+  # gcmon_section: the section probe, when it is linked in
+  if File.exist?(run[:gcm])
+    File.foreach(run[:gcm]) do |line|
+      next if line.start_with?("#")
+      inst, id, metric, val = line.chomp.split("\t")
+      next unless val
+      m["#{inst}[#{id}]\t#{metric}"] = val.to_i
+    end
+  end
+
+  m
+end
+
+# Whether a metric may decide a verdict (bytes react to argv/env length)
+def countable?(key)
+  !key.end_with?("\tbytes")
+end
+
+def emit(rows, title)
+  puts "# spinel-gcmon #{title}"
+  puts "instrument\tmetric\ta\tb\tdelta"
+  rows.each { |r| puts r.join("\t") }
+end
+
+# --- run ---------------------------------------------------------------
+def cmd_run(cmd)
+  die("run: no command (write it after --)") if cmd.empty?
+  r = measure(cmd, "single")
+  warn "spinel-gcmon: the subject exited non-zero (its output follows)\n#{r[:out]}" unless r[:ok]
+  m = parse(r)
+  die("no instrument left any output (MISSING); attaching them failed") if m.empty?
+  rows = m.keys.sort.map do |k|
+    inst, metric = k.split("\t")
+    [inst, metric, m[k], "-", "-"]
+  end
+  emit(rows, "run: #{cmd.join(' ')}")
+  0
+end
+
+# --- ab ----------------------------------------------------------------
+#
+# Run A and B and give each metric's delta. A metric present on one side only is
+# NOT filled with 0: it is MISSING, so it shows.
+def cmd_ab(a_cmd, b_cmd, opts)
+  ra = measure(a_cmd, "a")
+  rb = measure(b_cmd, "b")
+  warn "spinel-gcmon: A exited non-zero\n#{ra[:out]}" unless ra[:ok]
+  warn "spinel-gcmon: B exited non-zero\n#{rb[:out]}" unless rb[:ok]
+
+  ma = parse(ra)
+  mb = parse(rb)
+  die("neither A nor B left instrument output (MISSING); attaching them failed") if ma.empty? && mb.empty?
+
+  keys = (ma.keys + mb.keys).uniq.sort
+  rows = keys.map do |k|
+    inst, metric = k.split("\t")
+    va = ma.key?(k) ? ma[k] : nil
+    vb = mb.key?(k) ? mb[k] : nil
+    delta = (va && vb) ? (vb - va) : MISSING
+    [inst, metric, va || MISSING, vb || MISSING, delta]
+  end
+  # An instrument silent on BOTH sides leaves no key at all, so the per-metric
+  # MISSING above cannot see it (a non-Spinel subject writes no gc_report).
+  # Each attached instrument must speak on each side.
+  REQUIRED.each do |inst|
+    has_a = ma.keys.any? { |k| k.start_with?("#{inst}\t") }
+    has_b = mb.keys.any? { |k| k.start_with?("#{inst}\t") }
+    next if has_a && has_b
+    rows << [inst, "(no output)", has_a ? "-" : MISSING, has_b ? "-" : MISSING, MISSING]
+  end
+  emit(rows, "ab: A=#{a_cmd.join(' ')} B=#{b_cmd.join(' ')}")
+
+  return 0 unless opts[:expect_zero]
+
+  # --expect-zero: PASS when every counted delta is 0, and a subject that exited
+  # non-zero is a FAIL. Any MISSING is a FAIL.
+  # This was wrong once in spinel-llvm: written as `reject` with `next true`, it
+  # dropped MISSING rows from the bad set and PASSED with MISSING present. State
+  # the bad condition directly with select.
+  bad = rows.select do |(inst, metric, va, vb, delta)|
+    next true if va == MISSING || vb == MISSING || delta == MISSING
+    countable?("#{inst}\t#{metric}") && delta != 0
+  end
+  missing = rows.count { |r| r[2] == MISSING || r[3] == MISSING || r[4] == MISSING }
+  exited = [ra, rb].count { |r| !r[:ok] }
+  if bad.empty? && exited.zero?
+    n = rows.count { |r| countable?("#{r[0]}\t#{r[1]}") }
+    puts "---- gcmon ab: PASS (#{n} counted metrics, every delta 0, MISSING #{missing})"
+    0
+  else
+    bad.each { |r| puts "FAIL\t#{r.join("\t")}" }
+    puts "---- gcmon ab: FAIL (#{bad.size} metrics, #{missing} of them MISSING; #{exited} subject run(s) exited non-zero)"
+    1
+  end
+end
+
+# --- flame -------------------------------------------------------------
+def cmd_flame(cmd, out)
+  die("flame: no command") if cmd.empty?
+  r = measure(cmd, "flame", { "SPINEL_ALLOC_SITES" => "1" })
+  die("flame: gc_report left no output (MISSING)") unless File.exist?(r[:alloc])
+  # The vendor already writes folded lines (`alloc;<site>;<Type> <count>`), which
+  # a flamegraph consumer takes as they are. Only comment lines are dropped.
+  body = File.readlines(r[:alloc]).reject { |l| l.start_with?("#") }
+  die("flame: no folded lines (MISSING)") if body.empty?
+  if out
+    File.write(out, body.join)
+    puts "flame: #{body.size} lines -> #{out}"
+  else
+    print body.join
+  end
+  0
+end
+
+# --- stress ------------------------------------------------------------
+def cmd_stress(cmd)
+  die("stress: no command") if cmd.empty?
+  r = measure(cmd, "stress", { "SPINEL_GC_STRESS" => "1", "SPINEL_GC_VERIFY_GEN" => "1" })
+  puts r[:out] unless r[:out].empty?
+  if r[:ok]
+    puts "---- gcmon stress: PASS (exited 0 under GC_STRESS + VERIFY_GEN)"
+    0
+  else
+    puts "---- gcmon stress: FAIL (exited non-zero)"
+    1
+  end
+end
+
+def refuse_pause
+  die("--pause is NOT PORTED: it needs vendor patch L8 (SPINEL_GC_TRACE), which is not approved at this pin")
+end
+
+# --- arguments -----------------------------------------------------------
+def split_cmd(s)
+  # A plain whitespace split. For an argument with a space, use the -- forms
+  # (run / flame / stress).
+  s.split(/\s+/).reject(&:empty?)
+end
+
+sub = ARGV.shift
+case sub
+when "run", "flame", "stress"
+  rest = ARGV.dup
+  refuse_pause if rest.first(rest.index("--") || rest.size).include?("--pause")
+  rest.shift if rest.first == "--"
+  out = nil
+  if sub == "flame" && (i = rest.index("-o"))
+    out = rest[i + 1]
+    rest.delete_at(i); rest.delete_at(i)
+  end
+  code = case sub
+         when "run"   then cmd_run(rest)
+         when "flame" then cmd_flame(rest, out)
+         else              cmd_stress(rest)
+         end
+  exit(code || 0)
+when "ab"
+  a = b = nil
+  expect_zero = false
+  i = 0
+  while i < ARGV.size
+    case ARGV[i]
+    when "--a" then a = ARGV[i + 1]; i += 2
+    when "--b" then b = ARGV[i + 1]; i += 2
+    when "--expect-zero" then expect_zero = true; i += 1
+    when "--pause" then refuse_pause
+    else die("ab: unknown argument #{ARGV[i]}")
+    end
+  end
+  die("ab: needs --a and --b") unless a && b
+  exit cmd_ab(split_cmd(a), split_cmd(b), expect_zero: expect_zero)
+else
+  warn File.read(__FILE__).lines[1, 11].map { |l| l.sub(/^# ?/, "") }.join
+  exit 2
+end

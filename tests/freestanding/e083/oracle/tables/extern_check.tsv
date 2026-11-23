@@ -1,0 +1,2 @@
+verdict	symbol	declared	wrapper	reason
+MATCH	spinel_grad_sq_hinge_loss	spinel_grad_sq_hinge_loss(f64_buf:in,len,f64_buf:in,f64_buf:out,len) -> f64	spinel_grad_sq_hinge_loss(f64_buf:const,i32,f64_buf:const,f64_buf:mut,i32) -> f64	declaration and wrapper agree

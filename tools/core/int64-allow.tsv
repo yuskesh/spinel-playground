@@ -1,0 +1,32 @@
+# tools/core/int64-allow.tsv -- the sources that keep `# spinel: int64` on a
+# 32-bit target (decision 0019, revised 2026-10-21).
+#
+# On a target whose pointers are 32 bits, the kernel (spinel-core-kernel, and
+# so spinel-core-app), spinel-fs-emit and spinel-fs-grad refuse a first-line
+# `# spinel: int64` unless this table lists the source. A listed source builds
+# at 64 bits as before. A source is listed when its bytes are a listed file's
+# current bytes, so a lane that compiles a copy is still listed and an edited
+# copy is not. `--int64-allow FILE` reads another table; a table's paths are
+# relative to the directory two levels above its own (tools/core/ -> the
+# repository).
+#
+# Every read checks the whole table: a row that is not a path and a reason, a
+# path listed twice, a path that does not exist, or a listed file that does
+# not declare `# spinel: int64` refuses every source (`int64-allow-table`).
+#
+# A row is owner policy: a source whose 64-bit Integer does not matter for
+# performance, typically a test whose subject is 64-bit arithmetic or a 64-bit
+# platform value, and only where rewriting it at 32 bits would lose what it
+# tests. DOOM's CORE entries and its board application are never listed.
+#
+# COLUMNS
+#   path    the source, from the repository root
+#   reason  why its 64 bits stay, and why a rewrite would lose the test
+#
+#path	reason
+tests/freestanding/e081/e081_kern.rb	E081 checks Zephyr's 64-bit platform values, uptime_ms -> i64 and print_i64(i64), and the i64 extern-argument and return boundaries; at 32 bits those externs cannot be called, and the platform contract stays as it is (owner, 2026-10-21)
+tests/freestanding/e081/reject/c1_ok.rb	E081's accepted control for the same surface: an i64 return built from uptime_ms()'s i64 value
+tests/freestanding/e081/reject/c3_wrap_narrow.rb	E081's accepted control for a wrap entry narrowing an i64 argument to gpio_set's i32 pin
+tests/app/fixtures/build/divides/app.rb	0014 D3's 64-bit division control: the only input that shows verify counting __aeabi_ldivmod calls and the production build refusing the unattested helper at step 7; at 32 bits there is no 64-bit division to count or refuse (owner, 2026-10-22)
+examples/gatekeeper/kern.rb	the gatekeeper's token bucket takes epoch-millisecond timestamps (about 1.7e12, past 2^31) and its bucketing mixes in the field mod 2^31-1, whose products reach (2^31-2)^2 < 2^62; at 32 bits the timestamps do not fit and every mix overflows (owner, 2026-10-29)
+examples/edge-twin/kern.rb	edge-twin's filter carries its mean in Q16 (|x| <= 100000 gives 6,553,600,000), its Lehmer generator's s * 48271 reaches about 1.0e14 and the digest's hi * 1000003 about 2.1e15; at 32 bits they overflow, and the declared domain and the trap probe at 11863283 / 11863284 assume a 64-bit body (owner, 2026-10-29)

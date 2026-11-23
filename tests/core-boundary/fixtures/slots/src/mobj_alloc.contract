@@ -1,0 +1,8 @@
+core-contract 1
+root src/mobj_alloc.rb
+entry mobj_alloc
+result i64
+param thing_next buffer i32 inout count n_thing
+param n_thing scalar u64
+param state buffer i32 inout count n_state
+param n_state scalar u64

@@ -1,0 +1,3 @@
+require 'json';require_relative '../../scripts/lib/release-corpus'
+clone=ARGV.fetch(0);pin='fa8a6cffa15146cdbd0606deae4f5905077e75cf';begin;rows=ReleaseCorpus.inventory(clone,pin,'kernel-path-addr').fetch('cases');rescue=>e;warn e.message;abort 'FAIL kernel-path-addr-selection';end
+expected=JSON.parse(File.read(File.expand_path('../../docs/experiments/results/E079/selection.json',__dir__))).fetch('cases');raise '26 ID set' unless rows.map{|r|r.fetch('id')}.sort==expected.map{|r|r.fetch('id')}.sort;rows.each{|r|e=expected.find{|x|x.fetch('id')==r.fetch('id')};raise 'source identity' unless r.slice('id','kind','source','source_sha256')==e.slice('id','kind','source','source_sha256')};puts 'PASS kernel-path-addr 23 native / 3 auxiliary'

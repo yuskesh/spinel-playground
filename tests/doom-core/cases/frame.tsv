@@ -1,0 +1,106 @@
+# The frame lane's cases: decision 0009 item 4, stage 1 at its reduced scope.
+# A row whose origin names a tick.sh line stands in for that pinned check and
+# takes every asserted value from it. A row whose origin is `new` has no old
+# counterpart. A row tiered retired runs nothing: it records that the pin at its
+# line is deliberately not migrated, and its origin carries the reason, which
+# 0009's Validation requires of every check retired rather than migrated.
+# The controls run on the COMPILED route only. The other routes' control pins
+# assert the same frame, faults, first and rc keys at a different frame count,
+# so they are retired as route duplicates; what the session and the adapter add
+# over the compiled route -- a wrong-slot field map, the refused-step lifecycle,
+# the id release -- is declared as its own case instead.
+# Rows tiered selftest are the harness's own tests: they run when the runner or
+# the record emitter changes, never in the commit, milestone or macOS sets.
+# judged_against names the case whose expectation judges the run, which is the
+# case itself except where a perturbation is judged against what it perturbs.
+# requires names what must be present, one prerequisite at a time, so a skip
+# says which one is missing rather than that something was.
+# The case id is frame.<route>.<control>.<frames>, and a row that perturbs the
+# run appends its variant, so the perturbed row can never be mistaken for the
+# case it is judged against. cases.rb builds the id from the frames column, so
+# the figure in a name is the length that runs.
+# WHY 600: a pin-derived row asserts the counts its tick.sh pin measured, and
+# every one of those pins ran 600 frames of DEMO1 -- pushes, planes, checks and
+# jobs are counts over exactly that length, so a longer run would disagree with
+# its own expectation. This lane checks the port against the original running
+# beside it, count for count. The recording check, which needs no pinned count,
+# compares every route over the whole demo in tests/doom-core/screens.sh.
+#case_id	lane	route	mode	control	demo	frames	variant	requires	judged_against	tiers	origin
+frame.ruby.none.600	frame	ruby	frame	none	DEMO1	600	-	wad	frame.ruby.none.600	commit,milestone,macos	tick:563@e2f5676
+frame.compiled.none.600	frame	compiled	frame	none	DEMO1	600	-	wad,source-lib	frame.compiled.none.600	commit,milestone,macos	tick:804@e2f5676
+frame.session.none.600	frame	session	frame	none	DEMO1	600	-	wad,source-lib,session-dir	frame.session.none.600	commit,milestone,macos	tick:972@e2f5676
+frame.adapter.none.600	frame	adapter	frame	none	DEMO1	600	-	wad,adapter-lib,session-dir	frame.adapter.none.600	commit,milestone,macos	tick:1085@e2f5676
+frame.compiled.frame-order.600	frame	compiled	frame	frame-order	DEMO1	600	-	wad,source-lib	frame.compiled.frame-order.600	commit,milestone,macos	tick:808@e2f5676
+frame.compiled.frame-fuzz-phase.600	frame	compiled	frame	frame-fuzz-phase	DEMO1	600	-	wad,source-lib	frame.compiled.frame-fuzz-phase.600	commit,milestone,macos	tick:811@e2f5676
+frame.compiled.frame-wrong-bank.600	frame	compiled	frame	frame-wrong-bank	DEMO1	600	-	wad,source-lib	frame.compiled.frame-wrong-bank.600	commit,milestone,macos	tick:814@e2f5676
+frame.compiled.push-skip-sched.600	frame	compiled	frame	push-skip-sched	DEMO1	600	-	wad,source-lib	frame.compiled.push-skip-sched.600	commit,milestone,macos	tick:817@e2f5676
+frame.compiled.push-kind.600	frame	compiled	frame	push-kind	DEMO1	600	-	wad,source-lib	frame.compiled.push-kind.600	commit,milestone,macos	tick:820@e2f5676
+frame.compiled.push-phase-counter.600	frame	compiled	frame	push-phase-counter	DEMO1	600	-	wad,source-lib	frame.compiled.push-phase-counter.600	commit,milestone,macos	tick:823@e2f5676
+frame.compiled.push-cap-low.600	frame	compiled	frame	push-cap-low	DEMO1	600	-	wad,source-lib	frame.compiled.push-cap-low.600	commit,milestone,macos	tick:826@e2f5676
+frame.compiled.check-lo-one.600	frame	compiled	frame	check-lo-one	DEMO1	600	-	wad,source-lib	frame.compiled.check-lo-one.600	commit,milestone,macos	tick:829@e2f5676
+frame.compiled.check-skip-span.600	frame	compiled	frame	check-skip-span	DEMO1	600	-	wad,source-lib	frame.compiled.check-skip-span.600	commit,milestone,macos	tick:832@e2f5676
+frame.compiled.plane-skip.600	frame	compiled	frame	plane-skip	DEMO1	600	-	wad,source-lib	frame.compiled.plane-skip.600	commit,milestone,macos	tick:835@e2f5676
+frame.compiled.plane-wrong.600	frame	compiled	frame	plane-wrong	DEMO1	600	-	wad,source-lib	frame.compiled.plane-wrong.600	commit,milestone,macos	tick:838@e2f5676
+frame.compiled.plane-wrong-height.600	frame	compiled	frame	plane-wrong-height	DEMO1	600	-	wad,source-lib	frame.compiled.plane-wrong-height.600	commit,milestone,macos	tick:841@e2f5676
+frame.compiled.clear-skip.600	frame	compiled	frame	clear-skip	DEMO1	600	-	wad,source-lib	frame.compiled.clear-skip.600	commit,milestone,macos	tick:844@e2f5676
+frame.compiled.clear-drop-counters.600	frame	compiled	frame	clear-drop-counters	DEMO1	600	-	wad,source-lib	frame.compiled.clear-drop-counters.600	commit,milestone,macos	tick:847@e2f5676
+frame.compiled.clear-drop-clips.600	frame	compiled	frame	clear-drop-clips	DEMO1	600	-	wad,source-lib	frame.compiled.clear-drop-clips.600	commit,milestone,macos	tick:850@e2f5676
+frame.compiled.sky-skip.600	frame	compiled	frame	sky-skip	DEMO1	600	-	wad,source-lib	frame.compiled.sky-skip.600	commit,milestone,macos	new: the sky plane drawn as texture columns arrived at 94804d4, after the frozen revision, so no pin runs it; the walk is given a sky flat number no plane has and must stop recognizing sky planes
+frame.compiled.sky-texmid.600	frame	compiled	frame	sky-texmid	DEMO1	600	-	wad,source-lib	frame.compiled.sky-texmid.600	commit,milestone,macos	new: no pin runs it; the sky texture middle is 1.0 high, which only a sky column carries, and DEMO1 draws its first at frame 572, so 600 frames is the shortest run that detects
+frame.compiled.sky-iscale.600	frame	compiled	frame	sky-iscale	DEMO1	600	-	wad,source-lib	frame.compiled.sky-iscale.600	commit,milestone,macos	new: no pin runs it; the sky scale is 1 higher, which only a sky column carries, and DEMO1 draws its first at frame 572, so 600 frames is the shortest run that detects
+frame.compiled.planes-bound-short.600	frame	compiled	frame	planes-bound-short	DEMO1	600	-	wad,source-lib	frame.compiled.planes-bound-short.600	commit,milestone,macos	new: the whole plane walk arrived at 94804d4, after the frozen revision, so no pin runs it; the walk is given a lastvisplane one lower and must stop one plane short of the original's
+frame.session.none.200	frame	session	frame	none	DEMO1	200	-	wad,source-lib,session-dir	frame.session.none.200	milestone	new: the length the session's retired controls ran at, kept as a nominal. ITS planes.sky_columns IS ASSERTED AT 0 AND THAT IS COVERAGE, NOT VACUITY: DEMO1 draws its first sky column at frame 572, measured at 628edab (sites.sky.first frame572 in the 600-frame nominals of all four routes), so a 200-frame run legitimately reaches none, and a defect that drew a sky column earlier would move the count off 0 and fail this case. The 600-frame nominals assert the same key at 1296
+frame.adapter.none.200	frame	adapter	frame	none	DEMO1	200	-	wad,adapter-lib,session-dir	frame.adapter.none.200	milestone	new: the length the adapter's retired controls ran at, kept as a nominal. ITS planes.sky_columns IS ASSERTED AT 0 AND THAT IS COVERAGE, NOT VACUITY: DEMO1 draws its first sky column at frame 572, measured at 628edab (sites.sky.first frame572 in the 600-frame nominals of all four routes), so a 200-frame run legitimately reaches none, and a defect that drew a sky column earlier would move the count off 0 and fail this case. The 600-frame nominals assert the same key at 1296
+frame.session.none.60.fields-wrongslot	frame	session	frame	none	DEMO1	60	fields=wrongslot	wad,source-lib,session-dir	frame.session.none.60.fields-wrongslot	commit,milestone,macos	new: the frame lane's only case reaching slot-disagree; tick.sh maps a wrong slot in direct and queued mode, never in frame
+frame.adapter.push-kind.60	frame	adapter	frame	push-kind	DEMO1	60	-	wad,adapter-lib,session-dir	frame.adapter.push-kind.60	commit,milestone,macos	new: the refused step ends the session -- no further invoke, no poisoned buffer read, every id released once, rc=1
+frame.adapter.none.60.untracked-result	frame	adapter	frame	none	DEMO1	60	untracked=result	wad,adapter-lib,session-dir	frame.adapter.none.60.untracked-result	commit,milestone,macos	new: the result cell is allocated and never tracked, so a second release is accepted and the run fails; tick.sh does this in queued mode only
+frame.ruby.queued-wrong-store.60	frame	ruby	frame	queued-wrong-store	DEMO1	60	-	wad	frame.ruby.queued-wrong-store.60	commit,milestone,macos	tick:596@e2f5676 part 3
+frame.ruby.push-kind.60	frame	ruby	frame	push-kind	DEMO1	60	-	wad	frame.ruby.push-kind.60	commit,milestone,macos	tick:596@e2f5676 part 4
+frame.ruby.none.600.mutate-clear-counters	frame	ruby	frame	none	DEMO1	600	mutate=clear-counters	wad	frame.ruby.none.600	selftest	new: dc_clear_planes' four counter writes deleted in a private copy of the tree; the 44a7d4b vacuity, which the nominal must now detect
+frame.ruby.none.600.mutate-clear-clips	frame	ruby	frame	none	DEMO1	600	mutate=clear-clips	wad	frame.ruby.none.600	selftest	new: dc_clear_planes' clip writes deleted in a private copy of the tree; the nominal must detect it
+frame.ruby.none.599	frame	ruby	frame	none	DEMO1	599	-	wad	frame.ruby.none.600	selftest	new: a nominal one frame short, which must fail the 600-frame expectation rather than pass on a subset
+frame.ruby.none.600.kill	frame	ruby	frame	none	DEMO1	600	kill	wad	frame.ruby.none.600	selftest	new: the run is killed by a signal, which must verdict error rather than pass or fail
+frame.ruby.frame-order.600	frame	ruby	frame	frame-order	DEMO1	600	-	wad	-	retired	tick:567@e2f5676 retired: route duplicate of frame.compiled.frame-order.600
+frame.ruby.frame-fuzz-phase.600	frame	ruby	frame	frame-fuzz-phase	DEMO1	600	-	wad	-	retired	tick:569@e2f5676 retired: route duplicate of frame.compiled.frame-fuzz-phase.600
+frame.ruby.frame-wrong-bank.600	frame	ruby	frame	frame-wrong-bank	DEMO1	600	-	wad	-	retired	tick:571@e2f5676 retired: route duplicate of frame.compiled.frame-wrong-bank.600
+frame.ruby.push-skip-sched.600	frame	ruby	frame	push-skip-sched	DEMO1	600	-	wad	-	retired	tick:573@e2f5676 retired: route duplicate of frame.compiled.push-skip-sched.600
+frame.ruby.push-phase-counter.600	frame	ruby	frame	push-phase-counter	DEMO1	600	-	wad	-	retired	tick:575@e2f5676 retired: route duplicate of frame.compiled.push-phase-counter.600
+frame.ruby.push-cap-low.600	frame	ruby	frame	push-cap-low	DEMO1	600	-	wad	-	retired	tick:577@e2f5676 retired: route duplicate of frame.compiled.push-cap-low.600
+frame.ruby.check-lo-one.600	frame	ruby	frame	check-lo-one	DEMO1	600	-	wad	-	retired	tick:579@e2f5676 retired: route duplicate of frame.compiled.check-lo-one.600
+frame.ruby.check-skip-span.600	frame	ruby	frame	check-skip-span	DEMO1	600	-	wad	-	retired	tick:581@e2f5676 retired: route duplicate of frame.compiled.check-skip-span.600
+frame.ruby.plane-skip.600	frame	ruby	frame	plane-skip	DEMO1	600	-	wad	-	retired	tick:583@e2f5676 retired: route duplicate of frame.compiled.plane-skip.600
+frame.ruby.plane-wrong.600	frame	ruby	frame	plane-wrong	DEMO1	600	-	wad	-	retired	tick:585@e2f5676 retired: route duplicate of frame.compiled.plane-wrong.600
+frame.ruby.plane-wrong-height.600	frame	ruby	frame	plane-wrong-height	DEMO1	600	-	wad	-	retired	tick:587@e2f5676 retired: route duplicate of frame.compiled.plane-wrong-height.600
+frame.ruby.clear-skip.600	frame	ruby	frame	clear-skip	DEMO1	600	-	wad	-	retired	tick:589@e2f5676 retired: route duplicate of frame.compiled.clear-skip.600
+frame.ruby.clear-drop-counters.600	frame	ruby	frame	clear-drop-counters	DEMO1	600	-	wad	-	retired	tick:591@e2f5676 retired: route duplicate of frame.compiled.clear-drop-counters.600
+frame.ruby.clear-drop-clips.600	frame	ruby	frame	clear-drop-clips	DEMO1	600	-	wad	-	retired	tick:593@e2f5676 retired: route duplicate of frame.compiled.clear-drop-clips.600
+frame.session.frame-order.200	frame	session	frame	frame-order	DEMO1	200	-	wad,source-lib,session-dir	-	retired	tick:975@e2f5676 retired: route duplicate of frame.compiled.frame-order.600
+frame.session.frame-fuzz-phase.200	frame	session	frame	frame-fuzz-phase	DEMO1	200	-	wad,source-lib,session-dir	-	retired	tick:978@e2f5676 retired: route duplicate of frame.compiled.frame-fuzz-phase.600
+frame.session.frame-wrong-bank.200	frame	session	frame	frame-wrong-bank	DEMO1	200	-	wad,source-lib,session-dir	-	retired	tick:981@e2f5676 retired: route duplicate of frame.compiled.frame-wrong-bank.600
+frame.session.push-skip-sched.200	frame	session	frame	push-skip-sched	DEMO1	200	-	wad,source-lib,session-dir	-	retired	tick:984@e2f5676 retired: route duplicate of frame.compiled.push-skip-sched.600
+frame.session.push-kind.200	frame	session	frame	push-kind	DEMO1	200	-	wad,source-lib,session-dir	-	retired	tick:987@e2f5676 retired: route duplicate of frame.compiled.push-kind.600
+frame.session.push-phase-counter.200	frame	session	frame	push-phase-counter	DEMO1	200	-	wad,source-lib,session-dir	-	retired	tick:990@e2f5676 retired: route duplicate of frame.compiled.push-phase-counter.600
+frame.session.push-cap-low.200	frame	session	frame	push-cap-low	DEMO1	200	-	wad,source-lib,session-dir	-	retired	tick:993@e2f5676 retired: route duplicate of frame.compiled.push-cap-low.600
+frame.session.check-lo-one.200	frame	session	frame	check-lo-one	DEMO1	200	-	wad,source-lib,session-dir	-	retired	tick:996@e2f5676 retired: route duplicate of frame.compiled.check-lo-one.600
+frame.session.check-skip-span.200	frame	session	frame	check-skip-span	DEMO1	200	-	wad,source-lib,session-dir	-	retired	tick:999@e2f5676 retired: route duplicate of frame.compiled.check-skip-span.600
+frame.session.plane-skip.200	frame	session	frame	plane-skip	DEMO1	200	-	wad,source-lib,session-dir	-	retired	tick:1002@e2f5676 retired: route duplicate of frame.compiled.plane-skip.600
+frame.session.plane-wrong.200	frame	session	frame	plane-wrong	DEMO1	200	-	wad,source-lib,session-dir	-	retired	tick:1005@e2f5676 retired: route duplicate of frame.compiled.plane-wrong.600
+frame.session.plane-wrong-height.200	frame	session	frame	plane-wrong-height	DEMO1	200	-	wad,source-lib,session-dir	-	retired	tick:1008@e2f5676 retired: route duplicate of frame.compiled.plane-wrong-height.600
+frame.session.clear-skip.200	frame	session	frame	clear-skip	DEMO1	200	-	wad,source-lib,session-dir	-	retired	tick:1011@e2f5676 retired: route duplicate of frame.compiled.clear-skip.600
+frame.session.clear-drop-counters.200	frame	session	frame	clear-drop-counters	DEMO1	200	-	wad,source-lib,session-dir	-	retired	tick:1014@e2f5676 retired: route duplicate of frame.compiled.clear-drop-counters.600
+frame.session.clear-drop-clips.200	frame	session	frame	clear-drop-clips	DEMO1	200	-	wad,source-lib,session-dir	-	retired	tick:1017@e2f5676 retired: route duplicate of frame.compiled.clear-drop-clips.600
+frame.adapter.frame-order.200	frame	adapter	frame	frame-order	DEMO1	200	-	wad,adapter-lib,session-dir	-	retired	tick:1088@e2f5676 retired: route duplicate of frame.compiled.frame-order.600
+frame.adapter.frame-fuzz-phase.200	frame	adapter	frame	frame-fuzz-phase	DEMO1	200	-	wad,adapter-lib,session-dir	-	retired	tick:1091@e2f5676 retired: route duplicate of frame.compiled.frame-fuzz-phase.600
+frame.adapter.frame-wrong-bank.200	frame	adapter	frame	frame-wrong-bank	DEMO1	200	-	wad,adapter-lib,session-dir	-	retired	tick:1094@e2f5676 retired: route duplicate of frame.compiled.frame-wrong-bank.600
+frame.adapter.push-skip-sched.200	frame	adapter	frame	push-skip-sched	DEMO1	200	-	wad,adapter-lib,session-dir	-	retired	tick:1097@e2f5676 retired: route duplicate of frame.compiled.push-skip-sched.600
+frame.adapter.push-kind.200	frame	adapter	frame	push-kind	DEMO1	200	-	wad,adapter-lib,session-dir	-	retired	tick:1100@e2f5676 retired: route duplicate of frame.compiled.push-kind.600; its refused-step lifecycle is asserted by frame.adapter.push-kind.60
+frame.adapter.push-phase-counter.200	frame	adapter	frame	push-phase-counter	DEMO1	200	-	wad,adapter-lib,session-dir	-	retired	tick:1103@e2f5676 retired: route duplicate of frame.compiled.push-phase-counter.600
+frame.adapter.push-cap-low.200	frame	adapter	frame	push-cap-low	DEMO1	200	-	wad,adapter-lib,session-dir	-	retired	tick:1106@e2f5676 retired: route duplicate of frame.compiled.push-cap-low.600, and the only migrated pin asserting a CAPACITY session end, and that class is not lost: the queued check at tick.sh:1078@e2f5676 keeps it, pinning zalloc CAPACITY (4) at masked tic 130 with every id released once, and the queued lane stays in tick.sh. What is dropped is the frame-mode pwall CAPACITY site; the frame-mode lifecycle is asserted by frame.adapter.push-kind.60 on a BOUNDS from the span check
+frame.adapter.check-lo-one.200	frame	adapter	frame	check-lo-one	DEMO1	200	-	wad,adapter-lib,session-dir	-	retired	tick:1109@e2f5676 retired: route duplicate of frame.compiled.check-lo-one.600
+frame.adapter.check-skip-span.200	frame	adapter	frame	check-skip-span	DEMO1	200	-	wad,adapter-lib,session-dir	-	retired	tick:1112@e2f5676 retired: route duplicate of frame.compiled.check-skip-span.600
+frame.adapter.plane-skip.200	frame	adapter	frame	plane-skip	DEMO1	200	-	wad,adapter-lib,session-dir	-	retired	tick:1115@e2f5676 retired: route duplicate of frame.compiled.plane-skip.600
+frame.adapter.plane-wrong.200	frame	adapter	frame	plane-wrong	DEMO1	200	-	wad,adapter-lib,session-dir	-	retired	tick:1118@e2f5676 retired: route duplicate of frame.compiled.plane-wrong.600
+frame.adapter.plane-wrong-height.200	frame	adapter	frame	plane-wrong-height	DEMO1	200	-	wad,adapter-lib,session-dir	-	retired	tick:1121@e2f5676 retired: route duplicate of frame.compiled.plane-wrong-height.600
+frame.adapter.clear-skip.200	frame	adapter	frame	clear-skip	DEMO1	200	-	wad,adapter-lib,session-dir	-	retired	tick:1124@e2f5676 retired: route duplicate of frame.compiled.clear-skip.600
+frame.adapter.clear-drop-counters.200	frame	adapter	frame	clear-drop-counters	DEMO1	200	-	wad,adapter-lib,session-dir	-	retired	tick:1127@e2f5676 retired: route duplicate of frame.compiled.clear-drop-counters.600
+frame.adapter.clear-drop-clips.200	frame	adapter	frame	clear-drop-clips	DEMO1	200	-	wad,adapter-lib,session-dir	-	retired	tick:1130@e2f5676 retired: route duplicate of frame.compiled.clear-drop-clips.600

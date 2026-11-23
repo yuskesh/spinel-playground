@@ -1,0 +1,31 @@
+name = "r2-d1"
+main = "index.mjs"
+compatibility_date = "2026-01-01"
+
+[[rules]]
+type = "CompiledWasm"
+globs = ["**/*.wasm"]
+
+[vars]
+SPINEL_CGI_HEADERS = "1"   # required for status, redirect and Content-Type control (E013)
+
+# Reachability is an explicit decision (E014/E055). Binding a bucket or a
+# database below does not make it reachable from Ruby: only the names written
+# here are visible to Cloudflare::R2 and Cloudflare::D1.
+SPINEL_HOST_R2 = "VAULT"
+SPINEL_HOST_D1 = "INDEX_DB"
+SPINEL_HOST_FETCH = "0"          # this app makes no outbound HTTP requests
+SPINEL_HOST_MAX_BODY = "2097152" # the largest object put into R2 (2 MiB)
+
+# `wrangler dev --local` emulates both R2 and D1 locally (under .wrangler/state;
+# no Cloudflare account and no network). To deploy for real:
+#   npx wrangler r2 bucket create spinel-vault
+#   npx wrangler d1 create spinel-index      # put the printed database_id below
+[[r2_buckets]]
+binding = "VAULT"
+bucket_name = "spinel-vault"
+
+[[d1_databases]]
+binding = "INDEX_DB"
+database_name = "spinel-index"
+database_id = "00000000-0000-0000-0000-000000000055"

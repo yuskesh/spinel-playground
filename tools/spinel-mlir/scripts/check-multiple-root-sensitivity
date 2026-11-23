@@ -1,0 +1,24 @@
+#!/usr/bin/env ruby
+require_relative 'compare-root-facts'
+require 'fileutils'
+input,output=ARGV
+abort 'output exists' if File.exist?(output)
+FileUtils.mkdir_p(output)
+begin
+  text=File.binread(input)
+  line=text.lines.find{|l|l.include?('"spinel_facts.evidence"') && l.include?('node_id = 2144 : i64,')}
+  abort 'missing exact mutation target' unless line && line.include?('dispatch = "direct"')
+  mutated=text.sub(line,line.sub('dispatch = "direct"','dispatch = "switch"'))
+  path=File.join(output,'mutated.mlir');File.binwrite(path,mutated)
+  a=RootFacts.new(input);b=RootFacts.new(path)
+  same=compare_root_facts(a,a,'count_pkts');diff=compare_root_facts(a,b,'count_pkts')
+  File.write(File.join(output,'identity.json'),JSON.pretty_generate(same)+"\n")
+  File.write(File.join(output,'mutation.json'),JSON.pretty_generate(diff)+"\n")
+  ok=same[:differences].empty? && diff[:differences].length==1 && diff[:differences][0][:kind]=='evidence' && diff[:differences][0][:left_id]==2144
+  row={original_reader_rc:0,mutated_reader_rc:0,original_bytes:text.bytesize,mutated_bytes:mutated.bytesize,identity_comparator_rc:same[:differences].empty? ? 0 : 1,mutation_comparator_rc:diff[:differences].empty? ? 0 : 1,named_difference:ok}
+  File.write(File.join(output,'summary.json'),JSON.pretty_generate(row)+"\n")
+  abort 'STOP comparator sensitivity' unless ok
+  puts JSON.generate(row)
+rescue Exception=>e
+  File.write(File.join(output,'failure.txt'),"#{e.class}: #{e.message}\n#{e.backtrace.join("\n")}\n");raise
+end

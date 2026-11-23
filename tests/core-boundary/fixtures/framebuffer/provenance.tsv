@@ -1,0 +1,10 @@
+# Where the extracted framebuffer kernels came from, and what they came from.
+#
+# Same shape as the capabilities table: `token` is a string the EXTRACTED
+# source must contain, so the source names its own origin and a reader of it
+# is never sent to a side table to find out where it came from.
+#
+#extracted	original	token	upstream
+draw_wall	examples/doom/lib/doom/executor.rb	DG/r_draw.c:R_DrawColumn	R009 7.2, the 16.16 unsigned step
+draw_span	examples/doom/lib/doom/executor.rb	DG/r_draw.c:R_DrawSpan	R009 3.3, the packed position
+draw_fuzz	examples/doom/lib/doom/executor.rb	DG/r_draw.c:R_DrawFuzzColumn	R009 9.3, the order-dependent read

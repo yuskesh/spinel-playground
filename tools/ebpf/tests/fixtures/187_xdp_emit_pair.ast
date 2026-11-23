@@ -1,0 +1,334 @@
+ROOT 0
+SOURCE_FILE /tmp/spnl-src20260825-1952370-qd14pu/187_xdp_emit_pair.rb
+N 0 ProgramNode
+N 1 StatementsNode
+N 2 ConstantWriteNode
+S 2 name XDP_ABORTED
+N 3 IntegerNode
+I 3 value 0
+R 2 value 3
+N 4 ConstantWriteNode
+S 4 name XDP_DROP
+N 5 IntegerNode
+I 5 value 1
+R 4 value 5
+N 6 ConstantWriteNode
+S 6 name XDP_PASS
+N 7 IntegerNode
+I 7 value 2
+R 6 value 7
+N 8 ConstantWriteNode
+S 8 name XDP_TX
+N 9 IntegerNode
+I 9 value 3
+R 8 value 9
+N 10 ConstantWriteNode
+S 10 name XDP_REDIRECT
+N 11 IntegerNode
+I 11 value 4
+R 10 value 11
+N 12 DefNode
+S 12 name xdp__main
+R 12 parameters -1
+N 13 StatementsNode
+N 14 CallNode
+S 14 name spnl_emit_pair
+R 14 receiver -1
+N 15 ArgumentsNode
+N 16 IntegerNode
+I 16 value 7
+N 17 IntegerNode
+I 17 value 9
+A 15 arguments 16,17
+R 14 arguments 15
+R 14 block -1
+S 14 call_operator .
+N 18 ConstantReadNode
+S 18 name XDP_PASS
+A 13 body 14,18
+R 12 body 13
+R 12 receiver -1
+N 19 InstanceVariableWriteNode
+S 19 name @pairs
+N 20 IntegerNode
+I 20 value 0
+R 19 value 20
+N 21 InstanceVariableWriteNode
+S 21 name @last_a
+N 22 IntegerNode
+I 22 value 0
+R 21 value 22
+N 23 InstanceVariableWriteNode
+S 23 name @last_b
+N 24 IntegerNode
+I 24 value 0
+R 23 value 24
+N 25 DefNode
+S 25 name __spnl_consume_pair
+N 26 ParametersNode
+N 27 RequiredParameterNode
+S 27 name a
+N 28 RequiredParameterNode
+S 28 name b
+A 26 requireds 27,28
+A 26 optionals 
+A 26 keywords 
+A 26 posts 
+R 25 parameters 26
+N 29 StatementsNode
+N 30 InstanceVariableWriteNode
+S 30 name @pairs
+N 31 CallNode
+S 31 name +
+N 32 InstanceVariableReadNode
+S 32 name @pairs
+R 31 receiver 32
+N 33 ArgumentsNode
+N 34 IntegerNode
+I 34 value 1
+A 33 arguments 34
+R 31 arguments 33
+R 31 block -1
+S 31 call_operator .
+R 30 value 31
+N 35 InstanceVariableWriteNode
+S 35 name @last_a
+N 36 LocalVariableReadNode
+S 36 name a
+R 35 value 36
+N 37 InstanceVariableWriteNode
+S 37 name @last_b
+N 38 LocalVariableReadNode
+S 38 name b
+R 37 value 38
+A 29 body 30,35,37
+R 25 body 29
+R 25 receiver -1
+N 39 CallNode
+S 39 name sleep
+R 39 receiver -1
+N 40 ArgumentsNode
+N 41 IntegerNode
+I 41 value 2
+A 40 arguments 41
+R 39 arguments 40
+R 39 block -1
+S 39 call_operator .
+N 42 CallNode
+S 42 name __spnl_consume_events
+R 42 receiver -1
+N 43 ArgumentsNode
+N 44 IntegerNode
+I 44 value 200
+A 43 arguments 44
+R 42 arguments 43
+R 42 block -1
+S 42 call_operator .
+N 45 CallNode
+S 45 name puts
+R 45 receiver -1
+N 46 ArgumentsNode
+N 47 InstanceVariableReadNode
+S 47 name @pairs
+A 46 arguments 47
+R 45 arguments 46
+R 45 block -1
+S 45 call_operator .
+N 48 CallNode
+S 48 name puts
+R 48 receiver -1
+N 49 ArgumentsNode
+N 50 InstanceVariableReadNode
+S 50 name @last_a
+A 49 arguments 50
+R 48 arguments 49
+R 48 block -1
+S 48 call_operator .
+N 51 CallNode
+S 51 name puts
+R 51 receiver -1
+N 52 ArgumentsNode
+N 53 InstanceVariableReadNode
+S 53 name @last_b
+A 52 arguments 53
+R 51 arguments 52
+R 51 block -1
+S 51 call_operator .
+N 54 ModuleNode
+N 55 ConstantReadNode
+S 55 name SpnlConsumeFFI
+R 54 constant_path 55
+N 56 StatementsNode
+N 57 CallNode
+S 57 name ffi_func
+R 57 receiver -1
+N 58 ArgumentsNode
+N 59 SymbolNode
+S 59 value spnl_consume_poll
+N 60 ArrayNode
+N 61 SymbolNode
+S 61 value int
+A 60 elements 61
+N 62 SymbolNode
+S 62 value int
+A 58 arguments 59,60,62
+R 57 arguments 58
+R 57 block -1
+S 57 call_operator .
+N 63 CallNode
+S 63 name ffi_func
+R 63 receiver -1
+N 64 ArgumentsNode
+N 65 SymbolNode
+S 65 value spnl_consume_count_pair
+N 66 ArrayNode
+A 66 elements 
+N 67 SymbolNode
+S 67 value int
+A 64 arguments 65,66,67
+R 63 arguments 64
+R 63 block -1
+S 63 call_operator .
+N 68 CallNode
+S 68 name ffi_func
+R 68 receiver -1
+N 69 ArgumentsNode
+N 70 SymbolNode
+S 70 value spnl_cget_pair_a
+N 71 ArrayNode
+N 72 SymbolNode
+S 72 value int
+A 71 elements 72
+N 73 SymbolNode
+S 73 value int
+A 69 arguments 70,71,73
+R 68 arguments 69
+R 68 block -1
+S 68 call_operator .
+N 74 CallNode
+S 74 name ffi_func
+R 74 receiver -1
+N 75 ArgumentsNode
+N 76 SymbolNode
+S 76 value spnl_cget_pair_b
+N 77 ArrayNode
+N 78 SymbolNode
+S 78 value int
+A 77 elements 78
+N 79 SymbolNode
+S 79 value int
+A 75 arguments 76,77,79
+R 74 arguments 75
+R 74 block -1
+S 74 call_operator .
+A 56 body 57,63,68,74
+R 54 body 56
+N 80 DefNode
+S 80 name __spnl_consume_events
+N 81 ParametersNode
+N 82 RequiredParameterNode
+S 82 name t
+A 81 requireds 82
+A 81 optionals 
+A 81 keywords 
+A 81 posts 
+R 80 parameters 81
+N 83 StatementsNode
+N 84 CallNode
+S 84 name spnl_consume_poll
+N 85 ConstantReadNode
+S 85 name SpnlConsumeFFI
+R 84 receiver 85
+N 86 ArgumentsNode
+N 87 LocalVariableReadNode
+S 87 name t
+A 86 arguments 87
+R 84 arguments 86
+R 84 block -1
+S 84 call_operator .
+N 88 LocalVariableWriteNode
+S 88 name n0
+N 89 CallNode
+S 89 name spnl_consume_count_pair
+N 90 ConstantReadNode
+S 90 name SpnlConsumeFFI
+R 89 receiver 90
+R 89 arguments -1
+R 89 block -1
+S 89 call_operator .
+R 88 value 89
+N 91 LocalVariableWriteNode
+S 91 name i0
+N 92 IntegerNode
+I 92 value 0
+R 91 value 92
+N 93 WhileNode
+N 94 CallNode
+S 94 name <
+N 95 LocalVariableReadNode
+S 95 name i0
+R 94 receiver 95
+N 96 ArgumentsNode
+N 97 LocalVariableReadNode
+S 97 name n0
+A 96 arguments 97
+R 94 arguments 96
+R 94 block -1
+S 94 call_operator .
+R 93 predicate 94
+N 98 StatementsNode
+N 99 CallNode
+S 99 name __spnl_consume_pair
+R 99 receiver -1
+N 100 ArgumentsNode
+N 101 CallNode
+S 101 name spnl_cget_pair_a
+N 102 ConstantReadNode
+S 102 name SpnlConsumeFFI
+R 101 receiver 102
+N 103 ArgumentsNode
+N 104 LocalVariableReadNode
+S 104 name i0
+A 103 arguments 104
+R 101 arguments 103
+R 101 block -1
+S 101 call_operator .
+N 105 CallNode
+S 105 name spnl_cget_pair_b
+N 106 ConstantReadNode
+S 106 name SpnlConsumeFFI
+R 105 receiver 106
+N 107 ArgumentsNode
+N 108 LocalVariableReadNode
+S 108 name i0
+A 107 arguments 108
+R 105 arguments 107
+R 105 block -1
+S 105 call_operator .
+A 100 arguments 101,105
+R 99 arguments 100
+R 99 block -1
+S 99 call_operator .
+N 109 LocalVariableWriteNode
+S 109 name i0
+N 110 CallNode
+S 110 name +
+N 111 LocalVariableReadNode
+S 111 name i0
+R 110 receiver 111
+N 112 ArgumentsNode
+N 113 IntegerNode
+I 113 value 1
+A 112 arguments 113
+R 110 arguments 112
+R 110 block -1
+S 110 call_operator .
+R 109 value 110
+A 98 body 99,109
+R 93 statements 98
+I 93 flags 1
+A 83 body 84,88,91,93
+R 80 body 83
+R 80 receiver -1
+A 1 body 2,4,6,8,10,12,19,21,23,25,39,42,45,48,51,54,80
+R 0 statements 1

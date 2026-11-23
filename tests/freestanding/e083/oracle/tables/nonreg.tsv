@@ -1,0 +1,20 @@
+check	verdict	detail
+paths_named	PASS	changed: 11 path(s); outside the E083 allowance: none
+vendor_untouched	PASS	vendor/ has no modification (READ-ONLY, never rebuilt)
+host_modes_byte_identical	PASS	int modes raise/wrap/none of fib.rb vs git show HEAD: (E081 run_nonreg's procedure; its own host_int_vs_head + tensor_vs_head rows re-ran green in the E083-era replay)
+e081_gates	PASS	gates.tsv: 0 FAIL/DIVERGE row(s) after the E083-era re-run
+e081_trap	PASS	trap.tsv: 0 FAIL/DIVERGE row(s) after the E083-era re-run
+e081_zephyr	PASS	zephyr.tsv: 0 FAIL/DIVERGE row(s) after the E083-era re-run
+e081_extern_check	PASS	extern_check.tsv: 0 FAIL/DIVERGE row(s) after the E083-era re-run
+e081_undef_gate	PASS	undef_gate.tsv: 0 FAIL/DIVERGE row(s) after the E083-era re-run
+e081_reject	PASS	reject.tsv: 0 FAIL/DIVERGE row(s) after the E083-era re-run
+e081_nonreg	PASS	nonreg.tsv: 0 FAIL/DIVERGE row(s) after the E083-era re-run
+e079_gates	PASS	gates.tsv: 0 FAIL/DIVERGE row(s) with the E083-edited spinel-gradfs
+e079_sgd	PASS	sgd.tsv: 0 FAIL/DIVERGE row(s) with the E083-edited spinel-gradfs
+e079_grad4	PASS	grad4.tsv: 0 FAIL/DIVERGE row(s) with the E083-edited spinel-gradfs
+e079_trap	PASS	trap.tsv: 0 FAIL/DIVERGE row(s) with the E083-edited spinel-gradfs
+e079_loop	PASS	loop.tsv: 0 FAIL/DIVERGE row(s) with the E083-edited spinel-gradfs
+e079_g3	PASS	g3.tsv: 0 FAIL/DIVERGE row(s) with the E083-edited spinel-gradfs
+e079_tables_bytes	PASS	results/E079 vs git after the replay: byte-identical
+e081_tables_bytes	PASS	results/E081 vs git after the replay: byte-identical
+e082_nonreg	EXPLAINED	the 2 working-tree pins (grad_touched_allowed_only / gradfs_untouched) compare the tree to git and point at E083's uncommitted --grads-only edit; they turn PASS when the E083 commit lands. Every substantive row PASS -- and e079_* above re-proves the property the pins protect (gradfs's output unchanged where no new flag is passed).

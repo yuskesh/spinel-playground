@@ -1,0 +1,100 @@
+# tools/doom/core-counts.tsv — decision 0008 task 5's count origins.
+#
+# Every stored ARRAY needs a `count` in 0008's grammar, and that is the one
+# thing the audit cannot derive: the reader says a field is an `int_array`,
+# not how many elements the allocation asks for.
+#
+# So the ALLOCATION EXPRESSION is derived from the tree -- the argument of the
+# `Array.new` or `Bytes.buffer` that creates the field, rendered from the ast
+# and not from the source text -- and this table maps each (method,
+# expression) pair to a catalog name. Keyed by the pair because `n` is a local
+# and means a different thing in each method: `n = MAXMOBJS` in
+# Game#init_mobjs and `n = data.bytesize / 26` in Level#load_sectors.
+#
+# An expression with no row here is an array whose size nobody reviewed, and
+# the schema generator refuses it.
+#
+# method	expression	count	why
+Game#init_mobjs	n	limit:maxmobjs	n = MAXMOBJS at game.rb:168. The mobj slot capacity, a fixed limit Full sizes before play.
+Game#init_mobjs	@level.num_sectors	level:numsectors	One head per sector for the sector thing lists.
+Game#init_mobjs	@level.bmapwidth * @level.bmapheight	level:blockmapcells	One head per blockmap cell; the product is the catalog's, so Full checks it once.
+Game#init_player	NUMAMMO	fixed:4	The four ammo types.
+Game#init_player	NUMCARDS	fixed:6	The six keycards.
+Game#init_player	NUMPOWERS	fixed:6	The six powerups.
+Game#init_player	NUMWEAPONS	fixed:9	The nine weapons.
+Game#init_thinkers	MAXTHINKERS	limit:maxthinkers	The thinker slot capacity.
+Level#load_sectors	n	level:numsectors	n = data.bytesize / 26 at level.rb:184. The SECTORS lump's element count.
+Level#load_linedefs	n	level:numlines	n = data.bytesize / 14. The LINEDEFS lump's element count.
+Level#load_sidedefs	n	level:numsides	n = data.bytesize / 30. The SIDEDEFS lump's element count.
+Level#load_segs	n	level:numsegs	n = data.bytesize / 12. The SEGS lump's element count.
+Level#load_subsectors	n	level:numsubsectors	n = data.bytesize / 4. The SSECTORS lump's element count.
+Level#load_nodes	n	level:numnodes	n = data.bytesize / 28. The NODES lump's element count.
+Level#load_nodes	n * 8	level:nodeboxes	Eight bounding-box values per node; the product is the catalog's.
+Level#load_vertexes	@num_vertexes	level:numvertexes	The VERTEXES lump's element count.
+Level#load_blockmap	n	level:blockmapwords	n = data.bytesize / 2. The BLOCKMAP lump as u16 words.
+Level#load_blockmap	@bmapwidth * @bmapheight	level:blockmapcells	The same product as the sector heads above, and the same catalog entry.
+Level#group_lines	@num_sectors	level:numsectors	One per sector.
+Level#group_lines	@num_sectors * 4	level:sectorboxes	Four bounding-box values per sector.
+Level#group_lines	@num_lines	level:numlines	One per line.
+Level#group_lines	total	level:sectorlinetotal	The summed per-sector line counts; Full computes the total when it prepares the level.
+Things#build_sector_lists	n	level:numsectors	n = level.num_sectors at things.rb:153.
+MapMove#init_map_state	MAXINTERCEPTS	fixed:189	The intercept bank. MAXINTERCEPTS = 128 + 61 at defs.rb:151. The 128 that stood here was the PROCESSING limit at mapmove.rb:645 and 675, which is not the length of the allocation and stays where it is.
+MapMove#init_map_state	MAXSPECHIT	fixed:20	The special-line hit bank. MAXSPECHIT = 20 at defs.rb:150. The 8 that stood here was the PROCESSING limit at mapmove.rb:266, not the length of the allocation.
+Pspr#init_psprites	NUMPSPRITES	fixed:2	The weapon and the flash.
+Specials#init_door_arrays	n	fixed:64	n = 64. The door slot capacity.
+Specials#init_light_arrays	n	fixed:64	n = 64. The light slot capacity.
+Specials#init_plat_arrays	n	fixed:64	n = 64. The platform slot capacity.
+Specials#spawn_specials	MAXBUTTONS	fixed:16	The button bank.
+Specials#spawn_specials	MAXPLATS	fixed:30	The active-platform list. MAXPLATS = 30 at defs.rb:152. The 64 that stood here is the separate plat SLOT capacity of Specials#init_plat_arrays; @activeplats is a different array and shorter.
+Specials#spawn_specials	lv.num_sectors	level:numsectors	One per sector.
+Specials#init_switch_list	SWITCH_NAMES.length	table:switchnames	A prepared table; Full knows its length.
+Random#trace!	cap	limit:randomtrace	The trace bank, sized by trace!(cap). Its fields are eliminated as a reference-only trace (core-fields.tsv), so no schema field takes this count and the catalog does not measure it; the allocation stays listed here so the audit still sees it.
+Demo#initialize	cap	limit:demotics	The demo's tic count, which Full reads from the lump header.
+DemoWriter#initialize	HEADER + maxtics * 4 + 1	limit:demobytes	The recording buffer; Full computes the byte count from the tic limit.
+KeyState#initialize	256	fixed:256	The key-state buffer 0008 names.
+Hud#initialize	HU_FONTSIZE	fixed:63	The HUD font's glyph count.
+StatusBar#initialize	NUMWEAPONS	fixed:9	One per weapon.
+StatusBar#initialize	ST_NUMFACES	fixed:42	The face sprite set.
+StatusBar#initialize	SCREENWIDTH * ST_HEIGHT	screen:statusbarbytes	The status-bar shadow buffer, 320x32 by 0008's own note.
+StatusBar#initialize	3	fixed:3	A three-element table.
+StatusBar#initialize	6	fixed:6	A six-element table.
+StatusBar#initialize	10	fixed:10	The digit glyph set.
+Sprites#initialize	@numspritelumps	table:spritelumps	Prepared from the WAD's sprite lumps.
+Sprites#initialize	@numsprites	table:sprites	Prepared from the sprite name table.
+Textures#initialize	@numtextures	table:textures	Prepared from TEXTURE1/TEXTURE2.
+Textures#initialize	@numflats	table:flats	Prepared from the flat range.
+Textures#initialize	@flat_atlas_size	table:flatatlas	The flat atlas, prepared as one byte buffer.
+Textures#initialize	n	table:pnames	n = the PNAMES count; prepared with the atlas.
+Renderer#initialize	@sw	screen:screenwidth	One per screen column.
+Renderer#initialize	@sw + 1	screen:screenwidthplus1	A column table with a sentinel; the +1 is the catalog's so Full checks it once.
+Renderer#initialize	@sh	screen:screenheight	One per screen row.
+Renderer#initialize	@sw * @sh	screen:screenpixels	The frame, one element per pixel.
+Renderer#initialize	level.num_sectors	level:numsectors	One per sector.
+Renderer#initialize	MAXVISPLANES	fixed:128	The visplane bank.
+Renderer#initialize	MAXVISPLANES * @plw	screen:visplanecells	Per-visplane column arrays; the product is the catalog's.
+Renderer#initialize	MAXVISSPRITES	fixed:128	The vissprite bank.
+Renderer#initialize	MAXDRAWSEGS	fixed:256	The drawseg bank.
+Renderer#initialize	MAXSEGS + 2	fixed:34	The solid-segment list with its two sentinels.
+Renderer#initialize	@maxopenings	screen:openings	The opening bank, sized from the screen.
+Renderer#initialize	LIGHTLEVELS * MAXLIGHTSCALE	fixed:768	The scale light table.
+Renderer#initialize	LIGHTLEVELS * MAXLIGHTZ	fixed:2048	The z light table.
+Renderer#initialize	FINEANGLES / 2	fixed:4096	Half the fine-angle table, which is what the view range needs.
+Renderer#initialize	128	fixed:128	A fixed bank.
+Renderer#init_traces	4096	fixed:4096	A trace bank, sized by configuration and fixed here.
+Renderer#init_traces	65536	fixed:65536	A trace bank, sized by configuration and fixed here.
+Jobs#initialize	width	screen:screenwidth	One per screen column.
+Jobs#initialize	height	screen:viewheight	One per view row: the program's Jobs is the renderer's, Jobs.new(@sw, @viewheight) at render.rb:465.
+Jobs#initialize	width * height	screen:viewpixels	One per view pixel, for the same reason.
+Jobs#initialize	width * K_CAP	screen:jobwallcells	Per-column wall job slots; the product is the catalog's.
+Jobs#initialize	width * MASKED_K_CAP	screen:jobmaskedcells	Per-column masked job slots.
+Jobs#initialize	height * SPAN_K_CAP	screen:jobspancells	Per-view-row span job slots.
+Jobs#initialize	@cap_sched	limit:jobsched	The schedule bank.
+Jobs#initialize	@cap_wall * WC_NF	limit:jobwallfields	The wall job field bank.
+Jobs#initialize	@cap_span * SP_NF	limit:jobspanfields	The span job field bank.
+Jobs#initialize	@cap_masked * MC_NF	limit:jobmaskedfields	The masked job field bank.
+Jobs#initialize	@zone_slots * ZONE_STRIDE	limit:jobzonecells	The zone bank.
+Textures#init_pic_anims	@numflats	table:flats	The same flat count as the atlas above.
+Textures#init_pic_anims	@numtextures	table:textures	The same texture count as above.
+Wad#build_next_lump	n	table:lumps	n = @lumps.length at wad.rb:252. One entry per WAD lump, prepared by Full.
+Things#build_sector_lists	@count	limit:maxmobjs	@count is the number of things spawned from the map, which cannot exceed the mobj slot capacity; sizing the list at that capacity is what makes a slot index always addressable. things.rb:155.
+Renderer#initialize	[50 element(s)]	fixed:50	The fuzz column offsets, written out as a literal in render.rb rather than allocated. r_draw.c has 50 of them.

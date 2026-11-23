@@ -1,0 +1,213 @@
+{
+  "version": 1,
+  "coverage": {
+    "programs": "omitted",
+    "maps": "complete",
+    "records": "complete",
+    "telemetry": "complete"
+  },
+  "core": {
+    "records": [
+      {
+        "symbol": "inner",
+        "id": 0,
+        "size": 8,
+        "min_size": 8,
+        "alignment": 4,
+        "required_through": "",
+        "note": "E064: kernel/record/c3/common.h の struct inner と同じ layout",
+        "fields": [
+          {
+            "name": "tag",
+            "offset": 0,
+            "expose": "int",
+            "note": "",
+            "type": {
+              "kind": "int",
+              "bits": 8,
+              "signed": false,
+              "endianness": "little",
+              "alignment": 1
+            }
+          },
+          {
+            "name": "port",
+            "offset": 2,
+            "expose": "int",
+            "note": "",
+            "type": {
+              "kind": "int",
+              "bits": 16,
+              "signed": false,
+              "endianness": "little",
+              "alignment": 2
+            }
+          },
+          {
+            "name": "addr",
+            "offset": 4,
+            "expose": "int",
+            "note": "",
+            "type": {
+              "kind": "int",
+              "bits": 32,
+              "signed": false,
+              "endianness": "little",
+              "alignment": 4
+            }
+          }
+        ]
+      },
+      {
+        "symbol": "outer",
+        "id": 1,
+        "size": 40,
+        "min_size": 40,
+        "alignment": 8,
+        "required_through": "",
+        "note": "E064: kernel/record/c3/common.h の struct outer と同じ layout",
+        "fields": [
+          {
+            "name": "id",
+            "offset": 0,
+            "expose": "int",
+            "note": "",
+            "type": {
+              "kind": "int",
+              "bits": 8,
+              "signed": false,
+              "endianness": "little",
+              "alignment": 1
+            }
+          },
+          {
+            "name": "in",
+            "offset": 4,
+            "expose": "int",
+            "note": "",
+            "type": {
+              "kind": "record_ref",
+              "symbol": "inner"
+            }
+          },
+          {
+            "name": "arr",
+            "offset": 12,
+            "expose": "int",
+            "note": "",
+            "type": {
+              "kind": "array",
+              "count": 3,
+              "element": {
+                "kind": "int",
+                "bits": 16,
+                "signed": false,
+                "endianness": "little",
+                "alignment": 2
+              }
+            }
+          },
+          {
+            "name": "total",
+            "offset": 24,
+            "expose": "int",
+            "note": "",
+            "type": {
+              "kind": "int",
+              "bits": 64,
+              "signed": false,
+              "endianness": "little",
+              "alignment": 8
+            }
+          },
+          {
+            "name": "flags",
+            "offset": 32,
+            "expose": "int",
+            "note": "",
+            "type": {
+              "kind": "int",
+              "bits": 8,
+              "signed": false,
+              "endianness": "little",
+              "alignment": 1
+            }
+          }
+        ]
+      }
+    ],
+    "maps": [
+      {
+        "symbol": "nests",
+        "kind": "array",
+        "key": {
+          "kind": "int",
+          "bits": 32,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 4
+        },
+        "value": {
+          "kind": "record_ref",
+          "symbol": "outer"
+        },
+        "max_entries": 2,
+        "flags": 0,
+        "record": "",
+        "note": "E081: struct outer の value (runner は nests[0] を 0xaa、nests[1] を Go の outer で埋める)"
+      },
+      {
+        "symbol": "ix",
+        "kind": "array",
+        "key": {
+          "kind": "int",
+          "bits": 32,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 4
+        },
+        "value": {
+          "kind": "int",
+          "bits": 64,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 8
+        },
+        "max_entries": 4,
+        "flags": 0,
+        "record": "",
+        "note": "E081: runner は {2, 3, 1, 0xffffffff} で埋める (可変の添字の値)"
+      },
+      {
+        "symbol": "out",
+        "kind": "array",
+        "key": {
+          "kind": "int",
+          "bits": 32,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 4
+        },
+        "value": {
+          "kind": "int",
+          "bits": 64,
+          "signed": false,
+          "endianness": "little",
+          "alignment": 8
+        },
+        "max_entries": 8,
+        "flags": 0,
+        "record": "",
+        "note": "E081: out[0..7]"
+      }
+    ],
+    "programs": []
+  },
+  "telemetry": {
+    "clocks": [],
+    "value_maps": [],
+    "bounds_sets": [],
+    "signals": []
+  },
+  "extensions": {}
+}

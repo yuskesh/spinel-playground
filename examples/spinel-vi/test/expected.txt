@@ -1,0 +1,10 @@
+init=0 backend=0
+poll=1 type=1 ch=120
+init
+clear
+present
+event	1	U+0078	0	0	0	0
+put	0	0	U+0078	0	0
+cursor	1	0
+present
+shutdown

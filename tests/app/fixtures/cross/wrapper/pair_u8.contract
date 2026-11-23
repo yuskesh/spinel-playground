@@ -1,0 +1,8 @@
+core-contract 1
+root pair_u8.rb
+entry pair_u8
+result i32
+param src buffer u8 in count n_src
+param n_src scalar u64
+param dst buffer u8 inout count n_dst
+param n_dst scalar u64

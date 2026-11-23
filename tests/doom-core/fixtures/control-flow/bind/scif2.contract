@@ -1,0 +1,7 @@
+core-contract 1
+root scif2.rb
+entry scif2
+result i64
+param buf buffer i64 inout count n_buf
+param n_buf scalar u64
+param flag scalar i64

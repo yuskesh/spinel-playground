@@ -1,0 +1,10 @@
+core-channel 1
+# tests/app/build.sh 2f, control 2: the console contract with `field ratio f32` appended, refused by its type
+channel console
+from cm7
+to cm33
+depth 16
+field tic u32
+field len u8
+field text u8 count 119
+field ratio f32

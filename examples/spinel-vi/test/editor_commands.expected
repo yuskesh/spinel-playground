@@ -1,0 +1,13 @@
+dd-normal="two\n"
+pending-cancel="operator cancelled"
+undo="one\ntwo\n"
+redo="two\n"
+yy-p-twice="two\ntwo\ntwo\n"
+dirty-q="unsaved changes (use :q!)" running=true
+qbang=false
+dd-empty=""
+dd-eof=""
+insert-one-transaction=""
+redo-discard="C"
+write="written"
+wq=false

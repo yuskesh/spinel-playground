@@ -1,0 +1,11 @@
+# tools/app/zephyr/v4.5.0/npu.tsv -- what the NPU lane builds against (decision 0032).
+# tools/npu/spinel-npu reads this table and stops when the workspace or the
+# converter differs: Neutron microcode and the driver and firmware run as a pair.
+# The RT1186 lanes stay on tools/app/zephyr/v4.4.2.
+# key	value
+zephyr_describe	v4.5.0
+hal_nxp_revision	a8b437ef366ff9a6f9bee3377dc189c4d2623f5b
+zephyr_sdk	1.0.1
+converter_version	3.0.0
+blob_driver_sha256	452b1077a015265d1ab34831db3a25a4ef266c28c94afa6a308b28794baac358
+blob_firmware_sha256	ae2dd4cc45e0a7d89dd5e5688eb393269c3392bc4e0e5897f0a9429919af37f1

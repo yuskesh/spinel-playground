@@ -1,0 +1,13 @@
+# examples/doom/core/state-repr.tsv -- core_state slots whose value is a representation
+# (read by examples/doom/core/full/reference.rb).
+#
+# i32-bits: the slot holds a 32-bit word as its signed i32 bit pattern, in its i64 cell,
+# as examples/doom/core/widths-repr.tsv does for the angle buffers (decision 0022 section
+# 2.4). The reference converts the original's word 0..2**32-1 to that pattern. Every
+# field must be a slot of an entry's slot table (examples/doom/core/entries/*-slots.tsv),
+# named once.
+#field	repr	basis	reason
+renderer_viewangle	i32-bits	0022-2.4	a core_state angle slot the port writes through core_w32_*
+renderer_rw_angle1	i32-bits	0022-2.4	a core_state angle slot the port writes through core_w32_*
+renderer_rw_normalangle	i32-bits	0022-2.4	a core_state angle slot the port writes through core_w32_*
+renderer_rw_centerangle	i32-bits	0022-2.4	a core_state angle slot the port writes through core_w32_*

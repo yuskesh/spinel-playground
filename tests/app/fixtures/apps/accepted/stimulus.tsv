@@ -1,0 +1,6 @@
+horizon_us 30000
+drain_us 5000
+adc 500 0 1200
+adc 12500 0 3300
+inbound 7000 commands 07
+inbound 17000 commands 09

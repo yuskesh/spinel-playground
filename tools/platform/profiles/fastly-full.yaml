@@ -1,0 +1,6 @@
+# The full-tier Fastly Compute profile (T-5).  Same reading as
+# workers-full.yaml; the menu differs (tools/platform/menus.yaml,
+# platforms.fastly.menu), and that difference -- never the platform name --
+# is what a capability rejection cites.
+platform: fastly
+supplies: full

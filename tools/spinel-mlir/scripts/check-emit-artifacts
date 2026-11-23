@@ -1,0 +1,57 @@
+#!/usr/bin/env ruby
+require 'json'
+require 'fileutils'
+require 'digest'
+compiler, upstream, oracle, output = ARGV
+abort 'usage: check-emit-artifacts compiler upstream oracle new-output' unless output
+abort 'output exists' if File.exist?(output)
+FileUtils.mkdir_p(output)
+log = File.open(File.join(output,'checks.jsonl'),'w')
+run = lambda do |name,input,target,limit=nil,extra=[]|
+  pid = fork do
+    STDOUT.reopen(File.join(output,"#{name}.stdout"),'w')
+    STDERR.reopen(File.join(output,"#{name}.stderr"),'w')
+    if limit
+      Signal.trap('XFSZ','IGNORE')
+      Process.setrlimit(Process::RLIMIT_FSIZE,limit,limit)
+    end
+    Dir.chdir(oracle)
+    exec(compiler,'-I',File.join(oracle,'ruby/lib'),*extra,"--emit-mlir=#{target}",input)
+  end
+  _,status=Process.wait2(pid)
+  row={name:name,rc:status.exitstatus,signal:status.termsig,
+    stdout_bytes:File.size(File.join(output,"#{name}.stdout")),
+    output_exists:File.file?(target),temp:Dir.glob("#{target}.tmp.*")}
+  log.puts(JSON.generate(row)); log.flush
+  row
+end
+check = lambda do |ok,name|
+  abort "STOP #{name}: see #{output}" unless ok
+end
+input=File.join(oracle,'examples/xdpcount/xdpcount.rb')
+one=File.join(output,'xdpcount-a.mlir'); two=File.join(output,'xdpcount-b.mlir')
+[one,two].each_with_index do |target,i|
+  row=run.call("success-#{i}",input,target)
+  check.call(row[:rc]==0 && row[:signal].nil? && row[:stdout_bytes]==0 && row[:temp].empty?,"success-#{i}")
+  check.call(File.binread(target).include?('spinel_facts.status = "success"'),"success-status-#{i}")
+end
+check.call(File.binread(one)==File.binread(two),'same-input-byte-reproduction')
+refusal=File.join(upstream,'test/reject/const_get_runtime_name.rb')
+target=File.join(output,'rejected.mlir')
+row=run.call('early-refusal',refusal,target)
+text=File.file?(target) ? File.binread(target) : ''
+check.call(row[:rc]==1 && row[:stdout_bytes]==0 && row[:temp].empty?,'early-refusal-status')
+check.call(text.include?('spinel_facts.status = "rejected"') && text.include?('"spinel_facts.diagnostic"') &&
+  !text.include?('"spinel_facts.table"') && text.end_with?("}\n"),'diagnostic-only-complete')
+target=File.join(output,'limited.mlir'); File.binwrite(target,'previous-output')
+row=run.call('atexit-partial-write',refusal,target,64)
+check.call(row[:rc]==1 && row[:signal].nil? && row[:stdout_bytes]==0 && row[:temp].empty? &&
+  File.binread(target)=='previous-output','partial-temp-removed-existing-preserved')
+zero=File.join(output,'no-record.rb')
+File.binwrite(zero,"module NoRecord\n  ffi_lib\nend\n")
+target=File.join(output,'no-record.mlir')
+row=run.call('zero-diagnostic-exit',zero,target)
+check.call(row[:rc]==1 && row[:stdout_bytes]==0 && !row[:output_exists] && row[:temp].empty?,'zero-diagnostic-no-artifact')
+check.call(File.binread(File.join(output,'zero-diagnostic-exit.stderr')).include?('`ffi_lib` needs a library name'),'zero-diagnostic-source-route')
+log.close
+puts 'GREEN: success; reproduction; early refusal; partial-write cleanup; zero-diagnostic exit'

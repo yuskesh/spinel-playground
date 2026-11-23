@@ -1,0 +1,12 @@
+e1 seq=1 neg=-128 tag=-300 pad=0,0 t>0=true n=6
+e2 seq=4294967295 neg=127 tag=-300 pad=0,0 t>0=true n=6
+e3 seq=3 neg=0 tag=-300 pad=0,0 t>0=true n=6
+e4 t0 empty
+e5 t200 empty=true waited=true
+drops=0
+read after reader close State
+close twice ok
+run0 ValueRange
+read after obj close State
+open after obj close State
+alive

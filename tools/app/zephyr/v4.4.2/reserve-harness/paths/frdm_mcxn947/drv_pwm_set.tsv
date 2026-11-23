@@ -1,0 +1,2 @@
+function	source	note
+mcux_sctimer_pwm_set_cycles	su	https://github.com/zephyrproject-rtos/zephyr/blob/dccb09599635bdff17633fa7e9dab014b91dce90/drivers/pwm/pwm_mcux_sctimer.c#L169: pwm_set_pulse_dt -> pwm_set_dt -> pwm_set (inline API) -> the driver operation; Zephyr's part of Pwm.set

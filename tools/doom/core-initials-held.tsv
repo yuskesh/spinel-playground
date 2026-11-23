@@ -1,0 +1,13 @@
+# tools/doom/core-initials-held.tsv -- stored fields Full would carry but does
+# not yet, each with why.
+#
+# A stored, non-scratch field takes `initial prepared:NAME` -- Full reads its
+# pre-tick value off the objects it constructs -- when the audit has no initial
+# for it (UNDERIVED) or when Full's setup writes it after allocating it
+# (setup-writes.tsv). A row here keeps the schema's fill for such a field, and
+# that fill is NOT a claim about the original: every row is a field whose
+# declared shape the original does not have, so there is no correct length to
+# carry. tests/doom-core/state.sh checks this set, by name, against the
+# reference's shape refusals and the fields the audit has no count for.
+#
+#class@ivar	why

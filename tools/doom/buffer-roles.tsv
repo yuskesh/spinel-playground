@@ -1,0 +1,15 @@
+# tools/doom/buffer-roles.tsv — buffer parameters that are roles, pinned per call site.
+#
+# tools/doom/buffer-names.rb requires every buffer argument to carry its
+# callee parameter's name. A parameter here names a role rather than a field;
+# each row pins ONE call site (the calling definition and the call's place
+# among its calls to that callee) to the one argument it must pass there, so a
+# swap between two sites is refused like any other misnaming.
+#
+#callee	parameter	site	argument
+dc_rv_zone_window_into	out	dc_rv_draw_masked_column#1	zonebuf
+dc_rv_zone_window_into	out	dc_rv_draw_masked_column#2	zonewin
+dc_st_sb_ticker	cards	doom_core_step#1	pl_cards
+dc_st_sb_ticker	weaponowned	doom_core_step#1	pl_weaponowned
+dc_rv_blit_scale	dst	doom_core_render#1	scr
+dc_rv_blit_scale	src	doom_core_render#1	sb_shadow

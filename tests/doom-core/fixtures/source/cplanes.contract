@@ -1,0 +1,29 @@
+core-contract 1
+root src/packed.rb
+entry dc_sp_cplanes
+result i64
+param state buffer i64 inout count n_state
+param n_state scalar u64
+param floorclip buffer i16 inout count n_floorclip
+param n_floorclip scalar u64
+param ceilingclip buffer i16 inout count n_ceilingclip
+param n_ceilingclip scalar u64
+param cachedheight buffer u32 inout count n_cachedheight
+param n_cachedheight scalar u64
+param finesine buffer i32 in count n_finesine
+param n_finesine scalar u64
+param centerxfrac buffer u32 in count n_centerxfrac
+param n_centerxfrac scalar u64
+param viewwidth buffer u16 in count n_viewwidth
+param n_viewwidth scalar u64
+param viewheight buffer u8 in count n_viewheight
+param n_viewheight scalar u64
+param sh buffer u8 in count n_sh
+param n_sh scalar u64
+param i_viewangle scalar i64
+param i_lastvisplane scalar i64
+param i_lastopening scalar i64
+param i_floorplane scalar i64
+param i_ceilingplane scalar i64
+param i_basexscale scalar i64
+param i_baseyscale scalar i64

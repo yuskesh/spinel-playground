@@ -1,0 +1,20 @@
+# tools/spinel-bpf-mlir/third_party/PINS -- the bpf-mlir commits the two
+# sources pin, as gitlinks there (spinel-bpf-mlir 0e83966a's third_party/bpf-mlir,
+# bml 41ec56f1's third_party/bpf-mlir; 0e83966a and 41ec56f1 are the
+# source_commit of the public releases spinel-bpf-mlir v0.9.1 and
+# bpf-mlir-loader v0.1.0). Spinel Extended imports neither as a submodule, so
+# cmd/spinelbpf/bml.go and seam_pin_dev.go read them here instead; the two must
+# agree. Both are the development pin, 41b188568 of bpf-mlir's development tree (E166), which
+# internal/toolchain/pin_dev.go also names.
+#
+# The public shape pins the public bpf-mlir v1.21.0
+# (https://github.com/yuskesh/bpf-mlir, commit e5e439a0), a one-way export whose
+# SOURCE_VERSION names source_commit 41b188568, the same compiler source
+# (internal/toolchain/pin_release.go). The row public/bpf-mlir records that
+# source_commit, which tests/spinel-bpf-mlir/run.sh compares with a release's
+# SOURCE_VERSION; nothing else reads it from this file.
+#
+#name	commit
+bpf-mlir	41b188568cb36a15d4c185d5f72027267b3fa544
+bpf-mlir-loader/bpf-mlir	41b188568cb36a15d4c185d5f72027267b3fa544
+public/bpf-mlir	41b188568cb36a15d4c185d5f72027267b3fa544

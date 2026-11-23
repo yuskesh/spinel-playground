@@ -1,0 +1,8 @@
+core-contract 1
+root src/merge_into.rb
+entry merge_into
+result i64
+param dst buffer u8 inout count n_dst
+param n_dst scalar u64
+param other buffer u8 inout count n_other
+param n_other scalar u64

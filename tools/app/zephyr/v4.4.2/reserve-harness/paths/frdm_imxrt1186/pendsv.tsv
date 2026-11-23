@@ -1,0 +1,2 @@
+function	source	note
+z_arm_pendsv	asm:0	https://github.com/zephyrproject-rtos/zephyr/blob/dccb09599635bdff17633fa7e9dab014b91dce90/arch/arm/core/cortex_m/swap_helper.S#L48: the callee-saved registers go to the outgoing thread's k_thread (stmia r0, {r4-r11, ip}), not to a stack; the only push (push {r0, lr}, line 52) is under CONFIG_INSTRUMENT_THREAD_SWITCHING, unset here; no CONFIG_FPU_SHARING, no CONFIG_MPU_STACK_GUARD, no CONFIG_USERSPACE, so no call out of the handler; the CONFIG_THREAD_LOCAL_STORAGE block (line 116) loads and stores the TLS pointer without a push

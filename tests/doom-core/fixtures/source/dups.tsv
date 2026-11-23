@@ -1,0 +1,81 @@
+# tests/doom-core/fixtures/source/dups.tsv — helpers deliberately duplicated.
+#
+# An entry's selected closure must be disjoint from every other entry's, so a
+# helper that separate operations use is copied into each closure under another
+# name rather than shared. Two copies that drift apart silently would be a
+# divergence we created ourselves, so every copy is listed here and
+# tests/doom-core/dup-check.rb holds it identical to its original, modulo the
+# name. A new copy is added in the same commit that makes it.
+#
+# A third column lists the other copies a copy calls, as original=copy, so
+# that a copy of a caller can call copies of its callees.
+#
+# original	copy	calls
+dc_i16	dc_hud_i16
+dc_i32	dc_hud_i32
+dc_fp_clear_plane_top	dc_cp_clear_plane_top
+dc_slope_div	dc_cb_slope_div
+dc_point_to_angle	dc_cb_point_to_angle	dc_slope_div=dc_cb_slope_div
+dc_slope_div	dc_ps_slope_div
+dc_point_to_angle	dc_ps_point_to_angle	dc_slope_div=dc_ps_slope_div
+dc_light_index	dc_ps_light_index
+dc_light_index	dc_sl_light_index
+dc_src_texture_column	dc_sl_src_texture_column
+dc_push_wall	dc_sl_push_wall
+dc_draw_column	dc_sl_draw_column
+dc_draw_column	dc_sp_draw_column
+dc_abs_angle	dc_rv_abs_angle
+dc_add_sprites	dc_rv_add_sprites	dc_project_sprite=dc_rv_project_sprite
+dc_alloc_zone_window	dc_rv_alloc_zone_window
+dc_cb_point_to_angle	dc_rv_cb_point_to_angle	dc_cb_slope_div=dc_rv_cb_slope_div
+dc_cb_slope_div	dc_rv_cb_slope_div
+dc_check_bbox	dc_rv_check_bbox	dc_cb_point_to_angle=dc_rv_cb_point_to_angle
+dc_check_disjoint	dc_rv_check_disjoint
+dc_check_masked_k	dc_rv_check_masked_k
+dc_check_plane	dc_rv_check_plane	dc_cp_clear_plane_top=dc_rv_cp_clear_plane_top
+dc_check_span_disjoint	dc_rv_check_span_disjoint
+dc_check_wall_all	dc_rv_check_wall_all
+dc_clear_clip_segs	dc_rv_clear_clip_segs
+dc_clear_planes	dc_rv_clear_planes
+dc_clip_value	dc_rv_clip_value
+dc_cp_clear_plane_top	dc_rv_cp_clear_plane_top
+dc_crunch	dc_rv_crunch
+dc_draw_column	dc_rv_draw_column
+dc_draw_plane	dc_rv_draw_plane	dc_make_spans=dc_rv_make_spans
+dc_draw_planes	dc_rv_draw_planes	dc_draw_plane=dc_rv_draw_plane,dc_draw_sky_plane=dc_rv_draw_sky_plane
+dc_draw_sky_plane	dc_rv_draw_sky_plane	dc_draw_column=dc_rv_draw_column
+dc_exec_masked	dc_rv_exec_masked
+dc_exec_run	dc_rv_exec_run	dc_exec_masked=dc_rv_exec_masked,dc_exec_span=dc_rv_exec_span,dc_exec_wall=dc_rv_exec_wall
+dc_exec_span	dc_rv_exec_span
+dc_exec_wall	dc_rv_exec_wall
+dc_find_plane	dc_rv_find_plane	dc_fp_clear_plane_top=dc_rv_fp_clear_plane_top
+dc_fp_clear_plane_top	dc_rv_fp_clear_plane_top
+dc_jobs_reset	dc_rv_jobs_reset
+dc_light_index	dc_rv_light_index
+dc_make_spans	dc_rv_make_spans	dc_plane_span=dc_rv_plane_span
+dc_mark_phase1	dc_rv_mark_phase1
+dc_mark_phase3	dc_rv_mark_phase3
+dc_plane_span	dc_rv_plane_span
+dc_point_on_seg_side	dc_rv_point_on_seg_side
+dc_point_to_angle	dc_rv_point_to_angle	dc_slope_div=dc_rv_slope_div
+dc_point_to_dist	dc_rv_point_to_dist
+dc_project_sprite	dc_rv_project_sprite	dc_ps_light_index=dc_rv_ps_light_index,dc_ps_point_to_angle=dc_rv_ps_point_to_angle
+dc_ps_light_index	dc_rv_ps_light_index
+dc_ps_point_to_angle	dc_rv_ps_point_to_angle	dc_ps_slope_div=dc_rv_ps_slope_div
+dc_ps_slope_div	dc_rv_ps_slope_div
+dc_push_masked	dc_rv_push_masked
+dc_push_wall	dc_rv_push_wall
+dc_render_seg_loop	dc_rv_render_seg_loop	dc_sl_light_index=dc_rv_sl_light_index,dc_sl_umax_div=dc_rv_sl_umax_div,dc_sl_wall_column=dc_rv_sl_wall_column
+dc_scale_from_global_angle	dc_rv_scale_from_global_angle
+dc_sl_draw_column	dc_rv_sl_draw_column
+dc_sl_light_index	dc_rv_sl_light_index
+dc_sl_push_wall	dc_rv_sl_push_wall
+dc_sl_src_texture_column	dc_rv_sl_src_texture_column
+dc_sl_umax_div	dc_rv_sl_umax_div
+dc_sl_wall_column	dc_rv_sl_wall_column	dc_sl_draw_column=dc_rv_sl_draw_column,dc_sl_push_wall=dc_rv_sl_push_wall,dc_sl_src_texture_column=dc_rv_sl_src_texture_column
+dc_slope_div	dc_rv_slope_div
+dc_sort_vissprites	dc_rv_sort_vissprites
+dc_st_point_in_subsector	dc_rv_st_point_in_subsector	dc_st_point_on_side=dc_rv_st_point_on_side
+dc_st_point_on_side	dc_rv_st_point_on_side
+dc_zone_header_byte	dc_rv_zone_header_byte
+dc_zone_window_into	dc_rv_zone_window_into	dc_zone_header_byte=dc_rv_zone_header_byte

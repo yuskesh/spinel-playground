@@ -1,0 +1,31 @@
+#!/usr/bin/env ruby
+require 'fileutils'
+require 'json'
+root=File.expand_path('..',__dir__)
+output,prism=ARGV
+abort 'usage: check-build-guards new-output prism-source' unless prism
+abort 'output exists' if File.exist?(output)
+FileUtils.mkdir_p(File.join(output,'scripts'))
+FileUtils.mkdir_p(File.join(output,'third_party'))
+FileUtils.mkdir_p(File.join(output,'patches'))
+FileUtils.cp(File.join(root,'scripts/build-spinel'),File.join(output,'scripts/build-spinel'))
+FileUtils.cp(File.join(root,'patches/M1-emit-mlir.patch'),File.join(output,'patches/M1-emit-mlir.patch'))
+source=File.join(output,'third_party/spinel')
+abort 'clone failed' unless system('git','clone','--no-hardlinks',File.join(root,'third_party/spinel'),source)
+run=lambda do |name,expected_rc,diagnostic|
+  out=File.join(output,"#{name}.stdout"); err=File.join(output,"#{name}.stderr")
+  system('bash',File.join(output,'scripts/build-spinel'),File.join(output,"build-#{name}"),prism,out:out,err:err)
+  status=$?
+  row={name:name,rc:status.exitstatus,diagnostic:diagnostic,matched:File.binread(err).include?(diagnostic)}
+  File.open(File.join(output,'guards.jsonl'),'a') { |f| f.puts(JSON.generate(row)) }
+  abort "STOP #{name}" unless row[:rc]==expected_rc && row[:matched]
+end
+abort 'checkout failed' unless system('git','-C',source,'checkout','--detach','HEAD^')
+run.call('wrong-pin',2,'M1 wrong pin')
+abort 'restore failed' unless system('git','-C',source,'checkout','--detach','086d514d3e2f10f8349fdedbdc2dd01dbd6c0f9c')
+File.binwrite(File.join(source,'M1-dirty-fixture'),'dirty')
+run.call('dirty',2,'M1 dirty submodule')
+File.unlink(File.join(source,'M1-dirty-fixture'))
+File.binwrite(File.join(output,'patches/M1-emit-mlir.patch'),"not a patch\n")
+run.call('incompatible-patch',2,'Only garbage was found')
+puts 'GREEN: wrong pin; dirty source; incompatible patch'

@@ -1,0 +1,10 @@
+# The network file of tests/app/play.sh's build (decision 0025): the play
+# application's frames channel and its keys channel both switched off (port
+# 0), so the M33's network firmware opens no socket for either. The
+# addresses are documentation ones (RFC 5737); a run that plays is given its
+# own file, outside the repository.
+interface swp0
+address dhcp
+netmask dhcp
+channel frames 192.0.2.1 0
+inbound keys 0 from 192.0.2.1

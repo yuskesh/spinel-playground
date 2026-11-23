@@ -1,0 +1,13 @@
+# E082 run_all.sh replay under E083 (2026-08-18) -- the two FAIL rows compare
+# the WORKING TREE to git and point at E083's uncommitted --grads-only edit;
+# they turn PASS once the E083 commit lands.  See nonreg.tsv e082_nonreg row.
+grad_touched_allowed_only  FAIL       touched: tools/grad/spinel-gradfs  (allowed: tools/grad/README.md tools/grad/rules/ tools/grad/spinel-gradgen tools/grad/s
+vendor_untouched           PASS       0 changes under vendor/ (READ-ONLY)
+vendor_head                PASS       8e30ae3c (READ-ONLY, never rebuilt)
+gradfs_untouched           FAIL       spinel-gradfs and grad_freestanding.rb byte-identical (E079's G5 and 4-target gates rest on them)
+e076_rejects_tsv           PASS       byte-identical
+e076_rejects_gates         PASS       byte-identical
+e076_twoexits_gates        PASS       byte-identical
+e076_twoexits_targets      PASS       byte-identical
+e076_twoexits_build        EXPLAINED  only generated_c_fnv1a differs (2 line(s)): spinel/grad.rb grew hvp:/jvp: keyword parameters and is textually inserted int
+e078_hvp_shim              PASS       s5.2 summary reproduced: #                                                                                                

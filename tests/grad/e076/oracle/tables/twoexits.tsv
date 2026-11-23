@@ -1,0 +1,10 @@
+key	value
+spinel_S_invocations	1
+generated_c_fnv1a	4f18e115dea1af00
+pin_lines_changed	2
+shim_lines_appended	25
+primal_defines_in_module	1
+adjoint_defines_in_module	1
+same_module	yes
+object_exports	_spg_grad_twin,_spg_sig_twin,_spg_val_twin,
+bitwise_equal_points	25/25

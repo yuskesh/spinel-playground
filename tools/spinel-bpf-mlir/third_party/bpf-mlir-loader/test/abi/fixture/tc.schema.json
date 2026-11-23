@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "coverage": {"programs": "complete", "maps": "complete", "records": "complete", "telemetry": "complete"},
+  "core": {
+    "records": [],
+    "maps": [
+      {"symbol": "cnt", "kind": "array", "key": {"kind":"int","bits":32,"signed":false,"endianness":"little","alignment":4}, "value": {"kind":"int","bits":64,"signed":false,"endianness":"little","alignment":8}, "max_entries": 2, "flags": 0, "record": "", "note": "E013: 0 は ti の回数・1 は te の回数"}
+    ],
+    "programs": [
+      {"name": "ti", "kind": "sched_cls", "attach_target": "ingress", "maps": ["cnt"], "note": "E013: IPv4 は drop"},
+      {"name": "te", "kind": "sched_cls", "attach_target": "egress", "maps": ["cnt"], "note": "E013: 数えて pass"},
+      {"name": "xp", "kind": "xdp", "attach_target": "", "maps": [], "note": "E013: 種類の取り違えの対照"}
+    ]
+  },
+  "telemetry": {"clocks": [], "value_maps": [], "bounds_sets": [], "signals": []},
+  "extensions": {}
+}

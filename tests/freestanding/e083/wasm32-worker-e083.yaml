@@ -1,0 +1,34 @@
+# E083: the shipped wasm32-worker.yaml plus the adjoint as a platform extern
+# with buffer parameters.  See cortex-m33-zephyr-e083.yaml for the reasoning.
+# `platform.type: none`, so `symbol:` is mandatory -- and it is the same
+# symbol as the Zephyr profiles, because it is the same adjoint.
+#
+# On this target the kernel object leaves the symbol as a wasm IMPORT; wasm-ld
+# then links the gradfs object next to it and the import disappears from the
+# final module (the platform "supplies" the extern by linking it, exactly as
+# west does on the MCU legs).
+target:
+  triple: wasm32-wasip1
+  cpu:
+  data_layout: "e-m:e-p:32:32-p10:8:8-p20:8:8-i64:64-i128:128-n32:64-S128-ni:1:10:20"
+  cflags:
+    - -Os
+
+abi:
+  boundary: c-abi
+  int_width: i32-internal
+  overflow: trap
+  trap_hook: spinel_trap
+
+runtime:
+  libc: none
+  libm: none
+  compiler_rt: allow
+
+platform:
+  type: none
+  externs:
+    - name: grad_loss
+      symbol: spinel_grad_sq_hinge_loss
+      params: [[f64_buf, in], len, [f64_buf, in], [f64_buf, out], len]
+      returns: f64

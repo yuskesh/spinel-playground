@@ -1,0 +1,132 @@
+# tests/spinel-mlir/tests.tsv -- every test of spinel-mlir's consumer
+# (tools/spinel-mlir), under one class, so tests/spinel-mlir/run.sh can run
+# the routine ones and refuse to run with a test it does not know.
+#
+# COLUMNS
+#   kind     ctest (an add_test of tools/spinel-mlir/CMakeLists.txt) or lit
+#            (a test/*.test file, its RUN lines read by run.sh)
+#   test     the ctest name, or the .test file's stem
+#   class    routine         runs in run.sh
+#            oracle-records  compares with the Go frontend's output that
+#                            spinel-mlir recorded under docs/experiments (an
+#                            oracle); those records were not imported
+#            oracle-committed  compares with the Go frontend's output committed
+#                            in tools/spinel-mlir itself (test/Oracle, test/Inputs)
+#                            (an oracle; not run)
+#            confirm         hand-written expectations whose source is the Go
+#                            frontend's output: oracles, as the owner named them
+#                            (2026-10-27); run only with ALLOW_ORACLE=1 (run.sh's
+#                            section confirm)
+#            absent          needs an archived facts supply under spinel-mlir's
+#                            docs/experiments, not imported
+#   note     why ('-' for routine)
+#
+# The classes come from the first run (2026-10-26): each failing test's
+# cause, read from its output; the note names the record it read.
+#
+#kind	test	class	note
+ctest	argv-scope	routine	-
+ctest	argv-check-order	routine	-
+ctest	fmod-terminal	routine	-
+ctest	fmod-explicit-return	routine	-
+ctest	source-pipeline	routine	-
+ctest	record-layout	confirm	RecordLayoutTest: hand-written layout expectations taken from the Go frontend's E003 records; an oracle, as the owner named it (2026-10-27)
+ctest	record-export	routine	-
+ctest	record-value	routine	-
+ctest	record-declarations-basic	confirm	RecordDeclarationsTest: expects the real E003 (Go frontend) Stat/Pair layout; an oracle, as the owner named it (2026-10-27)
+ctest	record-declarations-mc	confirm	RecordDeclarationsTest: expects the real E003 (Go frontend) Stat/Pair layout; an oracle, as the owner named it (2026-10-27)
+ctest	current-comm-callback	routine	-
+ctest	ring-mc	oracle-records	compares with the Go frontend's output spinel-mlir recorded (docs/experiments/results/E003/capture), not imported
+ctest	ring-t-ring	oracle-records	compares with the Go frontend's output spinel-mlir recorded (docs/experiments/results/E003/capture), not imported
+ctest	ring-selection	oracle-records	compares with the Go frontend's output spinel-mlir recorded (E003), not imported
+ctest	ring-mutation-swap	confirm	RingTest's mutation arm: the unmutated build must equal the Go frontend's ring lowering; an oracle, as the owner named it (2026-10-27)
+ctest	ring-mutation-polarity	confirm	RingTest's mutation arm: the unmutated build must equal the Go frontend's ring lowering; an oracle, as the owner named it (2026-10-27)
+ctest	output-str-greetwatch	oracle-records	compares with the Go frontend's output spinel-mlir recorded (docs/experiments/results/E003/capture), not imported
+ctest	output-str-output_str_dropped	oracle-records	compares with the Go frontend's output spinel-mlir recorded (docs/experiments/results/E003/capture), not imported
+ctest	output-str-output_str_no_if	oracle-records	compares with the Go frontend's output spinel-mlir recorded (docs/experiments/results/E003/capture), not imported
+ctest	output-str-output_str_in_kprobe	oracle-committed	compares the consumer's stderr with the Go frontend's recorded stderr (test/Inputs/*-e070.stderr); run as routine on 2026-10-26 by mistake, then reclassified
+ctest	output-str-status_in_else	oracle-records	compares with the Go frontend's output spinel-mlir recorded (docs/experiments/results/E003/capture), not imported
+ctest	output-str-status_nonzero	oracle-records	compares with the Go frontend's output spinel-mlir recorded (docs/experiments/results/E003/capture), not imported
+ctest	output-str-status_not_i64	oracle-records	compares with the Go frontend's output spinel-mlir recorded (docs/experiments/results/E003/capture), not imported
+ctest	output-str-field_not_u8_array	oracle-records	compares with the Go frontend's output spinel-mlir recorded (docs/experiments/results/E003/capture), not imported
+ctest	output-str-no_status_member	oracle-records	compares with the Go frontend's output spinel-mlir recorded (docs/experiments/results/E003/capture), not imported
+ctest	output-str-up_discard	oracle-records	compares with the Go frontend's output spinel-mlir recorded (docs/experiments/results/E045/oracle), not imported
+ctest	output-str-discard_dropped	oracle-committed	compares the consumer's stderr with the Go frontend's recorded stderr (test/Inputs/*-e145.stderr); run as routine on 2026-10-26 by mistake, then reclassified
+ctest	output-str-discard_in_kprobe	oracle-committed	compares the consumer's stderr with the Go frontend's recorded stderr (test/Inputs/*-e070.stderr); run as routine on 2026-10-26 by mistake, then reclassified
+ctest	output-str-discard_no_status	oracle-records	compares with the Go frontend's output spinel-mlir recorded (docs/experiments/results/E003/capture), not imported
+ctest	output-str-sent_outside	oracle-records	compares with the Go frontend's output spinel-mlir recorded (docs/experiments/results/E003/capture), not imported
+ctest	output-str-mutation-discard-sge	oracle-records	compares with the Go frontend's output spinel-mlir recorded (docs/experiments/results/E045/oracle), not imported
+ctest	e054-hash_atomic_add	oracle-records	compares with the Go frontend's output spinel-mlir recorded (docs/experiments/results/E003/capture), not imported
+ctest	e054-hash_record_add_or_init	oracle-records	compares with the Go frontend's output spinel-mlir recorded (docs/experiments/results/E003/capture), not imported
+ctest	e054-rc_map_atomic	oracle-records	compares with the Go frontend's output spinel-mlir recorded (docs/experiments/results/E003/capture), not imported
+ctest	e054-rec_poly_chain	oracle-records	compares with the Go frontend's output spinel-mlir recorded (docs/experiments/results/E003/capture), not imported
+ctest	e054-mutation-no-hash-atomic	oracle-records	compares with the Go frontend's output spinel-mlir recorded (docs/experiments/results/E003/capture), not imported
+ctest	e054-mutation-no-e065-hint	oracle-records	compares with the Go frontend's output spinel-mlir recorded (docs/experiments/results/E003/capture), not imported
+ctest	status-record-mutation-swap	oracle-records	compares with the Go frontend's output spinel-mlir recorded (docs/experiments/results/E003/capture), not imported
+ctest	output-str-mutation-status-zero	oracle-records	compares with the Go frontend's output spinel-mlir recorded (docs/experiments/results/E003/capture), not imported
+ctest	output-str-mutation-str-in-present	oracle-records	compares with the Go frontend's output spinel-mlir recorded (docs/experiments/results/E003/capture), not imported
+ctest	ring-hooks	routine	-
+ctest	consumer-hooks	routine	-
+ctest	rejected-program	routine	-
+ctest	rejected-program-mutation	routine	-
+ctest	rmw-domain	routine	-
+ctest	unknown-diagnostic	routine	-
+ctest	source-audit-continuation	routine	-
+ctest	source-audit-operator	absent	reads an archived facts supply under spinel-mlir's docs/experiments (docs/experiments/results/E052/supply)
+ctest	scalar-typing-loop-diagnostics	absent	reads an archived facts supply under spinel-mlir's docs/experiments (docs/experiments/results/E051/inputs)
+ctest	scalar-unknown-mutation	absent	reads an archived facts supply under spinel-mlir's docs/experiments (docs/experiments/results/E051/supply-)
+ctest	scalar-origins-mutation	absent	reads an archived facts supply under spinel-mlir's docs/experiments (docs/experiments/results/E051/supply-)
+ctest	scalar-precheck-mutation	absent	reads an archived facts supply under spinel-mlir's docs/experiments (docs/experiments/results/E051/supply-)
+ctest	consumer-finalizer	routine	-
+ctest	consumer-export	routine	-
+ctest	group-e-add-or-init-probe-gate	oracle-records	compares with the Go frontend's output spinel-mlir recorded (docs/experiments/results/E003/capture), not imported
+ctest	bounded-loop-facts	absent	reads an archived facts supply under spinel-mlir's docs/experiments (docs/experiments/results/E008/capture)
+ctest	packet-loop-scope	routine	-
+ctest	packet-loop-rollback-mutation	routine	-
+ctest	group-g-kernel-mutations	routine	-
+ctest	group-g-rootless-declarations	routine	-
+ctest	group-g-invalid-lowering	routine	-
+ctest	group-g-kernel-root	routine	-
+ctest	group-g-sockmap-policy	routine	-
+ctest	group-g-sockmap-selection	oracle-records	compares with the Go frontend's output spinel-mlir recorded (docs/experiments/results/E035/capture), not imported
+ctest	scalar-helpers	oracle-records	compares with the Go frontend's output spinel-mlir recorded (docs/experiments/results/E003/capture), not imported
+ctest	scalar-helper-loc-mutation	oracle-records	its mutation is refused at the comparison with the Go frontend's recorded output (ktime-oracle-loc, E003), not imported
+ctest	uprobe-hooks	routine	-
+ctest	inspection-writer	routine	-
+ctest	inspection-cli	routine	-
+ctest	inspection-source-writer	routine	-
+ctest	inspection-phase	routine	-
+ctest	inspection-scope	routine	-
+ctest	math-interval-oracle	oracle-committed	checks the C++ intervals against tests/interval/cases.tsv, which generate-oracle.sh made from the Go frontend's interval code; run as routine on 2026-10-26 by mistake, then reclassified
+ctest	math-interval-Domain	confirm	DomainTest: its same-local-go-approximation check expects the Go frontend's approximation; an oracle, as the owner named it (2026-10-27)
+ctest	math-interval-Mutation	routine	-
+ctest	math-interval-solver	routine	-
+ctest	group-a-range	oracle-committed	checks against tests/range/diagnostics.tsv, which capture-diagnostics.rb took from the Go frontend's recorded diagnostics (E003); run as routine on 2026-10-26 by mistake, then reclassified
+ctest	group-a-range-mutations	routine	-
+ctest	subprogram-graph	routine	-
+ctest	subprogram-flow	routine	-
+ctest	subprogram-prepare	routine	-
+ctest	subprogram-enum-count-controls	routine	-
+ctest	group-g-probe	routine	-
+ctest	declaration-continuation	routine	-
+ctest	declaration-devmap-selection	routine	-
+ctest	declaration-continuation-mutation	routine	-
+ctest	percpu-record-probe	routine	-
+lit	batch-contract	oracle-records	drives scripts/batch-compare.rb against the Go frontend's output spinel-mlir recorded (E003 capture, docs/plan), not imported
+lit	byte-comparison	routine	-
+lit	compile-warnings	routine	-
+lit	consistency	routine	-
+lit	group-a-controls	routine	-
+lit	import	routine	-
+lit	inventory-splice	routine	-
+lit	packet	oracle-records	compares with the Go frontend's output spinel-mlir recorded (E003 capture positive/internal_frontend_testdata_pos_pkt_bounds), not imported
+lit	scoped-literals	oracle-committed	compares the consumer's xdpcount outputs with the Go frontend's, committed in test/Oracle; run as routine on 2026-10-26 by mistake, then reclassified
+lit	semantic-boundaries	routine	-
+lit	structural-compare	oracle-records	compares with the Go frontend's output spinel-mlir recorded (E003 capture manifest.json), not imported
+lit	structure	routine	-
+lit	xdpcount	oracle-committed	compares the consumer's xdpcount outputs with the Go frontend's, committed in test/Oracle; run as routine on 2026-10-26 by mistake, then reclassified
+ctest	capture-wrote-origin	routine	-
+ctest	tracepoint-copy	routine	-
+ctest	typing-probe-comparison	routine	-
+ctest	union-inspection-default	routine	-
+ctest	uprobe-buffer-contract	routine	-

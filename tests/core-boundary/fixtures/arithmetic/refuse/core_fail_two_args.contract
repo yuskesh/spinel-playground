@@ -1,0 +1,6 @@
+core-contract 1
+root refuse/core_fail_two_args.rb
+entry two_args
+result i64
+param a scalar i64
+param b scalar i64

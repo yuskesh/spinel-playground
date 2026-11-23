@@ -1,0 +1,9 @@
+load ok unmet=0
+attach_netfilter xp err=SpinelBPF::State
+attach_netfilter pf 2^32 err=SpinelBPF::ValueRange
+attach_socket small_only err=SpinelBPF::State
+attach_cgroup small_only err=SpinelBPF::State
+out40 ret=1 Out0=3 Out1=2 Out2=40 Out3=1
+out100 ret=0 Out2=100 Out3=2
+hook 5 err=SpinelBPF::ValueRange
+run xp err=SpinelBPF::State

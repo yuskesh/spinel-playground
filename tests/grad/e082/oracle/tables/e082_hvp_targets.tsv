@@ -1,0 +1,4 @@
+target	wrt	mode	tol	params	ret	sig_fnv1a	exports	probes
+cubic	x	reverse	1e-06	x:float_array,n:int	float	5ae9b98aa9305abd	spg_grad_cubic,spg_val_cubic,spg_sig_cubic	2
+chain_px	x	reverse	1e-06	x:float_array,h:int,w:int,p:int	float	61d1e87e9e439798	spg_grad_chain_px,spg_val_chain_px,spg_sig_chain_px	2
+chain_gam_px	x	reverse	1e-06	x:float_array,h:int,w:int,p:int,g:float	float	46601212ce3f5791	spg_grad_chain_gam_px,spg_val_chain_gam_px,spg_sig_chain_gam_px	2

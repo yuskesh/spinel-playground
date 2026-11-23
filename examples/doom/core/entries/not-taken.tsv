@@ -1,0 +1,37 @@
+# examples/doom/core/entries/not-taken.tsv — access rows an entry takes no parameter for.
+#
+# tests/doom-core/entry-fields.rb requires every access.tsv row of an entry to
+# be a parameter's field or a slot table's row, or to be listed here with its
+# kind and reason. A row here that names a field the entry does take is refused.
+#
+#   same:FIELD    the entry takes FIELD, which holds the same values: the
+#                 original holds ONE object under both names, or the same bytes
+#                 (tests/doom-core/render-diff.rb checks each pair on the
+#                 original before the first frame)
+#   gate:CONFIG   the field is a configuration's gate, false in every shipped
+#                 program; the paths it guards are the ledger's unreached paths
+#   derived:FIELD the entry takes FIELD, from which the same value is looked
+#                 up at every read, and the port looks it up there instead of
+#                 keeping this field (the owner's decision of 2026-10-21,
+#                 decision 0008); FIELD must be one the entry takes and the
+#                 port's source must read it
+#   dead-store:CONFIG
+#                 written on shipped paths, read only on paths CONFIG runs; the
+#                 port does not keep the write
+#   message       read only to spell the text of a raise, which
+#                 core_fail(:capacity) does not carry
+#   constants     read only to compare against literals, which the port
+#                 compares as numbers
+#
+#entry	field	kind	reason
+doom_core_render	job_executor_colormap	same:renderer_colormap	JobExecutor@colormap is the Renderer's @colormap object: the executor is built with it.
+doom_core_render	job_executor_waddata	same:renderer_wad_data	JobExecutor@waddata is the Renderer's @wad_data object, which is Wad's @data.
+doom_core_render	wad_data	same:renderer_wad_data	Wad@data is the Renderer's @wad_data object; the port reads the WAD through renderer_wad_data (Wad#zone_window_into included).
+doom_core_render	renderer_fuzzoffset	same:job_executor_fuzzoffset	Renderer@fuzzoffset is the executor's @fuzzoffset object.
+doom_core_render	textures_texdata	same:job_executor_atlas	Textures@texdata's 125 strings, joined as the schema lays them out, are the executor's @atlas bytes (1379328); the port reads texture columns from the atlas.
+doom_core_render	textures_flatdata	same:job_executor_flatatlas	Textures@flatdata's 56 strings, joined, are the executor's @flatatlas bytes (229376); the port reads flats from the atlas.
+doom_core_render	renderer_trace	gate:trace	Renderer@trace is false in every shipped program; every path it guards is an unreached-path:trace in tools/doom/core-migrated.tsv.
+doom_core_render	renderer_ds_srcres	derived:renderer_curpicnum	Renderer#draw_planes sets @ds_source = @textures.flatdata(@pl_picnum[pl]) for every non-sky plane (render.rb:1329), after @curpicnum = @pl_picnum[pl] (1322), and the only read is Renderer#draw_span's job mode 0 path (1468), within that plane; flatdata(picnum) is the flat at flattranslation[picnum], so the port's dc_plane_span reads the same bytes from the flat atlas at flattranslation[curpicnum] * 4096 and keeps no selector.
+doom_core_render	renderer_ds_srcbase	derived:renderer_curpicnum	The base half of @ds_source (core-representations.tsv), as renderer_ds_srcres.
+doom_core_render	wad_lump_name	message	Lump#name is read only by StatusBar#draw_patch to spell its out-of-range raise (statusbar.rb:508); the port's refusal is core_fail(:capacity).
+doom_core_step	game_sprnames	constants	Game#give_by_sprite compares @sprnames[spr] with sprite names; the port's dc_st_give_by_sprite compares spr with those names' numbers in Info.sprnames.

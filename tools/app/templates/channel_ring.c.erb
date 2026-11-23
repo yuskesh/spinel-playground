@@ -1,0 +1,21 @@
+/* generated from tools/app/templates/channel_ring.c.erb: the storage of
+ * channel `<%= c.name %>` and its occupancy.
+ *
+ * occupancy() is sound from either end of the ring: the producer's own head
+ * cannot move under it and the tail it reads never exceeds that head; the
+ * consumer's own tail cannot move under it and the head it reads never falls
+ * below that tail. A third party reads it only inside a critical section
+ * (the verification build's recorder, 0014 §10): between two loads by
+ * anyone else both indexes may move, and the difference would wrap. */
+#include "channel_<%= c.name %>.h"
+
+uint8_t spc_channel_<%= c.name %>_slots[<%= c.depth %>][<%= c.size %>];
+uint32_t spc_channel_<%= c.name %>_lens[<%= c.depth %>];
+_Atomic uint32_t spc_channel_<%= c.name %>_head;
+_Atomic uint32_t spc_channel_<%= c.name %>_tail;
+
+uint32_t spc_channel_<%= c.name %>_occupancy(void)
+{
+	return atomic_load_explicit(&spc_channel_<%= c.name %>_head, memory_order_acquire) -
+	       atomic_load_explicit(&spc_channel_<%= c.name %>_tail, memory_order_acquire);
+}

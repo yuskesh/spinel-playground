@@ -1,0 +1,127 @@
+/* generated from tools/app/templates/pcsample_timer.c.erb by spinel-core-app
+ * build --pcsample: a PC sampler for frdm_imxrt1186, for measurement builds
+ * (decision 0022's board profile). Not part of any acceptance image.
+ *
+ * THE SOURCE. GPT1 (nxp,imx-gpt, IRQ 209), programmed directly as the
+ * stress source of 0014 Task 12 programs its CMSDK timer: its clock gate
+ * (LPCG73, kCLOCK_Gpt1) opened, its clock root (CCM CLOCK_ROOT19) left at
+ * the reset default OSC_RC_24M, the peripheral clock counted in restart mode
+ * with OCR1 at the period. The devicetree node stays disabled, so no driver
+ * owns the timer, and the system clock (SysTick) is not touched.
+ *
+ * THE PC. As stress_timer.c.erb reads it: while this handler runs, PSP
+ * points at the hardware frame of the thread it preempted, and
+ * ICSR.RETTOBASE is 1 exactly when that context was a thread. A sample over
+ * another handler is recorded as 0 and counted as nested.
+ *
+ * THE WINDOW. Samples are taken from the start (before the entries run)
+ * until spc_profile_tics, which profile_digests.c increments after each
+ * tic's digests, reaches <%= tics %>, or until the buffer's <%= capacity %>
+ * entries are full; then the timer stops. Nothing is printed: a line from a
+ * handler would interleave with the console's frames. spc_pcs and spc_pcs_pc
+ * are read out with a debugger after the run.
+ *
+ * THE COST. The handler stores one word and reads nothing but ICSR, PSP and
+ * the counter; the cycle counter is read only when the timer starts and
+ * when it stops. Measured at a 100 us period (2026-10-21, DEMO1's first 500
+ * tics): the tic's median rose from 142.8 to 157.6 ms, so the default period
+ * of a measurement is longer.
+ */
+#include <stdint.h>
+#include <zephyr/kernel.h>
+#include <zephyr/irq.h>
+#include <fsl_device_registers.h>
+#include <fsl_clock.h>
+
+#define SPC_PCS_IRQ 209u
+#define SPC_PCS_PRIO <%= priority %>u
+#define SPC_PCS_ROOT_HZ 24000000u
+#define SPC_PCS_PERIOD_US <%= period_us %>u
+#define SPC_PCS_TICS <%= tics %>u
+#define SPC_PCS_CAPACITY <%= capacity %>u
+
+extern volatile uint32_t spc_profile_tics __attribute__((weak));
+
+/* the preempted PCs, bit 0 cleared; 0 for a sample over another handler */
+uint32_t spc_pcs_pc[SPC_PCS_CAPACITY];
+
+/* what the debugger reads beside the samples: words, little-endian */
+struct spc_pcs_record {
+	uint32_t magic;      /* 0x53435050, "PPCS" */
+	uint32_t samples;    /* entries of spc_pcs_pc written */
+	uint32_t nested;     /* of which over another handler */
+	uint32_t stopped;    /* 1 once the window closed */
+	uint32_t tics;       /* spc_profile_tics when it closed */
+	uint32_t period_us;
+	uint32_t capacity;
+	uint32_t root_hz;
+	uint64_t first_cyc;  /* k_cycle_get_64 when the timer started and when it stopped */
+	uint64_t last_cyc;
+};
+volatile struct spc_pcs_record spc_pcs = {
+	.magic = 0x53435050u,
+	.period_us = SPC_PCS_PERIOD_US,
+	.capacity = SPC_PCS_CAPACITY,
+	.root_hz = SPC_PCS_ROOT_HZ,
+};
+
+#define SPC_SCB_ICSR (*(volatile const uint32_t *)0xE000ED04u)
+#define SPC_ICSR_RETTOBASE (1u << 11)
+
+static uint32_t spc_pcs_preempted_pc(void)
+{
+	const uint32_t *frame;
+
+	if ((SPC_SCB_ICSR & SPC_ICSR_RETTOBASE) == 0u) {
+		return 0u;
+	}
+	frame = (const uint32_t *)__get_PSP();
+	if (frame == NULL) {
+		return 0u;
+	}
+	return frame[6] & ~1u;
+}
+
+static void spc_pcs_isr(const void *arg)
+{
+	uint32_t pc;
+
+	(void)arg;
+	GPT1->SR = GPT_SR_OF1_MASK;
+	if (spc_pcs.stopped != 0u) {
+		return;
+	}
+	pc = spc_pcs_preempted_pc();
+	if (pc == 0u) {
+		spc_pcs.nested += 1u;
+	}
+	spc_pcs_pc[spc_pcs.samples] = pc;
+	spc_pcs.samples += 1u;
+	if (spc_pcs.samples == SPC_PCS_CAPACITY ||
+	    (&spc_profile_tics != NULL && spc_profile_tics >= SPC_PCS_TICS)) {
+		spc_pcs.tics = &spc_profile_tics != NULL ? spc_profile_tics : 0u;
+		spc_pcs.stopped = 1u;
+		spc_pcs.last_cyc = k_cycle_get_64();
+		GPT1->IR = 0u;
+		GPT1->CR &= ~GPT_CR_EN_MASK;
+	}
+}
+
+void spc_pcsample_timer_start(void)
+{
+	CLOCK_EnableClock(kCLOCK_Gpt1);
+	GPT1->CR = 0u;
+	GPT1->CR = GPT_CR_SWR_MASK;
+	while ((GPT1->CR & GPT_CR_SWR_MASK) != 0u) {
+	}
+	GPT1->PR = 0u;
+	GPT1->OCR[0] = SPC_PCS_ROOT_HZ / 1000000u * SPC_PCS_PERIOD_US - 1u;
+	GPT1->SR = 0x3fu;
+	GPT1->IR = GPT_IR_OF1IE_MASK;
+	IRQ_CONNECT(SPC_PCS_IRQ, SPC_PCS_PRIO, spc_pcs_isr, NULL, 0);
+	irq_enable(SPC_PCS_IRQ);
+	spc_pcs.first_cyc = k_cycle_get_64();
+	/* the peripheral clock, restart mode (FRR = 0): the counter returns to 0
+	 * at OCR1 and the interrupt recurs every period */
+	GPT1->CR = GPT_CR_CLKSRC(1u) | GPT_CR_ENMOD_MASK | GPT_CR_EN_MASK;
+}

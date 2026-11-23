@@ -1,0 +1,25 @@
+/*
+ * tools/app/zephyr/v4.4.2/boards/frdm_imxrt1186_nor.overlay -- the QSPI NOR
+ * layout of the FRDM-IMXRT1186's two images (decision 0023), for both: the
+ * M33 launcher (tools/app/launcher) and the M7 application.
+ *
+ *   0x000000  the launcher: boot header, XMCD, its code (slot0, shortened)
+ *   0x100000  the M7's code, run in place (m7_code_partition)
+ *   0x720000  the session image (slot1, as for the M33 lane; decision 0021)
+ *
+ * Zephyr's slot1 is the M7 code partition by default; here the M7's code
+ * moves below it and the session keeps 0x720000. The board table
+ * (boards/frdm_imxrt1186_cm7.tsv) records the same offsets.
+ */
+&slot0_partition {
+	reg = <0x00020000 0x000e0000>;
+};
+
+&w25q128jv {
+	partitions {
+		m7_code_partition: partition@100000 {
+			label = "m7-code";
+			reg = <0x00100000 0x00620000>;
+		};
+	};
+};

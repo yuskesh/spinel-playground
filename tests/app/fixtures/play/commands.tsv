@@ -1,0 +1,26 @@
+# tests/app/fixtures/play/commands.tsv -- the command each key mask must give,
+# worked out by hand from examples/doom/core/src/inputport.rb (dc_in_build) and
+# doomentry.rb (the fifth value, ((angleturn + 128) >> 8) & 0xff), NOT from a
+# run. Row i is the mask of the message taken at tic i + 1, one row per tic in
+# order, so turnheld carries from row to row. The constants: SIDEMOVE 24/40,
+# FORWARDMOVE 25/50 (speed off/on), ANGLETURN 640, 1280 and 320 for the
+# first IN_SLOWTURNTICS (6) tics a turn key is held; buttons ATTACK 1, USE 2,
+# CHANGE 4 | weapon << 3 for the first digit key down.
+#
+#keys	forward	side	angleturn	buttons	byte
+up	25	0	0	0	0
+up+speed	50	0	0	0	0
+down	-25	0	0	0	0
+left	0	0	320	0	1
+right	0	0	-320	0	255
+right	0	0	-320	0	255
+right	0	0	-320	0	255
+right	0	0	-320	0	255
+right	0	0	-640	0	254
+strafe+right	0	24	0	0	0
+comma	0	-24	0	0	0
+period	0	24	0	0	0
+fire	0	0	0	1	0
+use	0	0	0	2	0
+3+5	0	0	0	20	0
+none	0	0	0	0	0

@@ -1,0 +1,3 @@
+verdict	object	symbol	reason
+ALLOW	grad.wasm32-worker.o	__stack_pointer	linker-synthesised wasm symbol (wasm-ld defines it; it is part of the target ABI, not a capability)
+ALLOW	grad.wasm32-worker.o	spinel_trap	platform extern declared by the profile

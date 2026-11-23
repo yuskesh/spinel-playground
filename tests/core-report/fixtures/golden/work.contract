@@ -1,0 +1,10 @@
+core-contract 1
+root golden/work.rb
+entry gd_work
+result i64
+param cnt buffer i64 inout count n_cnt
+param n_cnt scalar u64
+param w scalar i64
+param h scalar i64
+param lo scalar i64
+param hi scalar i64

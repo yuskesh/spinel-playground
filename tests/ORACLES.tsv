@@ -1,0 +1,254 @@
+# tests/ORACLES.tsv -- every oracle in tests/ and tools/, and every file that
+# looks like one and is not.
+#
+# An oracle is a check against another implementation's behaviour (AGENTS.md):
+# CRuby, a reference C build, doomgeneric, a JAX or IREE reference, a replay of
+# a recorded run under CRuby, a byte comparison with another implementation's
+# recorded output. It runs only on the owner's instruction, given as
+# ALLOW_ORACLE=1. A comparison within one implementation (two of its paths, or
+# its old and new build) is not one, with one exception the owner made
+# (2026-10-19): a build by BASELINE_KERNEL, a kernel built without the change,
+# compared with this one is an oracle. docs/decisions/0020-oracle-gate.md
+# records the contract.
+#
+# COLUMNS
+#   path      the file, from the repository root
+#   section   the name the file's gate call uses (tools/oracle/gate, or
+#             OracleGate.allow? in Ruby); `whole` gates the file at its top;
+#             `-` for a row that has no gate call
+#   class     owner       the owner named it an oracle (2026-10-18/19); gated
+#             definition  it fits AGENTS.md's definition; gated
+#             confirm     gated, 要 owner 確認: whether it is an oracle is the
+#                         owner's call
+#             program     a program that performs a comparison and is run only
+#                         from a gated section; no gate of its own
+#             exempt      it mentions CRuby, an oracle or a replay, and is not
+#                         one: the owner ruled so, or the comparison stays within
+#                         one implementation, or the word names something else
+#             ungated     an oracle this mechanism does not gate; the reason
+#                         says why and who starts it
+#   what      what a gated section compares with (printed by the gate), or why
+#             a row is not gated
+#
+# tests/oracle/check.sh holds this list to the tree: every gate call has its
+# row and every gated row its call, and every file the oracle patterns find has
+# a row. Read it before adding a row.
+#
+#path	section	class	what
+tests/app/channel.sh	bytes	owner	CRuby running fixtures/channel/bytes.rb, and fill's native and QEMU bytes against CRuby's recorded 32
+tests/app/doom-admission.sh	baseline-kernel	owner	the four DOOM entries built by a baseline kernel and by this one, byte for byte
+tests/app/verify.sh	replay-fixture	owner	spinel-core-app verify's CRuby replay over the sample run's trace and its mutations
+tests/app/verify.sh	replay-qemu	owner	spinel-core-app verify's CRuby replay over the QEMU runs
+tools/app/bin/spinel-core-app	replay	owner	the verify command's replay: every invocation re-executed under CRuby against the trace
+tests/core-boundary/arithmetic.sh	language-oracle	owner	oracle.rb: the case table against CRuby's integers
+tests/core-boundary/arithmetic.sh	mutation-controls	owner	oracle.rb over one-cell mutations of the case table, under CRuby
+tests/core-boundary/capabilities.sh	original	owner	the original DOOM code under CRuby (fixtures/capabilities/oracle.rb), then the CORE kernels against its answers
+tests/core-boundary/framebuffer.sh	original	owner	the original DOOM code under CRuby (fixtures/framebuffer/scene.rb), then the CORE kernels against its screen
+tests/core-boundary/slots.sh	original	owner	the original DOOM code under CRuby (fixtures/slots/trace.rb), then the CORE kernels against its cells
+tests/core-boundary/artifacts.sh	two-paths	definition	lane 4's inputs and answers from the original under CRuby (oracle.rb, scene.rb, trace.rb)
+tests/core-boundary/artifacts.sh	direct-refusal	definition	lane 5 over the trace CRuby running the original wrote in lane 4
+tests/core-report/run.sh	bound-oracle	owner	oracle.rb: every reported bound against CRuby running the fixture
+tests/core-report/run.sh	baseline-kernel	owner	plain objects against BASELINE_KERNEL's, a kernel built without the change
+tests/doom-core/loop-reports.sh	baseline-kernel	owner	plain objects against BASELINE_KERNEL's, a kernel built without the change
+tests/doom-core/audit.sh	cruby-fixtures	owner	what the counts fixtures do under CRuby (six checks)
+tests/doom-core/borrowed-calls.sh	order	owner	dc_order under CRuby, and the native answer against it
+tests/doom-core/control-flow.sh	same-source	owner	the control-flow forms under CRuby, line for line against the native answers
+tests/doom-core/control-flow.sh	nested-pre	owner	dc_pre(1) under CRuby against the native answer
+tests/doom-core/control-flow.sh	nil-sweep	owner	every admitted nil-position fixture under CRuby against its native answer
+tests/doom-core/source-pack.sh	app	owner	the packed program under CRuby against the native answer
+tests/doom-core/source-pack.sh	seven	owner	dc_pick(3) under CRuby against the hosted build
+tests/doom-core/source-pack.sh	tree	owner	examples/doom/core's packed helpers under CRuby against the hosted build
+tests/doom/run.sh	reference-ruby	owner	step 5: every case under the reference Ruby, against its .expected
+tests/doom/negative-controls.sh	control-f	owner	control F records its expectation from CRuby running the mutated case
+tests/doom/compare-controls.sh	-	exempt	the controls of compare.rb, on references synthesised from the candidate: not an oracle (owner 2026-10-19)
+tests/doom/gate-r007-controls.sh	-	exempt	the controls of gate-r007-golden.rb, on the golden alone: not an oracle (owner 2026-10-19)
+tests/gcviz/run.sh	-	exempt	it replays one run's own collector events against themselves (decision 0036); the word names that walk, not a comparison with another implementation
+tools/gcviz/gcviz-events.rb	-	exempt	the reader of a collector event record; its replay walks one run's own events, and compares with no other implementation
+tests/doom/build-reference-controls.sh	-	exempt	the refusals of tools/doom/build-reference.sh, none of which builds doomgeneric: not an oracle (owner 2026-10-19)
+tools/doom/build-reference.sh	build	definition	builds doomgeneric, the reference C implementation; its refusals before the build run either way
+tools/doom/use-probe.rb	whole	owner	replays a recorded session through examples/doom under CRuby and reports what the use key did
+tools/core/compare-lowering	whole	owner	the old and the new lowering tools (frozen copies) over the route suites: MLIR, objects and refusal text; owner-authorized for decision 0026 steps 4 and 5 only (2026-10-23)
+tests/gc-arena/run.sh	reference	owner	each fixture under the reference interpreter (REF_RUBY), against both configurations
+tests/native-core/run.sh	cruby-answers	owner	each core-backed executable's answer against CRuby's
+tests/native-core/driver.sh	cruby-answer	owner	the driver's executable against CRuby's answer
+tests/native-core/task2-probe.sh	cruby-min	owner	INT64_MIN+1 - 1 printed by CRuby beside the compiled program
+tests/native-core/macos-probe.rb	cruby-answers	definition	each of nine fixtures' core-backed executable on macOS arm64 against CRuby's answer
+tests/ebpf/run.sh	-	exempt	it runs otlp_oracle_test.rb, the OTLP comparator's tests on synthetic models: not an oracle (owner 2026-10-19)
+tests/shader/run.sh	-	exempt	the word is the line it expects from spinel-shader-cmp on an empty directory, where nothing is compared: not an oracle (owner 2026-11-09, decision 0029)
+tests/freestanding/e040/oracle/run_gates.sh	whole	owner	E040's targets against the host build of the same Ruby, joined
+tests/freestanding/e063/oracle/run_gates.sh	whole	owner	host against wasm (node) against E040's recorded MCU answers
+tests/freestanding/e077/oracle/run_gates.sh	whole	owner	the four-way differential against the host build
+tests/freestanding/e077/oracle/run_nonreg.sh	whole	owner	E040/E063/E066/E067 against spinel-llvm's recorded results
+tests/freestanding/e079/oracle/run_nonreg.sh	whole	owner	E079 against E076's recorded results
+tests/freestanding/e081/oracle/run_gates.sh	whole	owner	the four-way differential against the host build
+tests/freestanding/e081/oracle/run_nonreg.sh	whole	owner	against spinel-llvm's recorded results
+tests/freestanding/e083/oracle/run_gates.orig.sh	whole	owner	the four-way oracle, and the trajectory against E079's stored artefacts
+tests/freestanding/e083/oracle/run_nonreg.sh	whole	owner	against spinel-llvm's recorded results
+tests/freestanding/e084/oracle/run_gates.orig.sh	whole	owner	the four-way oracle, and the analytic-Hessian oracle
+tests/freestanding/e084/oracle/run_host.orig.sh	whole	owner	the host pipeline against the freestanding one (host_mirror.c)
+tests/freestanding/e084/oracle/run_nonreg.sh	whole	owner	against spinel-llvm's recorded results
+tests/freestanding/e084/oracle/run_reject.orig.sh	whole	owner	spinel-llvm's original rejection runner, kept with the oracle files
+tests/grad/e082/oracle/hvp/run.orig.sh	whole	definition	spinel-llvm's original E082 hvp runner and its reference checks
+tests/grad/e082/oracle/rules/run.orig.sh	whole	definition	spinel-llvm's original E082 rules runner and rules_check.c
+tests/grad/e082/oracle/searchgate/run.orig.sh	whole	definition	spinel-llvm's original E082 search gate runner
+tests/grad/e082/oracle/run_all.orig.sh	whole	definition	the three E082 originals above, in order
+tests/grad/e082/oracle/nonreg/run_nonreg.sh	whole	definition	E082 against spinel-llvm's recorded results
+tools/grad/ab/run_e171.sh	whole	definition	the Ruby gradgen tools byte for byte against the frozen Python predecessor's recorded output
+tools/platform/ab/run_e168.sh	whole	definition	spinel-capcheck byte for byte against the frozen Python predecessor's recorded goldens
+tools/raster/ab/run_e170.sh	whole	definition	the raster tools byte for byte against the frozen Python predecessor's recorded output
+tools/realtime/ab/run_e169.sh	whole	definition	the native spinel-rtcheck byte for byte against the frozen Python predecessor's recorded output
+tools/shader/run_shader_gate.sh	whole	definition	the shaders against the CPU references the generator writes, the golden digests and wgpu/Dawn
+tools/metal/tests/run_gpu_metal_exec.sh	whole	definition	the Metal kernel against gpu_oracle.rb, a CPU reference in Ruby
+tools/metal/tests/run_gpu_bridge.sh	whole	owner	the GPU against host_saxpy.rb's in-binary CPU loop of the same formula
+tools/ebpf/benchmarks/targets/cruby_m001_server.rb	whole	owner	a CRuby HTTP server, the other side of a performance comparison
+tools/ebpf/benchmarks/targets/cruby_m003_server.rb	whole	owner	a CRuby HTTP server, the other side of a performance comparison
+tests/core-boundary/oracle.rb	-	program	run by arithmetic.sh's two gated lanes
+tests/core-boundary/fixtures/capabilities/oracle.rb	-	program	run by capabilities.sh and artifacts.sh past their gates
+tests/core-report/oracle.rb	-	program	run by core-report/run.sh's bound-oracle section
+tools/app/lib/core_app/verify.rb	-	program	its replay runs only when spinel-core-app's gate passes replay: true
+tests/doom/compare.rb	-	exempt	the port against doomgeneric's frames; only its controls run it here, on synthesised references (owner 2026-10-19), and running it on a reference build's frames is an oracle the owner starts
+tests/doom/gate-r007-golden.rb	-	exempt	a doomgeneric build against its golden; only its controls run it here, on the golden alone (owner 2026-10-19)
+tests/doom/oracle/make-fixture.rb	-	exempt	synthesises compare.rb's reference side for compare-controls.sh (owner 2026-10-19)
+tests/freestanding/e063/oracle/e063_gates.rb	-	program	run by e063/oracle/run_gates.sh
+tools/shader/spinel-shader-cmp	-	program	run by run_shader_gate.sh; tests/shader/run.sh runs only its entry refusal of a marked directory and, as that refusal's control, the tool on an empty directory, where it stops at its missing inputs and compares nothing (owner 2026-11-09, decision 0029)
+tools/shader/spinel-shader-vcmp	-	program	run by run_shader_gate.sh; tests/shader/run.sh runs only its entry refusal of a marked directory and, as that refusal's control, the tool on an empty directory, where it stops at its missing inputs and compares nothing (owner 2026-11-09, decision 0029)
+tools/shader/spinel-shader-attrib	-	program	run by run_shader_gate.sh
+tools/grad/ab/test_e171.rb	-	program	run by run_e171.sh
+tools/platform/ab/test_e168.rb	-	program	run by run_e168.sh
+tools/raster/ab/test_e170.rb	-	program	run by run_e170.sh
+tools/realtime/ab/test_e169.rb	-	program	run by run_e169.sh
+tools/metal/tests/gpu_oracle.rb	-	program	run by run_gpu_metal_exec.sh
+tools/metal/tests/gpu_compare.rb	-	program	run by run_gpu_metal_exec.sh
+tools/ebpf/tests/runtime/otlp_three_path_check.rb	-	program	run by run_otlp_kernel_e2e.sh
+tools/ebpf/tests/spinel_ebpf/otlp_semantic_oracle.rb	-	exempt	the OTLP comparator library; its own tests are not an oracle (owner 2026-10-19), and the comparison it serves runs through the gated run_otlp_semantic_oracle.sh and run_otlp_kernel_e2e.sh
+tools/ebpf/tests/spinel_ebpf/otlp_oracle_test.rb	-	exempt	the OTLP comparator's tests on synthetic models, run by tests/ebpf/run.sh: not an oracle (owner 2026-10-19)
+tools/gcmon/gcmon_stub.rb	-	program	no-ops for a CRuby differential run that nothing in this repository runs
+tests/grad/e076/demoA/apply.rb	-	ungated	its f64 reference runs only with SPINEL_ORACLE=1, the switch examples/tensor and examples/image use too; tests/grad never sets it
+tests/doom-core/harness/artifacts.sh	-	exempt	require_relative ARGV loads examples/doom's resources to write a catalog, as a tool
+tests/doom-core/native.sh	-	exempt	the owner rules native not a comparison (2026-10-18)
+tests/doom-core/state.sh	-	exempt	the owner rules state not a comparison (2026-10-18)
+tests/doom-core/tick.sh	-	exempt	the owner rules tick not a comparison (2026-10-18)
+tests/doom-core/verify.sh	-	exempt	the owner rules verify not a comparison (2026-10-18)
+tests/doom-core/source-edges.rb	-	exempt	run by tick.sh, which the owner rules not a comparison
+tests/doom/input-controls.sh	-	exempt	replays a recorded .lmp through the same headless build
+tests/doom/interactive.sh	-	exempt	the SDL build against the headless one: one implementation
+tests/freestanding/e040/mkcases.rb	-	exempt	the case generator; its --host output is used only by the gated e063 oracle
+tests/grad/gates/g5/scan.rb	-	exempt	load ARGV[0] loads spinel-gradgen, the tool under test
+tests/tensor/run.sh	-	exempt	unsets SPINEL_ORACLE and checks that no oracle line is printed
+tools/app/lib/core_app/board.rb	-	exempt	generates the board simulators the host runner uses; the owner rules host and board not comparisons (2026-10-19)
+tools/app/lib/core_app/channels.rb	-	exempt	generates the channel simulators the host runner uses (as board.rb)
+tools/ebpf/tools/cgen_oracle.rb	-	exempt	the Ruby codegen against the C codegen of the same tool: one implementation, old and new
+tools/ebpf/src/spinel_ebpf/capabilities.rb	-	exempt	the word names the retired Ruby codegen
+tools/ebpf/src/spinel_ebpf/portability.rb	-	exempt	the word names the GPU examples' CPU check in a message
+tools/ebpf/src/spinel_ebpf/validate.rb	-	exempt	the word names the retired Ruby codegen
+tools/ebpf/tests/spinel_ebpf/capabilities_test.rb	-	exempt	the word names the retired Ruby codegen
+tools/ebpf/tests/spinel_ebpf/error_actionability_test.rb	-	exempt	the word names the retired Ruby codegen
+tools/ebpf/tests/spinel_ebpf/kernel_cache_test.rb	-	exempt	the word names the retired Ruby codegen
+tools/ebpf/tests/spinel_ebpf/loader_contract_test.rb	-	exempt	the word appears in a note the test reads
+tools/ebpf/tests/spinel_ebpf/user_ringbuf_test.rb	-	exempt	the word names the retired Ruby codegen's map size
+tools/metal/examples/host_saxpy.rb	-	exempt	the bridge example; its comparison runs only through the gated run_gpu_bridge.sh
+tools/grad/spinel-gradgen	-	exempt	the word appears in a generated comment
+tests/affected/run.sh	-	exempt	affected.rb's controls: the words name the excluded oracle sections it must list, on planted tables; it compares with no other implementation
+tests/core-boundary/intrinsics.sh	-	exempt	part 3 loads the CRuby route's prelude (tools/core/intrinsics.rb, our own) and checks it against the hand-computed values of cases.tsv; it compares with no other implementation
+tests/doom-core/net-view.sh	-	exempt	replay is net_view's --replay of a recording planted here, and net-viewer.rb --replay on it; each is checked against the planted counts, not against another implementation
+tests/doom-core/net-viewer.sh	-	exempt	net-viewer.rb --replay on planted datagrams and a planted console in the board's framing; its digests are checked against the board's own frame_digests.c and FNV-1a's published vectors, not against another implementation
+tools/doom/net-viewer.rb	-	exempt	--replay reads a recording of the board's datagrams; the tool compares the board's frames with the board's own console, not with another implementation
+tools/test/affected.rb	-	exempt	it reads tests/ORACLES.tsv to list the oracle sections a change reaches as excluded; it runs none
+#
+# --- spinel-bpf-mlir and its loader bml (2026-10-26); the Go tests' classes are in
+# tests/spinel-bpf-mlir/tests.tsv
+tests/bcc-facts/acceptance.rb	artefacts	owner	the bcc tools' generated files (224 for v0.7.0's 28, 280 for v0.8.0's 35), built through the consumer, against those spinel-bpf-mlir committed (examples/bcc/artefacts.sha256): every file but the .mlir byte for byte, and each .mlir in ebpf-opt's generic form, IR and source locations (E074's form; the owner's criterion, 2026-10-27), which the script now checks itself; once at each acceptance (v0.7.0: 2026-10-26, a59e556)
+tools/spinel-bpf-mlir/third_party/bpf-mlir-loader/scripts/abi-mojo-diff.sh	whole	definition	bml's C loader against mojo-bpf-mlir's Go loader, on the ABI case groups (scripts/abi-mojo.tsv)
+tools/spinel-bpf-mlir/third_party/bpf-mlir-loader/scripts/build-oracles.sh	whole	definition	builds the Go oracles under test/oracle (bpf-mlir's code and cilium/ebpf) the differential scripts compare with
+tools/spinel-bpf-mlir/third_party/bpf-mlir-loader/scripts/diff-btf-records.sh	whole	definition	bml-precheck (C) against bpf-mlir's ebpf-precheck (Go) on ELFs with a broken .BTF
+tools/spinel-bpf-mlir/third_party/bpf-mlir-loader/scripts/diff-dwarf.sh	whole	definition	the C DWARF reader against the Go oracle test/oracle/cmd/dwarf-oracle
+tools/spinel-bpf-mlir/third_party/bpf-mlir-loader/scripts/diff-elf.sh	whole	definition	the C requirements reader of an ELF against bpf-mlir's Go reader
+tools/spinel-bpf-mlir/third_party/bpf-mlir-loader/scripts/diff-json.sh	whole	definition	the C readers of caps.json, maps.json and the loader declaration against bpf-mlir's Go readers
+tools/spinel-bpf-mlir/third_party/bpf-mlir-loader/scripts/diff-kbtf.sh	whole	definition	the kernel BTF reader against cilium/ebpf v0.22's btf package
+tools/spinel-bpf-mlir/third_party/bpf-mlir-loader/scripts/diff-kfield-cycle.sh	whole	definition	built BTF with cycles and shared types: the C reader against the Go oracle
+tools/spinel-bpf-mlir/third_party/bpf-mlir-loader/scripts/diff-live-btf.sh	whole	definition	the live caps (vmlinux BTF, host queries) against bpf-mlir's kload
+tools/spinel-bpf-mlir/third_party/bpf-mlir-loader/scripts/diff-split-dwarf.sh	whole	definition	split DWARF matching: bml-precheck (C) against bpf-mlir's ebpf-precheck (Go) (bml E055)
+tools/spinel-bpf-mlir/third_party/bpf-mlir-loader/scripts/diff-uprobe-offset.sh	whole	definition	the uprobe attach file offset: C against the cilium/ebpf copy test/oracle/cmd/uprobe-offset (bml E056)
+tools/spinel-bpf-mlir/third_party/bpf-mlir-loader/scripts/diff-parse.sh	whole	definition	the C requirements Parse against bpf-mlir's Go requirements.Parse
+tools/spinel-bpf-mlir/third_party/bpf-mlir-loader/scripts/diff-strarg.sh	whole	definition	the strptr and strarray classification: C against the Go oracle (bpf-mlir's kload)
+tools/spinel-bpf-mlir/third_party/bpf-mlir-loader/scripts/diff-usdt.sh	whole	definition	USDT reading: C against bpf-mlir's Go ParseUSDTArg and ReadUSDTPoints
+tools/spinel-bpf-mlir/third_party/bpf-mlir-loader/scripts/mojo-oracle.sh	whole	definition	builds mojo-bpf-mlir's Go loader test archive, the E012 oracle (MOJO_REPO)
+tools/spinel-bpf-mlir/third_party/bpf-mlir-loader/scripts/spinel-diff.sh	whole	definition	the shim (libbml_spinel.a) against spinel-bpf-mlir's Go loader test archive
+tools/spinel-bpf-mlir/third_party/bpf-mlir-loader/scripts/spinel-oracle.sh	whole	definition	builds spinel-bpf-mlir's Go loader test archive, the E007 oracle (SPINEL_REPO)
+tools/spinel-bpf-mlir/third_party/bpf-mlir-loader/scripts/sweep-precheck.sh	whole	definition	bpf-mlir's ELFs: the C precheck against records made by the Go capsgen
+tools/spinel-bpf-mlir/third_party/bpf-mlir-loader/scripts/reader-unit.sh	whole	definition	the C readers against the Go oracles under test/oracle on synthetic BTF (bml E060)
+tools/spinel-bpf-mlir/third_party/bpf-mlir-loader/scripts/target-rows-unit.sh	whole	definition	Go against C on the format 30 to 32 rows: parse, recorded caps, FromELF, Check and Unmet (bml E066)
+tools/spinel-bpf-mlir/third_party/bpf-mlir-loader/scripts/p152-unit.sh	whole	definition	the Go tests of the P152 plan and of the load and wave-proof oracles under test/oracle (bml E062)
+tools/spinel-bpf-mlir/third_party/bpf-mlir-loader/scripts/p152-preroot.sh	whole	definition	the P152 preroot sweep: builds p152-plan from test/oracle and checks a candidate manifest against recorded rows (bml E063)
+tools/spinel-bpf-mlir/third_party/bpf-mlir-loader/scripts/gate.sh	whole	definition	bml's commit gate: it runs the differential scripts above and live loads as root
+tools/spinel-bpf-mlir/third_party/bpf-mlir-loader/scripts/gate-wave1.sh	-	program	sourced by gate.sh only: its wave-1 load and attach steps, against cilium/ebpf; tools/spinel-bpf-mlir/third_party/bpf-mlir-loader/scripts/check-gate-mode.sh excludes it (it reads the gate_root call sites as text)
+tools/spinel-bpf-mlir/third_party/bpf-mlir-loader/scripts/fuzz.sh	-	exempt	libFuzzer over bml's own harnesses; its replay is of its own seeds, no other implementation
+tools/spinel-bpf-mlir/third_party/bpf-mlir-loader/scripts/srcs.sh	-	exempt	lists bml's sources; it leaves test/oracle out
+tools/spinel-bpf-mlir/third_party/bpf-mlir-loader/scripts/run-in-vm.sh	-	exempt	runs a command in a virtme-ng VM; it passes the oracle scripts' variables through
+tools/spinel-bpf-mlir/third_party/bpf-mlir-loader/scripts/gen-dwarf-copy.sh	-	exempt	writes bpf-mlir's uprobe DWARF code into the Go oracle's source; it compares nothing
+tools/spinel-bpf-mlir/third_party/bpf-mlir-loader/scripts/gen-uprobe-offset-copy.sh	-	exempt	writes cilium/ebpf's uprobe symbol code into the Go oracle's source; it compares nothing
+tools/spinel-bpf-mlir/third_party/bpf-mlir-loader/scripts/check-mutation-inventory.sh	-	exempt	tests the mutation-inventory reader under test/oracle; it compares nothing with another implementation
+tests/spinel-bpf-mlir/run.sh	cruby	definition	TestErrnoConsts: the errno constants of ruby/lib/bpf.rb against CRuby's Errno
+#
+# --- spinel-mlir's consumer (2026-10-26); its tests' classes are in tests/spinel-mlir/tests.tsv
+tests/spinel-mlir/run.sh	confirm	owner	six C++ unit tests whose hand-written expectations come from the Go frontend's output (E003 layouts, its interval approximation, its ring lowering); the owner named them oracles (2026-10-27)
+tools/spinel-mlir/scripts/audit-packet.rb	-	ungated	spinel-mlir's experiment tooling around the Go frontend's recorded output; its inputs under spinel-mlir's docs/experiments are not imported, and no runner here starts it
+tools/spinel-mlir/scripts/batch-compare.rb	-	ungated	spinel-mlir's experiment tooling around the Go frontend's recorded output; its inputs under spinel-mlir's docs/experiments are not imported, and no runner here starts it
+tools/spinel-mlir/scripts/capture-bcc-facts.rb	-	ungated	spinel-mlir's experiment tooling around the Go frontend's recorded output; its inputs under spinel-mlir's docs/experiments are not imported, and no runner here starts it
+tools/spinel-mlir/scripts/capture-bcc-oracle.rb	-	ungated	spinel-mlir's experiment tooling around the Go frontend's recorded output; its inputs under spinel-mlir's docs/experiments are not imported, and no runner here starts it
+tools/spinel-mlir/scripts/capture-group-d.rb	-	ungated	spinel-mlir's experiment tooling around the Go frontend's recorded output; its inputs under spinel-mlir's docs/experiments are not imported, and no runner here starts it
+tools/spinel-mlir/scripts/capture-group-f.rb	-	ungated	spinel-mlir's experiment tooling around the Go frontend's recorded output; its inputs under spinel-mlir's docs/experiments are not imported, and no runner here starts it
+tools/spinel-mlir/scripts/capture-packet-diagnostics.rb	-	ungated	spinel-mlir's experiment tooling around the Go frontend's recorded output; its inputs under spinel-mlir's docs/experiments are not imported, and no runner here starts it
+tools/spinel-mlir/scripts/capture-producer-coverage	-	ungated	spinel-mlir's experiment tooling around the Go frontend's recorded output; its inputs under spinel-mlir's docs/experiments are not imported, and no runner here starts it
+tools/spinel-mlir/scripts/capture-release-facts.rb	-	ungated	spinel-mlir's experiment tooling around the Go frontend's recorded output; its inputs under spinel-mlir's docs/experiments are not imported, and no runner here starts it
+tools/spinel-mlir/scripts/capture-source-audits.rb	-	ungated	spinel-mlir's experiment tooling around the Go frontend's recorded output; its inputs under spinel-mlir's docs/experiments are not imported, and no runner here starts it
+tools/spinel-mlir/scripts/capture-splice-arms	-	ungated	spinel-mlir's experiment tooling around the Go frontend's recorded output; its inputs under spinel-mlir's docs/experiments are not imported, and no runner here starts it
+tools/spinel-mlir/scripts/capture-uprobe-facts.rb	-	ungated	spinel-mlir's experiment tooling around the Go frontend's recorded output; its inputs under spinel-mlir's docs/experiments are not imported, and no runner here starts it
+tools/spinel-mlir/scripts/capture-uprobe-oracle.rb	-	ungated	spinel-mlir's experiment tooling around the Go frontend's recorded output; its inputs under spinel-mlir's docs/experiments are not imported, and no runner here starts it
+tools/spinel-mlir/scripts/capture-uretprobe-negatives.rb	-	ungated	spinel-mlir's experiment tooling around the Go frontend's recorded output; its inputs under spinel-mlir's docs/experiments are not imported, and no runner here starts it
+tools/spinel-mlir/scripts/check-analysis-root-producer	-	ungated	spinel-mlir's experiment tooling around the Go frontend's recorded output; its inputs under spinel-mlir's docs/experiments are not imported, and no runner here starts it
+tools/spinel-mlir/scripts/check-e016-unused-declarations.rb	-	ungated	spinel-mlir's experiment tooling around the Go frontend's recorded output; its inputs under spinel-mlir's docs/experiments are not imported, and no runner here starts it
+tools/spinel-mlir/scripts/check-emit-artifacts	-	ungated	spinel-mlir's experiment tooling around the Go frontend's recorded output; its inputs under spinel-mlir's docs/experiments are not imported, and no runner here starts it
+tools/spinel-mlir/scripts/check-facts-rename	-	ungated	spinel-mlir's experiment tooling around the Go frontend's recorded output; its inputs under spinel-mlir's docs/experiments are not imported, and no runner here starts it
+tools/spinel-mlir/scripts/check-multiple-root-contract	-	ungated	spinel-mlir's experiment tooling around the Go frontend's recorded output; its inputs under spinel-mlir's docs/experiments are not imported, and no runner here starts it
+tools/spinel-mlir/scripts/check-no-flag-sensitivity	-	ungated	spinel-mlir's experiment tooling around the Go frontend's recorded output; its inputs under spinel-mlir's docs/experiments are not imported, and no runner here starts it
+tools/spinel-mlir/scripts/check-oracle-wrote.rb	-	ungated	spinel-mlir's experiment tooling around the Go frontend's recorded output; its inputs under spinel-mlir's docs/experiments are not imported, and no runner here starts it
+tools/spinel-mlir/scripts/check-packet-controls.rb	-	ungated	spinel-mlir's experiment tooling around the Go frontend's recorded output; its inputs under spinel-mlir's docs/experiments are not imported, and no runner here starts it
+tools/spinel-mlir/scripts/check-real-xdpcount.rb	-	ungated	spinel-mlir's experiment tooling around the Go frontend's recorded output; its inputs under spinel-mlir's docs/experiments are not imported, and no runner here starts it
+tools/spinel-mlir/scripts/check-uprobe-additional.rb	-	ungated	spinel-mlir's experiment tooling around the Go frontend's recorded output; its inputs under spinel-mlir's docs/experiments are not imported, and no runner here starts it
+tools/spinel-mlir/scripts/compare-no-flag	-	ungated	spinel-mlir's experiment tooling around the Go frontend's recorded output; its inputs under spinel-mlir's docs/experiments are not imported, and no runner here starts it
+tools/spinel-mlir/scripts/lib/corpus-contract.rb	-	ungated	spinel-mlir's experiment tooling around the Go frontend's recorded output; its inputs under spinel-mlir's docs/experiments are not imported, and no runner here starts it
+tools/spinel-mlir/scripts/lib/oracle-projection.rb	-	ungated	spinel-mlir's experiment tooling around the Go frontend's recorded output; its inputs under spinel-mlir's docs/experiments are not imported, and no runner here starts it
+tools/spinel-mlir/scripts/lib/release-corpus.rb	-	exempt	the release corpus: an exact source glob and the bcc corpus; it compares nothing (its own header says so)
+tools/spinel-mlir/scripts/make-release-ledger.rb	-	ungated	spinel-mlir's experiment tooling around the Go frontend's recorded output; its inputs under spinel-mlir's docs/experiments are not imported, and no runner here starts it
+tools/spinel-mlir/scripts/measure-example-union.rb	-	ungated	spinel-mlir's experiment tooling around the Go frontend's recorded output; its inputs under spinel-mlir's docs/experiments are not imported, and no runner here starts it
+tools/spinel-mlir/scripts/measure-group-d.rb	-	ungated	spinel-mlir's experiment tooling around the Go frontend's recorded output; its inputs under spinel-mlir's docs/experiments are not imported, and no runner here starts it
+tools/spinel-mlir/scripts/measure-packet.rb	-	ungated	spinel-mlir's experiment tooling around the Go frontend's recorded output; its inputs under spinel-mlir's docs/experiments are not imported, and no runner here starts it
+tools/spinel-mlir/scripts/measure-union.rb	-	ungated	spinel-mlir's experiment tooling around the Go frontend's recorded output; its inputs under spinel-mlir's docs/experiments are not imported. The routine ctest union-inspection-default runs it only on mock tools and a planted manifest
+tools/spinel-mlir/scripts/measure-uprobe.rb	-	ungated	spinel-mlir's experiment tooling around the Go frontend's recorded output; its inputs under spinel-mlir's docs/experiments are not imported, and no runner here starts it
+tools/spinel-mlir/scripts/prepare-fmod-inputs.rb	-	ungated	spinel-mlir's experiment tooling around the Go frontend's recorded output; its inputs under spinel-mlir's docs/experiments are not imported, and no runner here starts it
+tools/spinel-mlir/scripts/prepare-release-corpus.rb	-	ungated	spinel-mlir's experiment tooling around the Go frontend's recorded output; its inputs under spinel-mlir's docs/experiments are not imported, and no runner here starts it
+tools/spinel-mlir/scripts/seal-release-corpus.rb	-	ungated	spinel-mlir's experiment tooling around the Go frontend's recorded output; its inputs under spinel-mlir's docs/experiments are not imported, and no runner here starts it
+tools/spinel-mlir/test/batch-contract.rb	-	ungated	drives a test that tests/spinel-mlir/tests.tsv does not class routine (it compares with the Go frontend's recorded output); tests/spinel-mlir/run.sh does not run it
+tools/spinel-mlir/test/batch-driver.rb	-	ungated	drives a test that tests/spinel-mlir/tests.tsv does not class routine (it compares with the Go frontend's recorded output); tests/spinel-mlir/run.sh does not run it
+tools/spinel-mlir/test/group-a.rb	-	ungated	drives a test that tests/spinel-mlir/tests.tsv does not class routine (it compares with the Go frontend's recorded output); tests/spinel-mlir/run.sh does not run it
+tools/spinel-mlir/test/packet.rb	-	ungated	drives a test that tests/spinel-mlir/tests.tsv does not class routine (it compares with the Go frontend's recorded output); tests/spinel-mlir/run.sh does not run it
+tools/spinel-mlir/tests/bcc-driver.rb	-	ungated	drives a test that tests/spinel-mlir/tests.tsv does not class routine (it compares with the Go frontend's recorded output); tests/spinel-mlir/run.sh does not run it
+tools/spinel-mlir/tests/candidate-projection.rb	-	ungated	drives a test that tests/spinel-mlir/tests.tsv does not class routine (it compares with the Go frontend's recorded output); tests/spinel-mlir/run.sh does not run it
+tools/spinel-mlir/tests/consumer/CheckScalarMutation.rb	-	ungated	drives a test that tests/spinel-mlir/tests.tsv does not class routine (it compares with the Go frontend's recorded output); tests/spinel-mlir/run.sh does not run it
+tools/spinel-mlir/tests/consumer/check-scalar-typing-loop.rb	-	ungated	drives a test that tests/spinel-mlir/tests.tsv does not class routine (it compares with the Go frontend's recorded output); tests/spinel-mlir/run.sh does not run it
+tools/spinel-mlir/tests/consumer/helpers.rb	-	ungated	drives a test that tests/spinel-mlir/tests.tsv does not class routine (it compares with the Go frontend's recorded output); tests/spinel-mlir/run.sh does not run it
+tools/spinel-mlir/tests/consumer/negative-stderr.rb	-	ungated	drives a test that tests/spinel-mlir/tests.tsv does not class routine (it compares with the Go frontend's recorded output); tests/spinel-mlir/run.sh does not run it
+tools/spinel-mlir/tests/consumer/output-str-mutation.rb	-	ungated	drives a test that tests/spinel-mlir/tests.tsv does not class routine (it compares with the Go frontend's recorded output); tests/spinel-mlir/run.sh does not run it
+tools/spinel-mlir/tests/consumer/output-str-run.rb	-	ungated	drives a test that tests/spinel-mlir/tests.tsv does not class routine (it compares with the Go frontend's recorded output); tests/spinel-mlir/run.sh does not run it
+tools/spinel-mlir/tests/consumer/status-record-mutation.rb	-	ungated	drives a test that tests/spinel-mlir/tests.tsv does not class routine (it compares with the Go frontend's recorded output); tests/spinel-mlir/run.sh does not run it
+tools/spinel-mlir/test/scoped-literals.rb	-	ungated	drives a test that tests/spinel-mlir/tests.tsv does not class routine (it compares with the Go frontend's recorded output); tests/spinel-mlir/run.sh does not run it
+tools/spinel-mlir/tests/interval/generate-oracle.sh	-	ungated	regenerates tests/interval/cases.tsv by running the Go frontend's interval code at a pinned commit; no runner here starts it
+tools/spinel-mlir/tests/oracle-projection.rb	-	ungated	drives a test that tests/spinel-mlir/tests.tsv does not class routine (it compares with the Go frontend's recorded output); tests/spinel-mlir/run.sh does not run it
+tools/spinel-mlir/tests/release-union-entry.rb	-	ungated	drives a test that tests/spinel-mlir/tests.tsv does not class routine (it compares with the Go frontend's recorded output); tests/spinel-mlir/run.sh does not run it
+tools/spinel-mlir/tests/shared-corpus-entry.rb	-	ungated	drives a test that tests/spinel-mlir/tests.tsv does not class routine (it compares with the Go frontend's recorded output); tests/spinel-mlir/run.sh does not run it
+tools/spinel-mlir/test/structural-compare.rb	-	ungated	drives a test that tests/spinel-mlir/tests.tsv does not class routine (it compares with the Go frontend's recorded output); tests/spinel-mlir/run.sh does not run it
+tools/spinel-mlir/test/xdpcount.rb	-	ungated	drives a test that tests/spinel-mlir/tests.tsv does not class routine (it compares with the Go frontend's recorded output); tests/spinel-mlir/run.sh does not run it
+tools/spinel-mlir/tests/corpus/uprobe-wave3-selection.rb	-	ungated	spinel-mlir's selection of its E080 corpus from spinel-bpf-mlir's Go captures; reads docs/experiments, not imported, and no runner here starts it
+tools/spinel-mlir/tests/inspection/Inputs/measure-union-before-e077.rb	-	exempt	a frozen copy of scripts/measure-union.rb that the routine ctest union-inspection-default runs on mock tools and a planted manifest, to show the default output unchanged; no other implementation's output is read
+tools/spinel-mlir/tests/producer/typing-probe-baseline.rb	-	exempt	compares the leak sets of two sanitizer builds of the same producer (M3, M4); reads spinel-mlir's scratch builds, not imported, and no runner here starts it

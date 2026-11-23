@@ -1,0 +1,5 @@
+core-contract 1
+root src/fixed_to_i32.rb
+entry fixed_to_i32
+result i32
+param v scalar i64

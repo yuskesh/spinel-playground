@@ -1,0 +1,2 @@
+function	source	note
+gpio_mcux_port_get_raw	su	https://github.com/zephyrproject-rtos/zephyr/blob/dccb09599635bdff17633fa7e9dab014b91dce90/drivers/gpio/gpio_mcux.c#L225: gpio_pin_get_dt -> gpio_port_get_raw (inline API) -> the driver operation; Zephyr's part of Button.read

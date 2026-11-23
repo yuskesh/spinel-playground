@@ -1,0 +1,118 @@
+core-contract 1
+root src/packed.rb
+entry dc_sp_dplanes
+result i64
+param state buffer i64 inout count n_state
+param n_state scalar u64
+param pl_minx buffer u16 in count n_pl_minx
+param n_pl_minx scalar u64
+param pl_maxx buffer i16 in count n_pl_maxx
+param n_pl_maxx scalar u64
+param pl_picnum buffer u8 in count n_pl_picnum
+param n_pl_picnum scalar u64
+param pl_height buffer i32 in count n_pl_height
+param n_pl_height scalar u64
+param pl_lightlevel buffer u8 in count n_pl_lightlevel
+param n_pl_lightlevel scalar u64
+param pl_top buffer u16 inout count n_pl_top
+param n_pl_top scalar u64
+param pl_bottom buffer u16 in count n_pl_bottom
+param n_pl_bottom scalar u64
+param spanstart buffer u16 inout count n_spanstart
+param n_spanstart scalar u64
+param cachedheight buffer u32 inout count n_cachedheight
+param n_cachedheight scalar u64
+param cacheddistance buffer u32 inout count n_cacheddistance
+param n_cacheddistance scalar u64
+param cachedxstep buffer i32 inout count n_cachedxstep
+param n_cachedxstep scalar u64
+param cachedystep buffer i32 inout count n_cachedystep
+param n_cachedystep scalar u64
+param yslope buffer u32 in count n_yslope
+param n_yslope scalar u64
+param distscale buffer u32 in count n_distscale
+param n_distscale scalar u64
+param xtoviewangle buffer i32 in count n_xtoviewangle
+param n_xtoviewangle scalar u64
+param finesine buffer i32 in count n_finesine
+param n_finesine scalar u64
+param zlight buffer u8 in count n_zlight
+param n_zlight scalar u64
+param flattranslation buffer u8 in count n_flattranslation
+param n_flattranslation scalar u64
+param span buffer i32 inout count n_span
+param n_span scalar u64
+param sc_kind buffer u8 inout count n_sc_kind
+param n_sc_kind scalar u64
+param sc_idx buffer u16 inout count n_sc_idx
+param n_sc_idx scalar u64
+param cap_span buffer u16 in count n_cap_span
+param n_cap_span scalar u64
+param cap_sched buffer u16 in count n_cap_sched
+param n_cap_sched scalar u64
+param plw buffer u16 in count n_plw
+param n_plw scalar u64
+param plempty buffer u8 in count n_plempty
+param n_plempty scalar u64
+param skyflatnum buffer u8 in count n_skyflatnum
+param n_skyflatnum scalar u64
+param tex_widthmask buffer u8 in count n_tex_widthmask
+param n_tex_widthmask scalar u64
+param tex_atlas_base buffer u32 in count n_tex_atlas_base
+param n_tex_atlas_base scalar u64
+param wall buffer i32 inout count n_wall
+param n_wall scalar u64
+param cap_wall buffer u16 in count n_cap_wall
+param n_cap_wall scalar u64
+param skytexture buffer u8 in count n_skytexture
+param n_skytexture scalar u64
+param pspriteiscale buffer u32 in count n_pspriteiscale
+param n_pspriteiscale scalar u64
+param skytexturemid buffer u32 in count n_skytexturemid
+param n_skytexturemid scalar u64
+param jobmode buffer u8 in count n_jobmode
+param n_jobmode scalar u64
+param scr buffer u8 inout count n_scr
+param n_scr scalar u64
+param cmap buffer u8 in count n_cmap
+param n_cmap scalar u64
+param flat buffer u8 in count n_flat
+param n_flat scalar u64
+param atlas buffer u8 in count n_atlas
+param n_atlas scalar u64
+param wad buffer u8 in count n_wad
+param n_wad scalar u64
+param zonewin buffer u8 in count n_zonewin
+param n_zonewin scalar u64
+param centery buffer u8 in count n_centery
+param n_centery scalar u64
+param sw buffer u16 in count n_sw
+param n_sw scalar u64
+param viewwindowx buffer u8 in count n_viewwindowx
+param n_viewwindowx scalar u64
+param viewwindowy buffer u8 in count n_viewwindowy
+param n_viewwindowy scalar u64
+param i_viewz scalar i64
+param i_extralight scalar i64
+param i_planeheight scalar i64
+param i_planezlight scalar i64
+param i_curpicnum scalar i64
+param i_basexscale scalar i64
+param i_baseyscale scalar i64
+param i_viewangle scalar i64
+param i_viewx scalar i64
+param i_viewy scalar i64
+param i_nspan scalar i64
+param i_nsched scalar i64
+param i_lastvisplane scalar i64
+param i_nwall scalar i64
+param i_dc_x scalar i64
+param i_dc_yl scalar i64
+param i_dc_yh scalar i64
+param i_dc_iscale scalar i64
+param i_dc_texturemid scalar i64
+param i_dc_colormap scalar i64
+param i_dc_srcofs scalar i64
+param i_dc_srcbase scalar i64
+param i_dc_srcres scalar i64
+param pl_from scalar i64

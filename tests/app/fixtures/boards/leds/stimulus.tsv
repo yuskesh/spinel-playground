@@ -1,0 +1,4 @@
+horizon_us 20000
+drain_us 1000
+gpio 7000 0 1
+gpio 12000 0 0

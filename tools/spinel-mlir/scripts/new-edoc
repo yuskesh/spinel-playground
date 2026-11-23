@@ -1,0 +1,93 @@
+#!/bin/bash
+# scripts/new-edoc — create a numbered document skeleton (automates the rule "an E document gets its number when it is planned and is committed at once")
+
+#   scripts/new-edoc <snake_case_title>            # experiment: create E{next}_<title>.md and commit it
+#   scripts/new-edoc -t R <snake_case_title>       # research: R{next}_<title>.md
+#   scripts/new-edoc -n <snake_case_title>         # dry run (only print the number and the path)
+
+# What it does:
+#   1. Scans docs/experiments/ (or docs/researches/ with -t R) **on the file system**
+#      and takes the highest number + 1, tracked or untracked — the existence of the skeleton
+#      file is what reserves the number (the document numbering rule in CLAUDE.md). Uncommitted
+#      files of parallel sessions are in the same working tree, so this scan does not miss them.
+#   2. Writes a skeleton with "status: reserved, not started" (metadata/background/hypothesis/steps/results/conclusion/honest
+#      boundary). The hypothesis section is only a frame, marked as the draft at the time of filing.
+#   3. git adds and commits **only that file** (so that adding a whole directory cannot
+#      sweep other files in by accident). The commit is what makes the reservation visible to others.
+
+set -euo pipefail
+
+HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+ROOT=$(cd -- "$HERE/.." && pwd)
+
+kind=E
+dry=0
+while getopts "t:nh" opt; do
+  case "$opt" in
+    t) kind=$OPTARG ;;
+    n) dry=1 ;;
+    h|*) sed -n '2,12p' "$0"; exit 0 ;;
+  esac
+done
+shift $((OPTIND - 1))
+
+title=${1:-}
+if [ -z "$title" ]; then
+  echo "new-edoc: no title given. See scripts/new-edoc -h for usage" >&2; exit 2
+fi
+if ! printf '%s' "$title" | LC_ALL=C grep -qE '^[a-z0-9][a-z0-9_]*$'; then
+  echo "new-edoc: the title must be snake_case ([a-z0-9_], starting with a letter or digit): '$title'" >&2; exit 2
+fi
+
+case "$kind" in
+  E) dir="$ROOT/docs/experiments"; label=experiment ;;
+  R) dir="$ROOT/docs/researches";  label=research ;;
+  *) echo "new-edoc: -t takes E or R (a P document is named by hand, since a plan's name carries meaning)" >&2; exit 2 ;;
+esac
+
+# Highest number: look only at the digits in the file names. Tracked and untracked
+# are not told apart (presence in the working tree = reserved).
+max=$(ls "$dir"/"$kind"[0-9]*_*.md 2>/dev/null \
+      | sed -E "s|.*/${kind}0*([0-9]+)_.*|\1|" | sort -n | tail -1 || true)
+next=$(( ${max:-0} + 1 ))
+num=$(printf '%03d' "$next")
+file="$dir/${kind}${num}_${title}.md"
+today=$(date +%Y-%m-%d)
+
+if [ -e "$file" ]; then
+  echo "new-edoc: $file already exists" >&2; exit 1
+fi
+if [ "$dry" -eq 1 ]; then
+  echo "dry-run: ${kind}${num} -> $file"
+  exit 0
+fi
+
+cat > "$file" <<EOF
+# ${kind}${num}: ${title} (working title — replace it with a descriptive title when work starts)
+
+- **date**: ${today} (number reserved + skeleton)
+- **category**: (undecided — set when work starts)
+- **status**: **reserved, not started**
+- **related**: (always name the P/R/E document this was filed from)
+
+## Background
+
+(carry over what you can from the plan or research this was filed from. Do not start work with this empty)
+
+## Hypothesis (the draft at the time of filing — it may be updated when work starts, but rewriting it after seeing the results is forbidden)
+
+- **H1**:
+
+## Steps (planned)
+
+1.
+
+## Steps and results / conclusion / honest boundary (fill in after work starts)
+
+(not filled in)
+EOF
+
+cd "$ROOT"
+git add -- "${file#$ROOT/}"
+git commit -q -m "${kind}${num} number reserved: ${title} — skeleton first (numbering at plan time, scripts/new-edoc)" -- "${file#$ROOT/}"
+echo "reserved ${kind}${num}: ${file#$ROOT/} (committed; push whenever convenient)"

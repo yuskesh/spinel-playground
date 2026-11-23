@@ -1,0 +1,74 @@
+/* generated from tools/app/templates/nest_timer.c.erb by spinel-core-app
+ * build: the nesting source of a verification build on mps2/an521 (decision
+ * 0014 plan, Task 11). CMSDK timer 0 (arm,cmsdk-timer at 0x40000000, IRQ 3)
+ * is programmed directly -- no Zephyr driver is compiled for it, so the
+ * inventory lists the node as absent in production -- with a period and a
+ * busy time from the stimulus script. Its handler runs at priority
+ * <%= priority %>, below the system clock interrupt's, and spins for the
+ * busy time, so SysTick expiries land inside it: a nested entry whose
+ * hardware frame is on the interrupt stack, which is what §9's nested-entry
+ * term budgets. The recorder logs each handler entry and exit as START and
+ * END with no entry, in this source's context, so the trace shows the
+ * nesting rather than assuming it. In the inventory the source is
+ * `nest_timer`, slot 16 + 3, with the isr_entry_exit reserve plus this
+ * handler's measured frame. */
+#include <stdint.h>
+#include <zephyr/kernel.h>
+#include <zephyr/irq.h>
+#include "recorder.h"
+
+#define SPC_CYC_PER_SEC <%= cycles_per_sec %>u
+#define SPC_NEST_CTX <%= nest_ctx %>u
+#define SPC_NEST_IRQ 3u
+#define SPC_NEST_PRIO <%= priority %>u
+#define SPC_NEST_PERIOD_CYC ((uint32_t)<%= period_us %>u * (SPC_CYC_PER_SEC / 1000000u))
+#define SPC_NEST_BUSY_CYC ((uint64_t)<%= busy_us %>u * (SPC_CYC_PER_SEC / 1000000u))
+
+/* CMSDK timer registers (Arm CMSDK TRM): CTRL bit0 enable, bit3 interrupt
+ * enable; VALUE counts down from RELOAD; INTCLEAR acknowledges */
+#define SPC_TIMER0_BASE 0x40000000u
+#define SPC_TIMER0_CTRL (*(volatile uint32_t *)(SPC_TIMER0_BASE + 0x00u))
+#define SPC_TIMER0_VALUE (*(volatile uint32_t *)(SPC_TIMER0_BASE + 0x04u))
+#define SPC_TIMER0_RELOAD (*(volatile uint32_t *)(SPC_TIMER0_BASE + 0x08u))
+#define SPC_TIMER0_INTCLEAR (*(volatile uint32_t *)(SPC_TIMER0_BASE + 0x0cu))
+
+static uint32_t spc_nest_expiries;
+static uint64_t spc_nest_epoch;
+
+static void spc_nest_isr(const void *arg)
+{
+	uint8_t saved_ctx = spc_rec_ctx, saved_entry = spc_rec_entry;
+	uint64_t t0;
+
+	(void)arg;
+	SPC_TIMER0_INTCLEAR = 1u;
+	spc_nest_expiries += 1u;
+	spc_rec_ctx = SPC_NEST_CTX;
+	spc_rec_entry = SPC_NO_ENTRY;
+	spc_tr_START(SPC_NEST_CTX, SPC_NO_ENTRY, spc_nest_expiries);
+	t0 = k_cycle_get_64();
+	while (k_cycle_get_64() - t0 < SPC_NEST_BUSY_CYC) {
+		/* busy: the system clock interrupt nests here */
+	}
+	spc_tr_END(SPC_NEST_CTX, SPC_NO_ENTRY, spc_nest_expiries);
+	spc_rec_ctx = saved_ctx;
+	spc_rec_entry = saved_entry;
+}
+
+void spc_nest_timer_start(uint64_t epoch)
+{
+	spc_nest_epoch = epoch;
+	IRQ_CONNECT(SPC_NEST_IRQ, SPC_NEST_PRIO, spc_nest_isr, NULL, 0);
+	SPC_TIMER0_CTRL = 0u;
+	SPC_TIMER0_RELOAD = SPC_NEST_PERIOD_CYC;
+	SPC_TIMER0_VALUE = SPC_NEST_PERIOD_CYC;
+	SPC_TIMER0_INTCLEAR = 1u;
+	irq_enable(SPC_NEST_IRQ);
+	SPC_TIMER0_CTRL = 0x9u; /* enable, interrupt enable */
+}
+
+void spc_nest_timer_stop(void)
+{
+	SPC_TIMER0_CTRL = 0u;
+	irq_disable(SPC_NEST_IRQ);
+}

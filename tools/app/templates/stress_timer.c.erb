@@ -1,0 +1,179 @@
+/* generated from tools/app/templates/stress_timer.c.erb by spinel-core-app
+ * build --stress: the sampling source of decision 0014 Task 12, on
+ * mps2/an521. CMSDK timer 1 (arm,cmsdk-timer, IRQ 4) is programmed directly,
+ * as the nesting source of Task 11 programs timer 0, and its handler samples
+ * the PC the interrupt preempted.
+ *
+ * WHY A SOURCE OF ITS OWN. The application's interrupt entries run from the
+ * system clock interrupt, so a sampler called from one of them observes the
+ * system only at tick boundaries, where the transport thread has not yet
+ * been scheduled. Measured before this source existed: 20000 samples, every
+ * one of them the idle loop, no hit in any span. A period that is not a
+ * multiple of the tick samples the phases between ticks as well.
+ *
+ * THE PC. Zephyr runs threads on PSP and handlers on MSP, so while this
+ * handler runs, PSP points at the hardware frame of the thread it
+ * interrupted: r0 r1 r2 r3 r12 lr pc xpsr, with no extended frame because
+ * this build refuses CONFIG_FPU. If the preempted context was itself a
+ * handler (PendSV, the UART's), its frame is on MSP and the PSP frame is a
+ * stale thread frame. The stacked xPSR cannot tell: a frame on PSP is only
+ * ever pushed from thread mode, so its IPSR is always 0 (the first version
+ * tested it, and the test could never fire). ICSR.RETTOBASE can: it is 1
+ * exactly when this is the only active exception. Any other sample is
+ * counted as nested and classified against nothing.
+ *
+ * THE SPANS. Each ring operation carries the four `SPC_LABEL` symbols of
+ * Task 8 -- copy begin and end, publication begin and end -- and
+ * `tools/app/lib/core_app/labels.rb` proves in the linked image that each
+ * pair brackets the operation it names. Here they are addresses, and a
+ * sample whose PC lies in [begin, end) is a hit for that span. This source
+ * decides nothing about correctness: the content checks do that. It decides
+ * whether the run went anywhere near the window, which is why a run with no
+ * hit is inconclusive and never a pass (0014 Task 12).
+ */
+#include <stdint.h>
+#include <zephyr/kernel.h>
+#include <zephyr/irq.h>
+#include <zephyr/sys/printk.h>
+
+#define SPC_CYC_PER_SEC <%= cycles_per_sec %>u
+#define SPC_STRESS_IRQ 4u
+#define SPC_STRESS_PRIO <%= priority %>u
+#define SPC_STRESS_PERIOD_CYC ((uint32_t)<%= period_us %>u * (SPC_CYC_PER_SEC / 1000000u))
+#define SPC_STRESS_REPORT_AT <%= report_at %>u
+
+/* CMSDK timer 1 registers (Arm CMSDK TRM), the non-secure alias the board
+ * uses: CTRL bit0 enable, bit3 interrupt enable; VALUE counts down from
+ * RELOAD; INTCLEAR acknowledges */
+#define SPC_TIMER1_BASE 0x40001000u
+#define SPC_TIMER1_CTRL (*(volatile uint32_t *)(SPC_TIMER1_BASE + 0x00u))
+#define SPC_TIMER1_VALUE (*(volatile uint32_t *)(SPC_TIMER1_BASE + 0x04u))
+#define SPC_TIMER1_RELOAD (*(volatile uint32_t *)(SPC_TIMER1_BASE + 0x08u))
+#define SPC_TIMER1_INTCLEAR (*(volatile uint32_t *)(SPC_TIMER1_BASE + 0x0cu))
+
+<% spans.each do |(name, _op, _part)| %>extern char <%= name %>_begin[], <%= name %>_end[];
+<% end %>
+#define SPC_STRESS_SPANS <%= spans.size %>
+static const char *const spc_stress_lo[SPC_STRESS_SPANS] = {
+<% spans.each do |(name, _op, _part)| %>	<%= name %>_begin,
+<% end %>};
+static const char *const spc_stress_hi[SPC_STRESS_SPANS] = {
+<% spans.each do |(name, _op, _part)| %>	<%= name %>_end,
+<% end %>};
+static const char *const spc_stress_names[SPC_STRESS_SPANS] = {
+<% spans.each do |(name, _op, _part)| %>	"<%= name.sub("spc_ring_", "") %>",
+<% end %>};
+
+static volatile uint32_t spc_stress_hits[SPC_STRESS_SPANS];
+static volatile uint32_t spc_stress_samples;
+static volatile uint32_t spc_stress_nested;
+static volatile uint8_t spc_stress_reported;
+
+/* THE APPLICATION'S LINES. tests/app/stress's provider counts its content
+ * failures and its received messages in these words and prints nothing: a
+ * provider may call nothing outside itself (its evidence is its own frame),
+ * and its `check` runs on the 224-byte scheduler stack, where printk's path
+ * overran into the transport thread's. This handler runs on the interrupt
+ * stack and prints the increments in the lines stress.sh reads, at most one
+ * period late. Weak, so a --stress build of an application without them
+ * links and prints nothing more. NOT COUNTED: the printk path here is in no
+ * frame of the interrupt stack's requirement (glue is not held to the
+ * provider rule). Read from the prologues of the tests/app/stress image on
+ * mps2/an521 (2026-10-22): printk 32, vprintk 32, picolibc's vfprintf 80 and
+ * its deepest callee 20 (__ultoa_invert; the console callback is 16), 164
+ * bytes over the handler's own frame, against an interrupt requirement of
+ * 388 and a stack of 4096. */
+extern volatile uint32_t spc_stress_fails[4] __attribute__((weak));
+extern volatile uint32_t spc_stress_mark[5] __attribute__((weak));
+extern volatile uint32_t spc_stress_marks __attribute__((weak));
+extern volatile uint32_t spc_stress_events __attribute__((weak));
+static uint32_t spc_stress_events_seen;
+static uint32_t spc_stress_fails_printed[4];
+static uint32_t spc_stress_marks_printed;
+
+static void spc_stress_print_app(void)
+{
+	uint32_t k;
+
+	/* the common sample: one load, nothing new */
+	if (&spc_stress_events == NULL || spc_stress_events == spc_stress_events_seen) {
+		return;
+	}
+	spc_stress_events_seen = spc_stress_events;
+	if (spc_stress_fails != NULL) {
+		for (k = 0; k < 4u; k++) {
+			while (spc_stress_fails_printed[k] != spc_stress_fails[k]) {
+				spc_stress_fails_printed[k] += 1u;
+				printk("STRESS_FAIL kind=%u\n", (unsigned)k);
+			}
+		}
+	}
+	if (&spc_stress_marks != NULL && spc_stress_mark != NULL && spc_stress_marks != spc_stress_marks_printed) {
+		spc_stress_marks_printed = spc_stress_marks;
+		printk("STRESS_SEEN n=%u last=%u fails=%u,%u,%u\n", (unsigned)spc_stress_mark[0], (unsigned)spc_stress_mark[1],
+		       (unsigned)spc_stress_mark[2], (unsigned)spc_stress_mark[3], (unsigned)spc_stress_mark[4]);
+	}
+}
+
+/* ICSR.RETTOBASE (bit 11) is 1 exactly when this is the only active
+ * exception, i.e. the context this interrupt preempted was a thread. */
+#define SPC_SCB_ICSR (*(volatile const uint32_t *)0xE000ED04u)
+#define SPC_ICSR_RETTOBASE (1u << 11)
+
+static uint32_t spc_stress_preempted_pc(void)
+{
+	const uint32_t *frame;
+
+	if ((SPC_SCB_ICSR & SPC_ICSR_RETTOBASE) == 0u) {
+		return 0u; /* over another handler: its frame is on MSP, and PSP's is stale */
+	}
+	frame = (const uint32_t *)__get_PSP();
+	if (frame == NULL) {
+		return 0u;
+	}
+	return frame[6] & ~1u;
+}
+
+static void spc_stress_isr(const void *arg)
+{
+	uint32_t pc;
+	uint32_t i;
+
+	(void)arg;
+	SPC_TIMER1_INTCLEAR = 1u;
+	spc_stress_samples += 1u;
+	pc = spc_stress_preempted_pc();
+	if (pc == 0u) {
+		spc_stress_nested += 1u;
+	} else {
+		for (i = 0; i < SPC_STRESS_SPANS; i++) {
+			if (pc >= (uint32_t)(uintptr_t)spc_stress_lo[i] &&
+			    pc < (uint32_t)(uintptr_t)spc_stress_hi[i]) {
+				spc_stress_hits[i] += 1u;
+				break;
+			}
+		}
+	}
+	spc_stress_print_app();
+	if (spc_stress_samples == SPC_STRESS_REPORT_AT && spc_stress_reported == 0u) {
+		spc_stress_reported = 1u;
+		printk("STRESS samples=%u nested=%u", (unsigned)spc_stress_samples,
+		       (unsigned)spc_stress_nested);
+		for (i = 0; i < SPC_STRESS_SPANS; i++) {
+			printk(" %s=%u", spc_stress_names[i], (unsigned)spc_stress_hits[i]);
+		}
+		printk("\n");
+		printk("STRESS_END\n");
+	}
+}
+
+void spc_stress_timer_start(void)
+{
+	IRQ_CONNECT(SPC_STRESS_IRQ, SPC_STRESS_PRIO, spc_stress_isr, NULL, 0);
+	SPC_TIMER1_CTRL = 0u;
+	SPC_TIMER1_RELOAD = SPC_STRESS_PERIOD_CYC;
+	SPC_TIMER1_VALUE = SPC_STRESS_PERIOD_CYC;
+	SPC_TIMER1_INTCLEAR = 1u;
+	irq_enable(SPC_STRESS_IRQ);
+	SPC_TIMER1_CTRL = 0x9u; /* enable, interrupt enable */
+}

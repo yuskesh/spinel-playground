@@ -1,0 +1,1 @@
+6	XCALL	0	1	extern=3	argc=2	args=7,x0a0b

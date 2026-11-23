@@ -1,0 +1,1 @@
+shape	docs/experiments/results/E684/fixtures/copy_pid_ebpf.bpf.o	symbol bpf_task_from_pid is undefined (extern — libbpf would resolve it)

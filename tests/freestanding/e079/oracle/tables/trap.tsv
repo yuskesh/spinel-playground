@@ -1,0 +1,21 @@
+id	leg	lr	ret	wrote_nothing	verdict
+lr0	native	0.0	-1	yes	PASS
+lr1	native	-0.1	-1	yes	PASS
+lr2	native	2.0	-1	yes	PASS
+lr3	native	NaN	-1	yes	PASS
+lr4	native	0.1	5	no (accepted)	PASS
+lr0	wasm32	0.0	-1	yes	PASS
+lr1	wasm32	-0.1	-1	yes	PASS
+lr2	wasm32	2.0	-1	yes	PASS
+lr3	wasm32	NaN	-1	yes	PASS
+lr4	wasm32	0.1	5	no (accepted)	PASS
+lr0	m33	0.0	-1	yes	PASS
+lr1	m33	-0.1	-1	yes	PASS
+lr2	m33	2.0	-1	yes	PASS
+lr3	m33	NaN	-1	yes	PASS
+lr4	m33	0.1	5	no (accepted)	PASS
+lr0	rv32	0.0	-1	yes	PASS
+lr1	rv32	-0.1	-1	yes	PASS
+lr2	rv32	2.0	-1	yes	PASS
+lr3	rv32	NaN	-1	yes	PASS
+lr4	rv32	0.1	5	no (accepted)	PASS

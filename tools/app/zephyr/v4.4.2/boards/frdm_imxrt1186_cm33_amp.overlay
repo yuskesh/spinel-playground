@@ -1,0 +1,34 @@
+/*
+ * tools/app/zephyr/v4.4.2/boards/frdm_imxrt1186_cm33_amp.overlay -- the M33
+ * as the companion of the M7 application (decision 0027), over Zephyr's
+ * frdm_imxrt1186/mimxrt1186/cm33, with frdm_imxrt1186_nor.overlay beside it.
+ * As tools/app/launcher/app.overlay:
+ *
+ *   - its RAM is its own DTCM (the M33 System TCM, 128 KB at 0x3000_0000,
+ *     IMXRT1180RM Rev. 9 Table 5), so the HyperRAM is the M7's alone
+ *     (boards/nxp/frdm_imxrt1186/cm33_sram_dtcm.overlay at the pinned Zephyr).
+ *     It is chosen as zephyr,sram only: the board's zephyr,dtcm is removed,
+ *     since the glue places a board's data-TCM sections (the scheduler
+ *     stack) by that choice, and with the node rebuilt as plain SRAM the
+ *     linker put them at address 0, which is not RAM on this core;
+ *   - it releases the M7 to run in place from m7_code_partition;
+ *   - its console is Zephyr's, LPUART1, unless the build applies
+ *     frdm_imxrt1186_cm33_amp_no_console.overlay: in a pair the UART is the
+ *     core's whose application declares a uart: channel (decision 0027).
+ */
+/delete-node/ &dtcm;
+
+/ {
+	chosen {
+		zephyr,sram = &dtcm;
+		/delete-property/ zephyr,dtcm;
+		zephyr,code-m7-partition = &m7_code_partition;
+	};
+
+	soc {
+		dtcm: memory@30000000 {
+			compatible = "mmio-sram";
+			reg = <0x30000000 DT_SIZE_K(128)>;
+		};
+	};
+};

@@ -1,0 +1,9 @@
+# A buffer with its own count, and a second read-only buffer.
+core-contract 1
+root fixtures/schema/src/buffer.rb
+entry accumulate
+result i64
+param dst buffer i32 out count n_dst
+param n_dst scalar u64
+param src buffer u8 in count n_src
+param n_src scalar u64

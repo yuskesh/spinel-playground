@@ -1,0 +1,25 @@
+core-contract 1
+root src/packed.rb
+entry dc_sp_chkbbox
+result i64
+param state buffer i64 in count n_state
+param n_state scalar u64
+param node_bbox buffer i32 in count n_node_bbox
+param n_node_bbox scalar u64
+param tantoangle buffer u32 in count n_tantoangle
+param n_tantoangle scalar u64
+param clipangle buffer u32 in count n_clipangle
+param n_clipangle scalar u64
+param two_clipangle buffer u32 in count n_two_clipangle
+param n_two_clipangle scalar u64
+param viewangletox buffer u16 in count n_viewangletox
+param n_viewangletox scalar u64
+param ss_first buffer i32 in count n_ss_first
+param n_ss_first scalar u64
+param ss_last buffer i32 in count n_ss_last
+param n_ss_last scalar u64
+param i_viewx scalar i64
+param i_viewy scalar i64
+param i_viewangle scalar i64
+param n scalar i64
+param child scalar i64

@@ -1,0 +1,7 @@
+core-contract 1
+root src/thinker_remove.rb
+entry thinker_remove
+result i64
+param t scalar i64
+param th_func buffer i32 inout count n_func
+param n_func scalar u64

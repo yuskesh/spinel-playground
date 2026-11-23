@@ -1,0 +1,52 @@
+# E081 (P003 Phase 4): the shipped riscv32-zephyr.yaml plus the SAME callable
+# extern surface as cortex-m33-zephyr-e081.yaml.  Only the architecture layer
+# differs -- which is the three-layer claim, applied to the extern mechanism:
+# the platform surface (layer 3) is identical text.
+
+target:
+  triple: riscv32-none-elf
+  cpu:
+  data_layout: "e-m:e-p:32:32-i64:64-n32-S128"
+  cflags:
+    - -march=rv32imac_zicsr_zifencei
+    - -mabi=ilp32
+    - -Os
+
+abi:
+  boundary: c-abi
+  int_width: i32-internal
+  overflow: trap
+  trap_hook: spinel_trap
+
+runtime:
+  libc: none
+  libm: none
+  compiler_rt: allow
+
+platform:
+  type: zephyr
+  externs:
+    # -- the Zephyr platform intrinsics (P003 Phase 4's named four) ---------
+    - name: uptime_ms          # k_uptime_get()
+      params: []
+      returns: i64
+    - name: sleep_ms           # k_msleep(); returns 0 when the full sleep ran
+      params: [i32]
+      returns: i32
+    - name: print_i64          # printk(); returns 0 (v1 has no void -- D-9)
+      params: [i64]
+      returns: i32
+    - name: gpio_set           # (pin, val) -> val, or -1 outside pins 0..7 / val 0..1
+      params: [i32, i32]
+      returns: i32
+    - name: gpio_get           # (pin) -> current value, or -1 outside pins 0..7
+      params: [i32]
+      returns: i32
+    # -- type-coverage probes (not Zephyr intrinsics; they exercise the
+    #    remaining v1 extern types: f32/f64 and u32) ------------------------
+    - name: sense_scale        # (double)a * 2.0 + b
+      params: [f32, f64]
+      returns: f64
+    - name: checksum32         # v ^ 0xA5A5A5A5
+      params: [u32]
+      returns: u32

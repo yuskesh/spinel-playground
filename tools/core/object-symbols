@@ -1,0 +1,134 @@
+#!/bin/sh
+# tools/core/object-symbols -- the symbol names of an object, as C spells them.
+#
+# usage: object-symbols [--exported | --defined | --undefined] [--addresses] <object>
+#
+# Prints one `<type>	<name>` line per symbol (the nm type letter, then the
+# name), with the object format's ABI prefix removed: Mach-O gives every C
+# identifier one leading underscore and ELF gives none, and the object's
+# format decides which -- read with llvm-readobj, never from the host's uname.
+# A host object on macOS is Mach-O and a Cortex-M object there is ELF, and
+# the uname rule got both wrong in turn (Task 2's gate, then Task 5's
+# contract check). An unrecognised format is a failure naming the format,
+# not a guess.
+#
+# EVERY CHECK ADDED FROM 0014 TASK 6 ON THAT READS NAMES FROM AN OBJECT COMES
+# THROUGH HERE, and so do core-artifact-gate and tests/app/contract.sh. Older
+# lanes still parse nm themselves (tests/app/lowering.sh and cross.sh,
+# tests/native-core/run.sh, tests/doom-core/borrowed-calls.sh and verify.sh,
+# tests/gc-arena/run.sh); moving them is separate work, recorded in the plan.
+#
+# --exported: defined and external (nm --defined-only --extern-only);
+# --defined: every defined symbol (nm --defined-only); --undefined: the
+# undefined ones (nm -u); no option: every symbol. --addresses prints
+# `<value> <size> <type> <name>` (tab-separated) for the DEFINED symbols
+# instead (nm -S; hexadecimal; 0 for a label, and 0 for every symbol of a
+# Mach-O object, whose symbol table records no sizes -- llvm-nm says so on
+# stderr), for a check that places one symbol inside another; an undefined
+# symbol has neither, so --addresses --undefined is refused.
+#
+# NM and READOBJ name the readers; otherwise they come from LLVM_PREFIX, then
+# from the PATH, where a plain `nm` is the last resort and must accept
+# --defined-only and --extern-only (GNU or LLVM nm; BSD nm fails loudly).
+set -eu
+prog=object-symbols
+die() { printf '%s: %s\n' "$prog" "$*" >&2; exit 1; }
+set_=all
+addresses=
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --exported) set_=exported; shift ;;
+    --defined) set_=defined; shift ;;
+    --undefined) set_=undefined; shift ;;
+    --addresses) addresses=1; shift ;;
+    --) shift; break ;;
+    -*) die "unknown option $1" ;;
+    *) break ;;
+  esac
+done
+[ $# -eq 1 ] || die "usage: $prog [--exported | --defined | --undefined] [--addresses] <object>"
+obj=$1
+[ -f "$obj" ] || die "no such object: $obj"
+
+llvm_tool() { # name: NM/READOBJ override, then LLVM_PREFIX, then PATH
+  if [ -n "${LLVM_PREFIX:-}" ] && [ -x "$LLVM_PREFIX/bin/$1" ]; then printf '%s\n' "$LLVM_PREFIX/bin/$1"
+  else command -v "$1" 2>/dev/null || true; fi
+}
+NM_="${NM:-$(llvm_tool llvm-nm)}"
+[ -n "$NM_" ] || NM_=$(command -v nm 2>/dev/null || true)
+[ -n "$NM_" ] || die "no symbol reader: set NM or LLVM_PREFIX"
+READOBJ_="${READOBJ:-$(llvm_tool llvm-readobj)}"
+[ -n "$READOBJ_" ] || die "no object reader: set READOBJ or LLVM_PREFIX"
+
+w=$(mktemp -d "${TMPDIR:-/tmp}/object-symbols.XXXXXX")
+trap 'rm -rf "$w"' EXIT INT TERM
+
+# The format first, and an unrecognised one is a refusal, never a guess.
+"$READOBJ_" --file-headers "$obj" > "$w/hdr" 2>"$w/hdr.err" \
+  || { cat "$w/hdr.err" >&2; die "the object reader failed on $obj"; }
+fmt=$(sed -n 's/^Format: *//p' "$w/hdr" | head -1)
+case "$fmt" in
+  *[Mm]ach-[Oo]*) prefix=_ ;;
+  elf*|ELF*) prefix= ;;
+  *) die "unsupported object format '${fmt:-unknown}' for $obj" ;;
+esac
+
+# The reader's exit status is checked BEFORE its output is parsed: in a
+# pipeline a failed reader looks like an object with no symbols.
+sz=${addresses:+-S}
+case "$set_" in
+  exported) "$NM_" $sz --defined-only --extern-only "$obj" > "$w/syms" 2>"$w/err" ;;
+  defined) "$NM_" $sz --defined-only "$obj" > "$w/syms" 2>"$w/err" ;;
+  undefined) "$NM_" $sz -u "$obj" > "$w/syms" 2>"$w/err" ;;
+  all) "$NM_" $sz "$obj" > "$w/syms" 2>"$w/err" ;;
+esac || { cat "$w/err" >&2; die "the symbol reader failed on $obj"; }
+
+# EVERY LINE IS READ OR REFUSED; NONE IS SKIPPED UNLESS ITS MODE SAYS WHY.
+# A reader that drops a line it does not recognise turns a format difference
+# into "no such symbol", and for the undefined set that is "no dependency":
+# until this rule, `nm -u` on a Mach-O object printed its names one field
+# wide, a two-field filter dropped them all, and the artifact gate's B check
+# passed every Mach-O object (0014 Task 6 to Task 8). The shapes llvm-nm prints,
+# measured on the same source compiled for Mach-O and for ELF:
+#
+#   value type name        a defined symbol (value hexadecimal)
+#   type name              an undefined symbol: no value
+#   name                   `nm -u` on Mach-O only: the type is left out, and
+#                          it can only be undefined, so it is read as U
+#   value size type name   `nm -S`, a defined symbol
+#
+# Each mode admits the shapes it can produce and refuses the rest, naming the
+# line and the mode. The type nm prints is kept (U, or w/v for a weak
+# reference on ELF). Only the format's prefix is removed, and only when the
+# name carries it.
+if [ -n "$addresses" ]; then
+  [ "$set_" = undefined ] && die "--addresses lists defined symbols; an undefined one has no address"
+fi
+awk -v p="$prefix" -v mode="$set_" -v addr="${addresses:-}" -v bad="$w/bad" '
+  function strip(n) { if (p != "" && substr(n, 1, length(p)) == p) n = substr(n, length(p) + 1); return n }
+  function hex(s) { return s ~ /^[0-9a-fA-F]+$/ }
+  function letter(s) { return length(s) == 1 }
+  function refuse(why) {
+    printf "line %d of nm'"'"'s %s%s listing is %s: [%s]", NR, (addr ? "--addresses " : ""), mode, why, $0 > bad
+    close(bad); failed = 1; exit 2
+  }
+  addr != "" {
+    # nm -S. value size type name; GNU nm leaves the size out for a symbol
+    # without one (a label), so value type name is size 0.
+    if (NF == 4 && hex($1) && hex($2) && letter($3)) { printf "%s\t%s\t%s\t%s\n", $1, $2, $3, strip($4); next }
+    if (NF == 3 && hex($1) && letter($2))             { printf "%s\t0\t%s\t%s\n", $1, $2, strip($3); next }
+    # An undefined symbol has no address, which is why this mode skips it --
+    # and it is only in the undefined-listing mode that one can appear.
+    if (NF == 2 && letter($1) && mode == "all") next
+    refuse("not a defined symbol with an address")
+  }
+  {
+    if (NF == 3 && hex($1) && letter($2) && mode != "undefined") { printf "%s\t%s\n", $2, strip($3); next }
+    if (NF == 2 && letter($1) && (mode == "all" || mode == "undefined")) { printf "%s\t%s\n", $1, strip($2); next }
+    if (NF == 1 && mode == "undefined") { printf "U\t%s\n", strip($1); next }
+    refuse("not a shape this mode prints")
+  }' "$w/syms" > "$w/out" || {
+  [ -s "$w/bad" ] && die "$obj: $(cat "$w/bad")"
+  die "reading the symbol listing of $obj failed"
+}
+cat "$w/out"

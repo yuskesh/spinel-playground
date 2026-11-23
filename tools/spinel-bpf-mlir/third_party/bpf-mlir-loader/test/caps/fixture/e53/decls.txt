@@ -1,0 +1,32 @@
+const char * filename
+char * dev_name
+const char *const * argv
+char ** envp
+char *** x
+unsigned char * p
+signed char * p
+void * p
+void ** p
+u8 * p
+struct foo * p
+__data_loc char[] name
+char comm[16]
+char *p[2]
+unsigned long x
+int x
+const char __user * filename
+char*x
+const char * filename
+unsigned char ** p
+char *const * argv
+const char *const *const argv
+volatile char ** p
+char
+const char *
+__u8 * p
+long long * p
+bool * p
+char	*	p
+const volatile char * restrict p
+char * __user * argv
+__rel_loc char[] r

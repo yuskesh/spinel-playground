@@ -1,0 +1,2 @@
+function	source	note
+exception_frame	hw:36	the frame the core pushes on PSP when PendSV (or any exception) preempts the thread: r0-r3, r12, lr, pc, xPSR = 32 bytes without an FPU (CONFIG_FPU unset), plus up to 4 bytes of 8-byte alignment (STKALIGN); Armv7-M Architecture Reference Manual, exception entry (the Cortex-M7 of decision 0023: the same basic frame and STKALIGN as Armv8-M)

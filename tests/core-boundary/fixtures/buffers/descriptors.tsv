@@ -1,0 +1,122 @@
+# Descriptor and access cases for decision 0007 task 3.
+#
+# Columns, tab-separated:
+#   id       unique; names the case in output
+#   kernel   the fixture stem under src/
+#   shape    how the CALL is built, not what it computes:
+#              normal          allocated, aligned, disjoint
+#              count-short     the storage holds one element more than the
+#                              count, so an access past the count is visible
+#              count-high-word a count of 2^32 over a one-element allocation:
+#                              truncated to 32 bits it would read as zero
+#              null-zero       a NULL pointer with count 0, which is admitted
+#              null-nonzero    a NULL pointer with a nonzero count
+#              misaligned      a pointer one byte past an aligned base
+#              size-overflow   a count whose count*element-size overflows u64
+#              addr-overflow   a base+count*size that leaves the address space
+#              count-not-i64   a count with no i64 value, valid otherwise
+#              alias-inout     the `inout` buffer and another naming one storage
+#              alias-overlap   ranges that overlap without being equal
+#              alias-in-in     two `in` buffers over identical storage
+#              result-null     a NULL result pointer
+#              result-unaligned  a result pointer one byte past an aligned base
+#              result-in-buffer  a result pointer inside a buffer's range
+#   in       elements of the read-only buffer, comma separated, or `-`
+#   inout    initial elements of the `inout` buffer, or `-`
+#
+#   Elements are written and compared as the element type's UNSIGNED bit
+#   pattern, which is how the driver prints them. A negative i32 therefore
+#   appears as its 32-bit pattern -- -2147483648 is 2147483648 -- and an i64
+#   INT64_MIN as 9223372036854775808. Stating the pattern rather than the
+#   signed value keeps one spelling for every width.
+#   args     the remaining scalar arguments in order, or `-`
+#   status   ok | argument | arithmetic | bounds
+#   result   expected i64 result for ok; `-` otherwise
+#   expect   the `inout` buffer AFTER the call: a comma list, `untouched`, or
+#            `-` when the kernel has no `inout` buffer
+#
+# `status`, `result` and `expect` are the CLAIM, written from decision 0007.
+#
+# Ruby is the reference for the successful VALUES here only where its Array
+# semantics coincide with this boundary's. They do not everywhere: a negative
+# index counts from the end in Ruby, a store past the end grows the array, and
+# an element has no width. Each of those is a case below with a status, not a
+# value, and the divergence is the point rather than an oversight.
+#
+#id	kernel	shape	in	inout	args	status	result	expect
+su8-ok	sum_u8	normal	1,2,3,255	-	-	ok	261	-
+su8-zero-null	sum_u8	null-zero	-	-	-	ok	0	-
+su8-null-count	sum_u8	null-nonzero	-	-	-	argument	-	-
+su8-addr-overflow	sum_u8	addr-overflow	1,2	-	-	argument	-	-
+su8-count-not-i64	sum_u8	count-not-i64	1,2	-	-	argument	-	-
+su8-result-null	sum_u8	result-null	1,2	-	-	argument	-	-
+su8-result-in-buffer	sum_u8	result-in-buffer	1,2,3,4,5,6,7,8	-	-	argument	-	-
+si32-sign-extends	sum_i32	normal	-1,-2	-	-	ok	-3	-
+si32-misaligned	sum_i32	misaligned	1,2	-	-	argument	-	-
+si32-size-overflow	sum_i32	size-overflow	1,2	-	-	argument	-	-
+su32-zero-extends	sum_u32	normal	4294967295	-	-	ok	4294967295	-
+dot-disjoint	dot_u8	normal	2,3	-	-	ok	13	-
+dot-alias-in-in	dot_u8	alias-in-in	2,3	-	-	ok	13	-
+copy-ok	copy_u8	normal	7,8	0,0,0	-	ok	3	7,8,0
+copy-alias-inout	copy_u8	alias-inout	7,8	7,8	-	argument	-	untouched
+copy-alias-overlap	copy_u8	alias-overlap	7,8	0,0	-	argument	-	untouched
+copy-result-unaligned	copy_u8	result-unaligned	7,8	0,0	-	argument	-	untouched
+store-ok	store_u8	normal	-	0,0	7	ok	2	7,0
+store-narrows	store_u8	normal	-	9,9	256	arithmetic	-	untouched
+store-negative	store_u8	normal	-	9,9	-1	arithmetic	-	untouched
+at-ok	at_index	normal	10,20,30	-	1	ok	20	-
+at-negative	at_index	normal	10,20,30	-	-1	bounds	-	-
+at-past-end	at_index	normal	10,20,30	-	3	bounds	-	-
+clear-ok	clear_u8	normal	-	1,2,3	-	ok	3	0,0,0
+partial-ok	partial_store	normal	-	9,9,9	2	ok	3	2,1,1
+partial-after-writes	partial_store	normal	-	9,9,9	256	arithmetic	-	1,1,1
+grow-bound-is-descriptor	grow_count	count-short	-	11,99	-	bounds	-	11,99
+grow-op-bound-is-descriptor	grow_count_op	count-short	-	11,99	-	bounds	-	11,99
+shrink-bound-is-descriptor	shrink_count	count-short	-	11,99	-	ok	0	7,99
+i32-store-ok	store_i32	normal	-	0,0	2147483647	ok	2	2147483647,0
+i32-store-wide	store_i32	normal	-	9,9	2147483648	arithmetic	-	untouched
+u32-store-ok	store_u32	normal	-	0,0	4294967295	ok	2	4294967295,0
+u32-store-negative	store_u32	normal	-	9,9	-1	arithmetic	-	untouched
+i64-roundtrip-min	roundtrip_i64	normal	-	0,0	-9223372036854775808	ok	-9223372036854775808	9223372036854775808,0
+store-at-ok	store_at	normal	-	1,2,3	1,7	ok	3	1,7,3
+store-at-negative	store_at	normal	-	1,2,3	-1,7	bounds	-	untouched
+store-at-past-end	store_at	normal	-	1,2,3	3,7	bounds	-	untouched
+partial-then-bounds	write_then_oob	normal	-	0,0	5	bounds	-	5,5
+count-is-not-32-bit	count_value	count-high-word	1	-	-	ok	4294967296	-
+merge-disjoint	merge_into	normal	-	0,0	-	ok	2	0,0
+merge-alias-inout-inout	merge_into	alias-inout	-	4,5	-	argument	-	untouched
+clear-null-zero	clear_u8	null-zero	-	-	-	ok	0	-
+i32-store-min	store_i32	normal	-	0,0	-2147483648	ok	2	2147483648,0
+i32-store-below-min	store_i32	normal	-	9,9	-2147483649	arithmetic	-	untouched
+u32-store-above-max	store_u32	normal	-	9,9	4294967296	arithmetic	-	untouched
+si64-sum	sum_i64	normal	1,2,3	-	-	ok	6	-
+collision-names	collision	normal	5	-	3	ok	8	-
+si64-store-at-ok	store_at_i64	normal	-	0,0	0,7	ok	2	7,0
+si64-store-at-oob	store_at_i64	normal	-	9,9	5,7	bounds	-	untouched
+walk-chain	walk_links	normal	2,0,1	-	-	ok	2	-
+walk-empty	walk_links	normal	0	-	-	ok	0	-
+walk-cycle	walk_links	normal	1,1	-	-	ok	2	-
+walk-off-end	walk_links	normal	5	-	-	bounds	-	-
+# Decision 0018's narrow elements: the same load widening and store narrowing,
+# at both ends of each range. A store outside the range is ARITHMETIC and
+# leaves the buffer as it was; alignment and the address range are checked at
+# entry as for the wider elements. A 2-byte element cannot overflow u64 with a
+# count that is an i64, so the range check is shown by addr-overflow instead.
+si8-sign-extends	sum_i8	normal	-128,127,-1	-	-	ok	-2	-
+su16-zero-extends	sum_u16	normal	65535,1	-	-	ok	65536	-
+su16-misaligned	sum_u16	misaligned	1,2	-	-	argument	-	-
+su16-addr-overflow	sum_u16	addr-overflow	1,2	-	-	argument	-	-
+si16-sign-extends	sum_i16	normal	-32768,32767,-1	-	-	ok	-2	-
+si16-misaligned	sum_i16	misaligned	1,2	-	-	argument	-	-
+i8-store-max	store_i8	normal	-	0,0	127	ok	2	127,0
+i8-store-min	store_i8	normal	-	0,0	-128	ok	2	128,0
+i8-store-above-max	store_i8	normal	-	9,9	128	arithmetic	-	untouched
+i8-store-below-min	store_i8	normal	-	9,9	-129	arithmetic	-	untouched
+u16-store-max	store_u16	normal	-	0,0	65535	ok	2	65535,0
+u16-store-zero	store_u16	normal	-	9,9	0	ok	2	0,9
+u16-store-above-max	store_u16	normal	-	9,9	65536	arithmetic	-	untouched
+u16-store-negative	store_u16	normal	-	9,9	-1	arithmetic	-	untouched
+i16-store-max	store_i16	normal	-	0,0	32767	ok	2	32767,0
+i16-store-min	store_i16	normal	-	0,0	-32768	ok	2	32768,0
+i16-store-above-max	store_i16	normal	-	9,9	32768	arithmetic	-	untouched
+i16-store-below-min	store_i16	normal	-	9,9	-32769	arithmetic	-	untouched

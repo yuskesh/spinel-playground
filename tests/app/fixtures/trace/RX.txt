@@ -1,0 +1,1 @@
+10	RX	1	255	channel=0	stimulus_id=4	length=8

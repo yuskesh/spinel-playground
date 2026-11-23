@@ -1,0 +1,19 @@
+# tools/app/zephyr/v4.4.2/vector-classes.tsv -- the vector-table classes of decision 0014 §9
+# for the pinned release (https://github.com/zephyrproject-rtos/zephyr/blob/dccb09599635bdff17633fa7e9dab014b91dce90/arch/arm/core/cortex_m/vector_table.S, lines 39-90): reset,
+# terminal (NMI and the faults), and the default and spurious handlers an unused slot
+# points at. With CONFIG_GEN_SW_ISR_TABLE=y every IRQ slot of the generated vector table
+# points at _isr_wrapper and the software table decides (arch/common/isr_tables.c lines
+# 59-62): a slot is unused when
+# its _sw_isr_table entry is z_irq_spurious. Budgeted sources are the inventory's.
+# class	symbol
+reset	z_arm_reset
+terminal	z_arm_nmi
+terminal	z_arm_hard_fault
+terminal	z_arm_mpu_fault
+terminal	z_arm_bus_fault
+terminal	z_arm_usage_fault
+terminal	z_arm_secure_fault
+terminal	z_arm_debug_monitor
+default	z_arm_exc_spurious
+default	z_irq_spurious
+default	_isr_wrapper

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "coverage": {"programs": "complete", "maps": "complete", "records": "complete", "telemetry": "complete"},
+  "core": {
+    "records": [],
+    "maps": [{"symbol": "hits", "kind": "array", "key": {"kind":"int","bits":32,"signed":false,"endianness":"little","alignment":4}, "value": {"kind":"int","bits":64,"signed":false,"endianness":"little","alignment":8}, "max_entries": 8, "flags": 0, "record": "", "note": "E025"}],
+    "programs": [{"name": "kp", "kind": "kprobe", "attach_target": "bml_e025_no_such_function", "maps": ["hits"], "arch": "x86_64", "params": [], "note": "E025"}]
+  },
+  "telemetry": {"clocks": [], "value_maps": [], "bounds_sets": [], "signals": []},
+  "extensions": {}
+}

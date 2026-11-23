@@ -1,0 +1,4 @@
+# profile lie 2: an arch outside the platform's arch menu.
+platform: zephyr
+arch: x86_64
+supplies: trap-only

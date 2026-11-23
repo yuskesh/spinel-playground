@@ -1,0 +1,36 @@
+# RV32IMAC (ilp32, soft-float) on Zephyr -- board `qemu_riscv32`.
+#
+# The same profile as cortex-m33-zephyr.yaml with the architecture layer
+# swapped, which is the point of the three-layer split: NOTHING under `abi:` or
+# `platform:` changes, and the generator is not told what an ARM is.
+#
+# R006 s7 measured the whole delta between the two targets and it is three
+# things: the compiler-rt names are generic (__moddi3) instead of AEABI, there
+# is no unwind section to leak __aeabi_unwind_cpp_pr0, and RISC-V has no ELF
+# build attributes so the enum-size warning cannot happen.
+
+target:
+  triple: riscv32-none-elf
+  cpu:
+  data_layout: "e-m:e-p:32:32-i64:64-n32-S128"
+  cflags:
+    # Zephyr's own flags for this board (R006 s1.3).
+    - -march=rv32imac_zicsr_zifencei
+    - -mabi=ilp32
+    - -Os
+
+abi:
+  boundary: c-abi
+  int_width: i32-internal
+  overflow: trap
+  trap_hook: spinel_trap
+
+runtime:
+  libc: none
+  libm: none
+  compiler_rt: allow
+
+platform:
+  type: zephyr
+  externs:
+    - spinel_trap

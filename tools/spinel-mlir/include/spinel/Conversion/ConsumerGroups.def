@@ -1,0 +1,17 @@
+// Add SPINEL_CONSUMER_GROUP(registerGroupX) when a group's own implementation
+// and verification are accepted. The implementation is a separate .cpp in
+// namespace spinel::consumer, linked into SPINEL_CONSUMER_SOURCES.
+// Empty in E018: no new group is enabled by the extraction itself.
+SPINEL_CONSUMER_GROUP(registerGroupB)
+SPINEL_CONSUMER_GROUP(registerRecordMaps)
+SPINEL_CONSUMER_GROUP(registerRecordMembers)
+SPINEL_CONSUMER_GROUP(registerGroupE)
+SPINEL_CONSUMER_GROUP(registerGroupC)
+SPINEL_CONSUMER_GROUP(registerGroupG)
+SPINEL_CONSUMER_GROUP(registerGroupRing)
+SPINEL_CONSUMER_GROUP(registerGroupRecord)
+SPINEL_CONSUMER_GROUP(registerHelpers)
+SPINEL_CONSUMER_GROUP(registerDeclarationRejections)
+SPINEL_CONSUMER_GROUP(registerSourceAudits)
+SPINEL_CONSUMER_GROUP(registerRefAtomic)
+SPINEL_CONSUMER_GROUP(registerSubprograms)

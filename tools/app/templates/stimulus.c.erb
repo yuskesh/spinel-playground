@@ -1,0 +1,120 @@
+/* generated from tools/app/templates/stimulus.c.erb by spinel-core-app build:
+ * the stimulus thread of a verification build (decision 0014 §10, "Inputs
+ * on QEMU"; the plan's "Stimulus script"). The script's items are a table
+ * in this unit, in time order; the thread sleeps until each item's time
+ * past the epoch and applies it: `adc` sets the emulated ADC's input for
+ * the board's Adc instance (adc-emul), `gpio` the emulated input of the
+ * board's Button instance (gpio-emul, the raw level chosen so the logical
+ * value read through the instance's flags is the script's), `inbound`
+ * hands a framed message to the transport through the same byte path as
+ * the UART's, so the transport records it as RX or DROP with the item's
+ * identifier. Context 2 of the recorder. The thread's stack is a literal
+ * of the verification build, outside the two inequalities: it runs no
+ * entry and no provider. */
+#include <stdint.h>
+#include <zephyr/kernel.h>
+#include <zephyr/drivers/gpio.h>
+#include <zephyr/drivers/gpio/gpio_emul.h>
+#include <zephyr/drivers/adc.h>
+#include <zephyr/drivers/adc/adc_emul.h>
+#include "recorder.h"
+
+#define SPC_CYC_PER_SEC <%= cycles_per_sec %>u
+#define SPC_CTX_STIMULUS 2u
+#define SPC_STIM_ITEMS <%= items.size %>u
+
+<% if has_adc %>extern const struct adc_dt_spec spc_board_adc_table[];
+<% end %><% if has_button %>extern const struct gpio_dt_spec spc_board_button_table[];
+<% end %>
+struct spc_stim_item {
+	uint32_t id;
+	uint8_t kind; /* 0 adc, 1 gpio, 2 inbound */
+	uint64_t time_us;
+	uint32_t a;
+	uint32_t b;
+	const uint8_t *payload;
+	uint32_t len;
+};
+<% items.each do |it| %><% if it.kind == "inbound" %>static const uint8_t spc_stim_payload_<%= it.id %>[] = { <%= it.b.map { |x| format('0x%02x', x) }.join(', ') %> };
+<% end %><% end %>
+static const struct spc_stim_item spc_stim_items[SPC_STIM_ITEMS + 1u] = {
+<% items.each do |it| %><% if it.kind == "inbound" %>	{ <%= it.id %>u, 2u, <%= it.time %>u, <%= it.channel_index %>u, 0u, spc_stim_payload_<%= it.id %>, <%= it.b.size %>u },
+<% else %>	{ <%= it.id %>u, <%= it.kind == 'adc' ? 0 : 1 %>u, <%= it.time %>u, <%= it.a %>u, <%= it.b %>u, 0, 0u },
+<% end %><% end %>	{ 0u, 0u, 0u, 0u, 0u, 0, 0u }
+};
+
+/* the inbound bytes for the transport: a FIFO the transport thread reads
+ * with spc_stim_in(), exactly as it reads the UART */
+#define SPC_STIM_FIFO 512u
+static volatile uint8_t spc_stim_fifo[SPC_STIM_FIFO]; /* the transport reads it on another thread */
+static volatile uint32_t spc_stim_head, spc_stim_tail;
+
+int spc_stim_in(uint8_t *b)
+{
+	if (spc_stim_head == spc_stim_tail) {
+		return 0;
+	}
+	*b = spc_stim_fifo[spc_stim_tail % SPC_STIM_FIFO];
+	spc_stim_tail += 1u;
+	return 1;
+}
+
+static void spc_stim_push(uint8_t b)
+{
+	while (spc_stim_head - spc_stim_tail >= SPC_STIM_FIFO) {
+		k_msleep(1); /* the transport drains it; never inside a section */
+	}
+	spc_stim_fifo[spc_stim_head % SPC_STIM_FIFO] = b;
+	spc_stim_head += 1u;
+}
+
+static void spc_stim_apply(const struct spc_stim_item *it)
+{
+	switch (it->kind) {
+	case 0:
+<% if has_adc %>		adc_emul_const_value_set(spc_board_adc_table[it->a].dev, spc_board_adc_table[it->a].channel_id, it->b);
+<% end %>		break;
+	case 1:
+<% if has_button %>		{
+			const struct gpio_dt_spec *s = &spc_board_button_table[it->a];
+			int raw = (s->dt_flags & GPIO_ACTIVE_LOW) ? !it->b : (int)it->b;
+
+			gpio_emul_input_set(s->port, s->pin, raw);
+		}
+<% end %>		break;
+	default:
+		spc_stim_push(0xA5u);
+		spc_stim_push((uint8_t)it->a);
+		spc_stim_push((uint8_t)it->len);
+		for (uint32_t i = 0; i < it->len; i++) {
+			spc_stim_push(it->payload[i]);
+		}
+		break;
+	}
+}
+
+#define SPC_STIMULUS_STACK 1024
+static K_THREAD_STACK_DEFINE(spc_stimulus_stack, SPC_STIMULUS_STACK);
+static struct k_thread spc_stimulus_thread_data;
+static uint64_t spc_stim_epoch;
+
+static void spc_stimulus_thread(void *a, void *b, void *c)
+{
+	(void)a; (void)b; (void)c;
+	/* the stimulus thread records nothing itself (its inbound frames are
+	 * recorded by the transport, its emulator writes by nobody), so it sets
+	 * no recorder context: every emitter sets its own pair before writing */
+	for (const struct spc_stim_item *it = spc_stim_items; it->id != 0u; it++) {
+		uint64_t at = spc_stim_epoch + it->time_us * (SPC_CYC_PER_SEC / 1000000u);
+
+		k_sleep(K_TIMEOUT_ABS_TICKS(k_cyc_to_ticks_ceil64(at)));
+		spc_stim_apply(it);
+	}
+}
+
+void spc_stimulus_start(uint64_t epoch)
+{
+	spc_stim_epoch = epoch;
+	k_thread_create(&spc_stimulus_thread_data, spc_stimulus_stack, SPC_STIMULUS_STACK,
+			spc_stimulus_thread, NULL, NULL, NULL, K_PRIO_PREEMPT(2), 0, K_NO_WAIT);
+}

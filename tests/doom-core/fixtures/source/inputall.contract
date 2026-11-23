@@ -1,0 +1,22 @@
+core-contract 1
+root src/packed.rb
+entry dc_sp_inputall
+result i64
+param state buffer i64 inout count n_state
+param n_state scalar u64
+param xi buffer i64 in count n_xi
+param n_xi scalar u64
+param args buffer i64 in count n_args
+param n_args scalar u64
+param down buffer i64 inout count n_down
+param n_down scalar u64
+param script_code buffer i64 in count n_script_code
+param n_script_code scalar u64
+param script_from buffer i64 in count n_script_from
+param n_script_from scalar u64
+param script_to buffer i64 in count n_script_to
+param n_script_to scalar u64
+param demo_buf buffer u8 inout count n_demo_buf
+param n_demo_buf scalar u64
+param demo_max buffer i64 in count n_demo_max
+param n_demo_max scalar u64

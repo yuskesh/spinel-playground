@@ -1,0 +1,505 @@
+#!/usr/bin/env ruby
+# spinel-rastergen -- makes GPU kernels (MLIR) and slot tables from the Job IR.
+# [the raster plan, phases 2 to 7 / E170: Ruby]
+#
+# **The product is this Ruby.** The frozen Python stays read-only in `frozen/spinel-rastergen`,
+# and the E170 suite runs it every time as the oracle for **byte equality of stdout / stderr / rc and
+# the outputs**. The table's vocabulary lives in one place, `spinel_jobtable.rb`,
+# and the MLIR templates are word for word in `spinel_rastergen_templates.rb`.
+#
+#   spinel-rastergen mlir  --jobs DIR --table T [--kind K] [--K N] ...
+#   spinel-rastergen slots --jobs DIR [--K N] [-o OUT]
+#   spinel-rastergen meta  --jobs DIR --table T [--kind K]
+require_relative "spinel_jobtable"
+require_relative "spinel_rastergen_templates"
+
+JT = SpinelJobtable
+TP = SpinelRastergenTemplates
+PROG = "spinel-rastergen"
+
+M32 = 0xFFFFFFFF
+NFIELD = 7
+MC_NFIELD = 9
+SLOT_PLANES = 6
+EMPTY = [1, 0, 0, 0, 0, 0].freeze
+MASKED_WIN_SLOTS = 8192
+MASKED_WIN_STRIDE = 128
+MASKED_WIN_BYTES = MASKED_WIN_SLOTS * MASKED_WIN_STRIDE
+FUZZOFF_N = 50
+FUZZ_CHAIN = 5
+
+USAGE = <<~USAGE
+  usage: spinel-rastergen [-h] --jobs JOBS [--table TABLE]
+                          [--kind {wall,opaque,span,masked,fuzz,both,all,every}]
+                          [--K K] [--Kspan KSPAN] [--Kmasked KMASKED]
+                          [--slot SLOT] [--lo LO] [--hi HI] [--win-out WIN_OUT]
+                          [--entries-out ENTRIES_OUT] [--scale SCALE]
+                          [--njob NJOB] [-o OUT]
+                          {mlir,slots,meta}
+USAGE
+
+KINDS = %w[wall opaque span masked fuzz both all every].freeze
+MODES = %w[mlir slots meta].freeze
+
+# **The spelling of `(choose from …)` differs between Python versions** (3.12 has `'emit', 'check'`,
+# 3.13 has `emit, check`). Ruby can match only one of them, so it takes 3.13's
+# spelling, and **the suite masks only the inside of these parentheses** when comparing (E170's honest
+# boundary). rc, usage and `invalid choice: 'x'` are compared by bytes.
+def argparse_error(msg)
+  $stderr.write(USAGE)
+  $stderr.write("#{PROG}: error: #{msg}\n")
+  exit 2
+end
+
+def die(msg)
+  $stderr.puts "#{PROG}: #{msg}"
+  exit 2
+end
+DIE = method(:die)
+
+def s32(v) = v >= 0x80000000 ? v - 0x100000000 : v
+
+# The difference between the 2 gather kinds, gathered in one place (the frozen Python's `Kind`).
+class Kind
+  attr_accessor :key, :soft_k, :nfield, :disjoint, :fixed_res, :slot_fields,
+                :jobs_file, :njob_key, :res_key, :res_file, :axis, :span_axis,
+                :entry
+  def initialize(key)
+    @key = key
+    @soft_k = false
+    @nfield = NFIELD
+    @disjoint = true
+    @fixed_res = 0
+    @slot_fields = [3, 4, 5, 6]
+    case key
+    when "wall"
+      @jobs_file = "wall0_soa.bin"; @njob_key = "wall_phase0_n"
+      @res_key = "atlas_size"; @res_file = "atlas.bin"
+      @axis = "x"; @span_axis = "y"; @entry = "wall_gather"
+    when "opaque"
+      @jobs_file = "wallall_soa.bin"; @njob_key = "nwall"
+      @res_key = "atlas_size"; @res_file = "atlas.bin"
+      @axis = "x"; @span_axis = "y"; @entry = "opaque_gather"
+    when "span"
+      @jobs_file = "span1_soa.bin"; @njob_key = "nspan"
+      @res_key = "flat_size"; @res_file = "flat.bin"
+      @axis = "y"; @span_axis = "x"; @entry = "plane_gather"
+    when "masked"
+      @nfield = MC_NFIELD
+      @jobs_file = "masked_soa.bin"; @njob_key = "nmasked"
+      @res_key = nil; @fixed_res = MASKED_WIN_BYTES; @res_file = nil
+      @axis = "x"; @span_axis = "y"; @disjoint = false
+      @slot_fields = [3, 4, 6, 7]; @entry = "masked_gather"
+    when "fuzz"
+      @nfield = MC_NFIELD
+      @jobs_file = "masked_soa.bin"; @njob_key = "nmasked"
+      @res_key = nil; @fixed_res = FUZZOFF_N; @res_file = "fuzzoff.bin"
+      @axis = "x"; @span_axis = "y"; @disjoint = false
+      @slot_fields = [8, 8, 8, 8]; @entry = "fuzz_gather"
+    else
+      die("unknown kind #{key}")
+    end
+  end
+
+  def table_name(k)
+    case @key
+    when "wall" then "wall_columns"
+    when "opaque" then "opaque_columns_k#{k}"
+    when "span" then "plane_spans_k#{k}"
+    when "masked" then "masked_columns_k#{k}"
+    else "fuzz_columns_k#{k}"
+    end
+  end
+
+  def naxis(w, h) = @axis == "x" ? w : h
+end
+
+def read_meta(d)
+  m = {}
+  File.read(File.join(d, "meta.tsv")).each_line do |line|
+    next if line.start_with?("#")
+    k, v = line.chomp("\n").split("\t")
+    m[k] = v.to_i
+  end
+  m
+end
+
+def read_jobs(d, meta, kind)
+  nf = kind.nfield
+  path = File.join(d, kind.jobs_file)
+  raw = File.binread(path)
+  n = meta[kind.njob_key]
+  if n * nf * 4 > raw.bytesize
+    die("#{kind.jobs_file} is #{raw.bytesize} B, too small for #{n} jobs x #{nf} fields")
+  end
+  return [] if n.zero?
+  v = raw[0, n * nf * 4].unpack("V*")
+  jobs = (0...n).map { |i| (0...nf).map { |f| v[f * n + i] } }
+  if kind.key == "masked"
+    jobs = jobs.select { |j| s32(j[8]) < 0 }
+  elsif kind.key == "fuzz"
+    jobs = jobs.select { |j| s32(j[8]) >= 0 }
+  end
+  jobs
+end
+
+# The per-frame 128-byte window atlas.
+def build_masked_windows(d, _meta, jobs)
+  res = {}
+  [1, 2].each do |rid|
+    p = File.join(d, "mres_#{rid}.bin")
+    res[rid] = File.exist?(p) ? File.binread(p) : "".b
+  end
+  win = +"".b
+  index = {}
+  ofs = []
+  jobs.each do |j|
+    key = [s32(j[5]), s32(j[6])]
+    unless index.key?(key)
+      if index.size >= MASKED_WIN_SLOTS
+        die("check #12: more than #{MASKED_WIN_SLOTS} distinct 128-byte windows in " \
+            "one frame; the per-frame window atlas capacity is the Job IR ring " \
+            "CAP_MASKED and it is NOT silently grown")
+      end
+      src = res.fetch(key[0], "".b)
+      blob = src.byteslice(key[1], MASKED_WIN_STRIDE) || "".b
+      blob = blob + ("\x00".b * (MASKED_WIN_STRIDE - blob.bytesize)) if blob.bytesize != MASKED_WIN_STRIDE
+      index[key] = win.bytesize
+      win << blob
+    end
+    ofs << index[key]
+  end
+  [win, ofs, index.size]
+end
+
+# The job set at scale times the resolution (for performance reference only, not bit-exact).
+def expand(jobs, meta, scale, kind)
+  w0, h0, cy0 = meta["view_w"], meta["view_h"], meta["centery"]
+  return [jobs, w0, h0, cy0] if scale == 1
+  w, h, cy = w0 * scale, h0 * scale, cy0 * scale
+  out = []
+  if ["masked", "fuzz"].include?(kind.key)
+    jobs.each do |j|
+      x, yl, yh, isc, mid = s32(j[0]), s32(j[1]), s32(j[2]), j[3], j[4]
+      scale.times do |i|
+        nyl = yl * scale
+        nyh = yh * scale + (scale - 1)
+        nisc = [1, isc / scale].max
+        nmid = (mid + (yl - cy0) * isc - (nyl - cy) * nisc) & M32
+        out << [x * scale + i, nyl, nyh, nisc, nmid,
+                s32(j[5]), s32(j[6]), s32(j[7]), s32(j[8])]
+      end
+    end
+    return [out, w, h, cy]
+  end
+  if ["wall", "opaque"].include?(kind.key)
+    jobs.each do |j|
+      x, yl, yh, isc, mid, src, cm = s32(j[0]), s32(j[1]), s32(j[2]), j[3], j[4],
+                                     s32(j[5]), s32(j[6])
+      scale.times do |i|
+        nyl = yl * scale
+        nyh = yh * scale + (scale - 1)
+        nisc = [1, isc / scale].max
+        nmid = (mid + (yl - cy0) * isc - (nyl - cy) * nisc) & M32
+        out << [x * scale + i, nyl, nyh, nisc, nmid, src, cm]
+      end
+    end
+  else
+    jobs.each do |j|
+      y, x1, x2, pos, step, src, cm = s32(j[0]), s32(j[1]), s32(j[2]), j[3], j[4],
+                                      s32(j[5]), s32(j[6])
+      nx1 = x1 * scale
+      nx2 = x2 * scale + (scale - 1)
+      nstep = [1, step / scale].max
+      scale.times { |i| out << [y * scale + i, nx1, nx2, pos, nstep, src, cm] }
+    end
+  end
+  [out, w, h, cy]
+end
+
+# Lay the jobs out into K slots per cutting axis. **Overflow fails loudly.**
+def build_slots(jobs, naxis, k_max, kind, srcofs_override = nil)
+  f2, f3, f4, f5 = kind.slot_fields
+  per_a = Array.new(naxis) { [] }
+  jobs.each_with_index do |j, idx|
+    a, lo, hi = s32(j[0]), s32(j[1]), s32(j[2])
+    die("check #1: job #{kind.axis}=#{a} outside 0..#{naxis - 1}") if a < 0 || a >= naxis
+    next if lo > hi
+    v4 = srcofs_override.nil? ? s32(j[f4]) : srcofs_override[idx]
+    per_a[a] << [lo, hi, j[f2], j[f3], v4, s32(j[f5])]
+  end
+  maxk = per_a.map(&:size).max || 0
+  return [nil, maxk, per_a] if maxk > k_max && kind.soft_k
+  if maxk > k_max
+    num = { "wall" => 5, "opaque" => 13, "span" => 10 }.fetch(kind.key, 12)
+    die("check ##{num}: #{kind.axis} has #{maxk} #{kind.key} jobs but K_MAX=#{k_max}. " \
+        "The overflow is NOT silently dropped (R009 s8 #5 / E070 #10 / E071 #12)")
+  end
+  planes = Array.new(SLOT_PLANES) { Array.new(naxis * k_max, 0) }
+  (0...naxis).each do |a|
+    (0...k_max).each do |k|
+      v = k < per_a[a].size ? per_a[a][k] : EMPTY
+      (0...SLOT_PLANES).each { |f| planes[f][a * k_max + k] = v[f] & M32 }
+    end
+  end
+  [planes, maxk, per_a]
+end
+
+def check_disjoint(per_a)
+  bad = 0
+  per_a.each do |v|
+    (0...v.size).each do |a|
+      ((a + 1)...v.size).each do |b|
+        bad += 1 if v[a][0] <= v[b][1] && v[b][0] <= v[a][1]
+      end
+    end
+  end
+  bad
+end
+
+def pack_slots(planes) = planes.flatten.pack("V*")
+
+def load_jobtable(path, name)
+  rows = JT.annotate(JT.read_table(path, DIE))
+  row = rows.find { |r| r["name"] == name }
+  if row.nil?
+    die("no table row named #{name} in #{path} " \
+        "(have: #{rows.map { |r| r['name'] }.join(', ')})")
+  end
+  row
+end
+
+def prepare(a, kind)
+  meta = read_meta(a["jobs"])
+  jobs = read_jobs(a["jobs"], meta, kind)
+  jobs = jobs[0, a["njob"]] || [] if a["njob"] >= 0
+  if kind.key == "fuzz"
+    want = a["slot"] >= 0 ? a["slot"] : 0
+    seen = {}
+    pick = []
+    jobs.each do |j|
+      x = s32(j[0])
+      next if s32(j[1]) > s32(j[2])
+      k = seen.fetch(x, 0)
+      seen[x] = k + 1
+      pick << j if k == want
+    end
+    jobs = pick
+  end
+  ofs = nil
+  nwin = 0
+  if kind.key == "masked"
+    _w, ofs, nwin = build_masked_windows(a["jobs"], meta, jobs)
+  end
+  jobs, w, h, cy = expand(jobs, meta, a["scale"], kind)
+  ofs = ofs.flat_map { |o| Array.new(a["scale"], o) } if !ofs.nil? && a["scale"] > 1
+  naxis = kind.naxis(w, h)
+  planes, maxk, per_a = build_slots(jobs, naxis, a["K"], kind, ofs)
+  return [meta, jobs, nil, maxk, 0, w, h, cy, naxis, nwin] if planes.nil?
+  ov = check_disjoint(per_a)
+  if ov > 0 && kind.disjoint
+    num = kind.key == "span" ? 10 : (kind.key == "opaque" ? 13 : 4)
+    die("check ##{num}: #{ov} pairs of #{kind.key} jobs overlap in " \
+        "#{kind.span_axis} on the same #{kind.axis}. The gather form is NOT " \
+        "well defined for this frame (R009 s2 / E070 s3.2 / E071 s3.2)")
+  end
+  [meta, jobs, planes, maxk, ov, w, h, cy, naxis, nwin]
+end
+
+def gen_mlir(a, kind, meta, _planes, w, h, cy, naxis)
+  die("mlir/meta mode needs --table") unless a["table"]
+  name = kind.table_name(a["K"])
+  row = load_jobtable(a["table"], name)
+  nres = kind.res_key.nil? ? kind.fixed_res : meta[kind.res_key]
+  ncmap = meta["cmap_bytes"]
+  decl = JT.kernel_decl(row, w, h, a["K"], cy, nres, ncmap)
+  ksig = JT.fnv1a64(decl)
+  entry = format("%s_%016x", kind.entry, ksig)
+  wk = naxis * a["K"]
+  chain = ""
+  if kind.key == "fuzz"
+    chain = TP::FUZZ_CHAIN_BODY.gsub("{H}", h.to_s).gsub("{W}", w.to_s)
+                               .gsub("{NCMAP}", ncmap.to_s).gsub("{NTEX}", nres.to_s)
+  end
+  vars = { "NAME" => row["name"], "SIG" => format("%016x", row["sig"]),
+           "SEMSIG" => format("%016x", row["semsig"]), "KSIG" => format("%016x", ksig),
+           "ENTRY" => entry, "W" => w, "H" => h, "K" => a["K"], "CY" => cy,
+           "HM1" => h - 1, "WK" => wk, "WK2" => wk * 2, "WK3" => wk * 3,
+           "WK4" => wk * 4, "WK5" => wk * 5, "NSLOTV" => wk * SLOT_PLANES,
+           "NTEX" => nres, "NCMAP" => ncmap, "NWINSLOT" => MASKED_WIN_SLOTS,
+           "NCHAIN" => FUZZ_CHAIN, "CHAIN" => chain }
+  txt = TP.pyformat(TP::TMPL.fetch(kind.key), vars)
+  [txt, entry, ksig, decl, row, nres, ncmap, wk]
+end
+
+def parse_args(argv)
+  a = { "jobs" => nil, "table" => nil, "kind" => "wall", "K" => 16, "Kspan" => -1,
+        "Kmasked" => -1, "slot" => -1, "lo" => -1, "hi" => -1, "win_out" => nil,
+        "entries_out" => nil, "scale" => 1, "njob" => -1, "out" => "-" }
+  pos = []
+  i = 0
+  while i < argv.size
+    t = argv[i]
+    take = lambda do |name|
+      i += 1
+      argparse_error("argument #{name}: expected one argument") if i >= argv.size
+      argv[i]
+    end
+    int = lambda do |name|
+      v = take.call(name)
+      Integer(v, exception: false) || argparse_error("argument #{name}: invalid int value: '#{v}'")
+    end
+    case t
+    when "-h", "--help" then $stdout.write(USAGE); exit 0
+    when "--jobs" then a["jobs"] = take.call("--jobs")
+    when "--table" then a["table"] = take.call("--table")
+    when "--kind"
+      v = take.call("--kind")
+      unless KINDS.include?(v)
+        argparse_error("argument --kind: invalid choice: '#{v}' (choose from #{KINDS.join(', ')})")
+      end
+      a["kind"] = v
+    when "--K" then a["K"] = int.call("--K")
+    when "--Kspan" then a["Kspan"] = int.call("--Kspan")
+    when "--Kmasked" then a["Kmasked"] = int.call("--Kmasked")
+    when "--slot" then a["slot"] = int.call("--slot")
+    when "--lo" then a["lo"] = int.call("--lo")
+    when "--hi" then a["hi"] = int.call("--hi")
+    when "--win-out" then a["win_out"] = take.call("--win-out")
+    when "--entries-out" then a["entries_out"] = take.call("--entries-out")
+    when "--scale" then a["scale"] = int.call("--scale")
+    when "--njob" then a["njob"] = int.call("--njob")
+    when "-o", "--out" then a["out"] = take.call("-o/--out")
+    else
+      argparse_error("unrecognized arguments: #{t}") if t.start_with?("-") && t != "-"
+      pos << t
+    end
+    i += 1
+  end
+  missing = []
+  missing << "mode" if pos.empty?
+  missing << "--jobs" if a["jobs"].nil?
+  argparse_error("the following arguments are required: #{missing.join(', ')}") unless missing.empty?
+  unless MODES.include?(pos[0])
+    argparse_error("argument mode: invalid choice: '#{pos[0]}' (choose from #{MODES.join(', ')})")
+  end
+  argparse_error("unrecognized arguments: #{pos[1..].join(' ')}") if pos.size > 1
+  a["mode"] = pos[0]
+  a
+end
+
+a = parse_args(ARGV)
+if ["both", "all", "every"].include?(a["kind"]) && a["mode"] != "mlir"
+  die("--kind #{a['kind']} is for mlir mode only")
+end
+
+if ["both", "all", "every"].include?(a["kind"])
+  spec =
+    case a["kind"]
+    when "every"
+      [["opaque", 16], ["span", 4], ["span", 16],
+       ["masked", 8], ["masked", 16], ["masked", 40], ["fuzz", 1]]
+    when "both"
+      [["wall", a["K"]], ["span", a["Kspan"] > 0 ? a["Kspan"] : a["K"]]]
+    else
+      [["opaque", a["K"]], ["span", a["Kspan"] > 0 ? a["Kspan"] : a["K"]],
+       ["masked", a["Kmasked"] > 0 ? a["Kmasked"] : a["K"]], ["fuzz", 1]]
+    end
+  parts = [TP::HEAD]
+  info = []
+  last_w = last_h = nil
+  spec.each do |key, k|
+    kind = Kind.new(key)
+    kind.soft_k = a["kind"] == "every"
+    sub = a.dup
+    sub["K"] = k
+    sub["njob"] = -1
+    meta, _jobs, planes, maxk, _ov, w, h, cy, naxis, _nwin = prepare(sub, kind)
+    txt, entry, ksig, _decl, row, nres, wk = nil
+    txt, entry, ksig, _decl, row, nres, _ncmap, wk = gen_mlir(sub, kind, meta, planes, w, h, cy, naxis)
+    parts << txt
+    info << [key, k, entry, ksig, maxk, wk, nres, row["name"]]
+    last_w, last_h = w, h
+  end
+  out = parts.join
+  if a["out"] == "-"
+    $stdout.write(out)
+  else
+    File.write(a["out"], out)
+  end
+  if a["entries_out"]
+    File.open(a["entries_out"], "w") do |f|
+      f.write("#row\tkind\tK\tentry\tksig\tslotdim\tW\tH\n")
+      info.each do |key, k, entry, ksig, _maxk, _wk, _nres, name|
+        f.write(format("%s\t%s\t%d\t%s\t%016x\t%s\t%d\t%d\n", name, key, k, entry,
+                       ksig, key == "span" ? "H" : "W", last_w, last_h))
+      end
+    end
+  end
+  info.each do |key, k, entry, ksig, maxk, wk, nres, _name|
+    puts "#{key}_entry\t#{entry}"
+    puts format("%s_ksig\t%016x", key, ksig)
+    puts "#{key}_K\t#{k}"
+    puts "#{key}_max_k\t#{maxk}"
+    puts "#{key}_nslotv\t#{wk * SLOT_PLANES}"
+    puts "#{key}_nres\t#{nres}"
+  end
+  exit 0
+end
+
+kind = Kind.new(a["kind"])
+meta, jobs, planes, maxk, ov, w, h, cy, naxis, nwin = prepare(a, kind)
+
+if a["win_out"] && kind.key == "masked"
+  win, = build_masked_windows(a["jobs"], meta, read_jobs(a["jobs"], meta, kind))
+  File.binwrite(a["win_out"], win)
+end
+
+if a["mode"] == "slots"
+  blob = pack_slots(planes)
+  if a["out"] == "-"
+    $stdout.binmode
+    $stdout.write(blob)
+  else
+    File.binwrite(a["out"], blob)
+    puts "#{PROG}: wrote #{a['out']} (#{blob.bytesize} B, " \
+         "#{naxis}x#{a['K']} slots x #{SLOT_PLANES} planes, max_k=#{maxk})"
+  end
+  exit 0
+end
+
+txt, entry, ksig, decl, row, nres, ncmap, wk = gen_mlir(a, kind, meta, planes, w, h, cy, naxis)
+
+if a["mode"] == "meta"
+  puts "entry\t#{entry}"
+  puts format("ksig\t%016x", ksig)
+  puts "kernel_decl\t#{decl}"
+  puts "kind\t#{kind.key}"
+  puts "table_name\t#{row['name']}"
+  puts "W\t#{w}"
+  puts "H\t#{h}"
+  puts "K\t#{a['K']}"
+  puts "centery\t#{cy}"
+  puts "naxis\t#{naxis}"
+  puts "nslot\t#{wk}"
+  puts "nslotv\t#{wk * SLOT_PLANES}"
+  puts "ntex\t#{nres}"
+  puts "ncmap\t#{ncmap}"
+  puts "njob\t#{jobs.size}"
+  puts "max_k\t#{maxk}"
+  puts "overlaps\t#{ov}"
+  puts "nwin\t#{nwin}"
+  puts format("sig\t%016x", row["sig"])
+  puts format("semsig\t%016x", row["semsig"])
+  exit 0
+end
+
+txt = TP::HEAD + txt
+if a["out"] == "-"
+  $stdout.write(txt)
+else
+  File.write(a["out"], txt)
+  puts "#{PROG}: wrote #{a['out']} (#{txt.split("\n", -1).size - 1} lines, " \
+       "entry @#{entry}, #{w}x#{h} K=#{a['K']} max_k=#{maxk} overlaps=#{ov})"
+end
+exit 0

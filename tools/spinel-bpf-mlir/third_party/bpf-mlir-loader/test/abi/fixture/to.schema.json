@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "coverage": {"programs": "complete", "maps": "complete", "records": "complete", "telemetry": "complete"},
+  "core": {
+    "records": [
+      {"symbol": "evr", "id": 0, "size": 8, "min_size": 8, "alignment": 8, "required_through": "", "note": "E017",
+       "fields": [{"name": "v", "offset": 0, "expose": "int", "note": "", "type": {"kind":"int","bits":64,"signed":false,"endianness":"little","alignment":8}}]}
+    ],
+    "globals": [
+      {"name": "want", "section": "rodata", "type": {"kind":"int","bits":64,"signed":false,"endianness":"little","alignment":8}, "note": "E017: load の後の直の書き込みの対照 (凍結)"}
+    ],
+    "maps": [
+      {"symbol": "cnt", "kind": "array", "key": {"kind":"int","bits":32,"signed":false,"endianness":"little","alignment":4}, "value": {"kind":"int","bits":64,"signed":false,"endianness":"little","alignment":8}, "max_entries": 2, "flags": 0, "record": "", "note": "E017: freeze"},
+      {"symbol": "ev", "kind": "ringbuf", "max_entries": 4096, "flags": 0, "record": "evr", "note": "E017: 写像の故意の fault"}
+    ],
+    "programs": [
+      {"name": "xp", "kind": "xdp", "attach_target": "", "maps": ["cnt"], "note": "E017"}
+    ]
+  },
+  "telemetry": {"clocks": [], "value_maps": [], "bounds_sets": [], "signals": []},
+  "extensions": {}
+}

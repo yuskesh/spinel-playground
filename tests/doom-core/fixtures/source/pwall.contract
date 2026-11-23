@@ -1,0 +1,25 @@
+core-contract 1
+root src/packed.rb
+entry dc_sp_pwall
+result i64
+param state buffer i64 inout count n_state
+param n_state scalar u64
+param wall buffer i32 inout count n_wall
+param n_wall scalar u64
+param sc_kind buffer u8 inout count n_sc_kind
+param n_sc_kind scalar u64
+param sc_idx buffer u16 inout count n_sc_idx
+param n_sc_idx scalar u64
+param cap_wall buffer u16 in count n_cap_wall
+param n_cap_wall scalar u64
+param cap_sched buffer u16 in count n_cap_sched
+param n_cap_sched scalar u64
+param i_nwall scalar i64
+param i_nsched scalar i64
+param x scalar i64
+param yl scalar i64
+param yh scalar i64
+param iscale scalar i64
+param texmid scalar i64
+param srcofs scalar i64
+param cmap scalar i64

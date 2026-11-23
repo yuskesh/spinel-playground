@@ -1,0 +1,40 @@
+# Generated ELF satisfies the object contract.
+#   bpfel / -mcpu=v1 / Stable symbols / .maps / program section / license /
+#   relocation / .BTF
+#
+# RUN: spbpf-compile %S/Inputs/prog.mlir --schema %S/schema-roundtrip.json -o %t.bpf.o
+# RUN: llvm-readelf -h -S -s %t.bpf.o | FileCheck %s
+# Keep readelf -r separate: combining it with other flags omitted relocations.
+# RUN: llvm-readelf -r %t.bpf.o | FileCheck --check-prefix=RELOC %s
+# RUN: llvm-objdump -d --section=xdp %t.bpf.o | FileCheck --check-prefix=DIS %s
+
+# Must be bpfel.
+# CHECK: Class:{{ *}}ELF64
+# CHECK: Data:{{ *}}2's complement, little endian
+# CHECK: Machine:{{ *}}EM_BPF
+
+# All required sections must exist.
+# CHECK-DAG: ] xdp {{ *}}PROGBITS
+# CHECK-DAG: ] .relxdp {{ *}}REL
+# CHECK-DAG: ] .maps {{ *}}PROGBITS
+# CHECK-DAG: ] license {{ *}}PROGBITS
+# CHECK-DAG: ] .spbpf_records {{ *}}PROGBITS
+# CHECK-DAG: ] .BTF {{ *}}PROGBITS
+
+# Keep schema symbols and program names stable.
+# CHECK-DAG: FUNC {{ *}}GLOBAL {{.*}} count_packets
+# CHECK-DAG: OBJECT {{ *}}GLOBAL {{.*}} counts
+# CHECK-DAG: OBJECT {{ *}}GLOBAL {{.*}} events
+# CHECK-DAG: OBJECT {{ *}}GLOBAL {{.*}} _license
+
+# Map references need relocations that libbpf rewrites to fds.
+# RELOC: Relocation section '.relxdp'
+# RELOC-DAG: R_BPF_64_64 {{.*}} counts
+# RELOC-DAG: R_BPF_64_64 {{.*}} events
+
+# Emit actual BPF instructions.
+# DIS-LABEL: <count_packets>:
+# 32-bit reads use BPF w subregisters.
+# DIS: {{[rw][0-9]}} = *(u32 *)
+# DIS: call
+# DIS: exit

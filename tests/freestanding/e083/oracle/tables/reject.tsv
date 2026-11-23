@@ -1,0 +1,20 @@
+id	expect	got	verdict	pattern_or_note
+q1_buf_no_len	REFUSE	REFUSE	PASS	has no `len` after it
+q2_len_first	REFUSE	REFUSE	PASS	`len` must come directly after a buffer entry
+q3_len_after_scalar	REFUSE	REFUSE	PASS	`len` must come directly after a buffer entry
+q4_bad_dir	REFUSE	REFUSE	PASS	is not a buffer direction
+q5_bad_elem	REFUSE	REFUSE	PASS	is not a buffer element type
+q6_three_elems	REFUSE	REFUSE	PASS	two entries
+q7_buf_return	REFUSE	REFUSE	PASS	cannot be RETURNED
+q8_bare_buf	REFUSE	REFUSE	PASS	parameter type 'f64_buf' is not one of
+r1_scalar_for_buf	REFUSE	REFUSE	PASS	Only a buffer parameter of this kernel's own boundary
+r2_buf_for_scalar	REFUSE	REFUSE	PASS	passing buffer `d` to platform extern 'grad_loss'
+r3_elem_mismatch	REFUSE	REFUSE	PASS	The element type is the pointer's meaning
+r4_dir_in_for_out	REFUSE	REFUSE	PASS	the kernel's own :in declaration does not license
+r5_dir_out_for_in	REFUSE	REFUSE	PASS	the kernel's own :out declaration does not license
+r6_float_len	REFUSE	REFUSE	PASS	the profile declares it `len`
+r7_lenless_buf	REFUSE	REFUSE	PASS	declared without a `:len`
+c1_ok	ACCEPT	ACCEPT	PASS	control
+c2_partial_len	ACCEPT	ACCEPT	PASS	control
+c3_exact_dirs	ACCEPT	ACCEPT	PASS	control
+c4_extern_free	ACCEPT	ACCEPT	PASS	control

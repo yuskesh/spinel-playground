@@ -1,0 +1,90 @@
+{
+  "format": "ebpf-caps 6",
+  "probed_as": {
+    "uid": 0,
+    "cap_eff": "000001ffffffffff"
+  },
+  "loader": {
+    "name": "cilium-v0.22",
+    "kprobe_alias_prefix": {
+      "x86_64": "__x64_"
+    },
+    "uprobe_reopens_path": true,
+    "core_poisons_missing_field": true,
+    "btf_rewrite": {
+      "decl_tag": "rewrite",
+      "enum64": "rewrite",
+      "func_global": "rewrite",
+      "type_tag": "rewrite"
+    }
+  },
+  "queries": {
+    "attach_targets": {
+      "sk_msg_verdict/map:socks": {
+        "unknown": "no probe yet for attach targets of kind map (P120 adds them per wave): cannot be determined on this target"
+      }
+    }
+  },
+  "privileged_queries": {
+    "attach_types": {
+      "sk_msg/sk_msg_verdict": {
+        "value": false
+      }
+    },
+    "btf_feature": {
+      "array": {
+        "value": true
+      },
+      "datasec": {
+        "value": true
+      },
+      "func": {
+        "value": true
+      },
+      "func_global": {
+        "value": true
+      },
+      "func_proto": {
+        "value": true
+      },
+      "int": {
+        "value": true
+      },
+      "ptr": {
+        "value": true
+      },
+      "struct": {
+        "value": true
+      },
+      "var": {
+        "value": true
+      }
+    },
+    "ctx_access": {
+      "sk_msg/sk_msg_verdict/sk_msg_md.family/r/4": {
+        "value": true
+      },
+      "sk_msg/sk_msg_verdict/sk_msg_md.size/r/4": {
+        "value": true
+      }
+    },
+    "helper": {
+      "sk_msg/map_update_elem": {
+        "value": true
+      }
+    },
+    "map_type": {
+      "array": {
+        "value": true
+      },
+      "sockhash": {
+        "value": true
+      }
+    },
+    "prog_type": {
+      "sk_msg": {
+        "value": true
+      }
+    }
+  }
+}

@@ -1,0 +1,90 @@
+#!/usr/bin/env ruby
+require_relative 'facts-inventory'
+require 'fileutils'
+require 'digest'
+repo,oracle,compiler,tool,output=ARGV
+abort 'usage: capture-producer-coverage repo oracle compiler tool new-output' unless output
+abort 'output exists' if File.exist?(output)
+FileUtils.mkdir_p(output)
+sha=lambda{|p|Digest::SHA256.file(p).hexdigest}
+abort 'producer pin mismatch' unless sha.call(compiler)=='9da45682ceda5b2994d464d62c015a3a7164f360366189e9b44a90be941c78e2'
+capture=File.join(repo,'docs/experiments/results/E003/capture')
+manifest=JSON.parse(File.read(File.join(capture,'manifest.json')))
+inputs=JSON.parse(File.read(File.join(repo,'docs/experiments/results/E003/inputs-and-library.json')))
+cases=manifest.fetch('cases').select{|x|x.fetch('kind')=='positive'}
+groups=File.read(File.join(repo,'docs/plan/P002_105_inputs.md')).scan(/^\|([A-H])\|`([^`]+)`\|/).to_h{|g,s|[s,g]}
+abort '105 input set mismatch' unless cases.length==105 && cases.map{|c|c.fetch('source')}.sort==groups.keys.sort && groups.keys.sort==inputs.fetch('sources').keys.sort
+ctx={'xdp'=>'XdpMd','fentry'=>'FentryCtx','fexit'=>'FexitCtx','kprobe'=>'KprobeCtx','kretprobe'=>'KretprobeCtx','uretprobe'=>'UretprobeCtx','sched_cls'=>'SkBuff','uprobe'=>'UprobeCtx','tp_btf'=>'TpBtfCtx','raw_tp'=>'RawTpCtx','socket_filter'=>'SocketFilterCtx','cgroup_skb'=>'CgroupSkb','tracepoint'=>'TracepointCtx','ksyscall'=>'KsyscallCtx','netfilter'=>'NfCtx','flow_dissector'=>'FlowCtx','sk_lookup'=>'SkLookupCtx'}
+source_dir=File.join(output,'source')
+inputs.fetch('sources').merge(inputs.fetch('ruby_lib')).each do |relative,expected|
+  original=File.join(oracle,relative)
+  abort "input hash mismatch #{relative}" unless sha.call(original)==expected
+  target=File.join(source_dir,relative);FileUtils.mkdir_p(File.dirname(target));FileUtils.copy_file(original,target)
+end
+prepared=cases.map do |c|
+  schemas=Dir.glob(File.join(capture,c.fetch('raw_dir'),'*.schema.json'))
+  abort "schema count #{c['id']}" unless schemas.length==1
+  schema=schemas.first
+  programs=JSON.parse(File.read(schema)).fetch('core').fetch('programs')
+  requests=programs.map do |p|
+    name=p['name'];kind=p['kind']
+    if name.is_a?(String) && !name.empty? && ctx[kind]
+      {method:name,kind:kind,request:"#{name}:obj_BPF::#{ctx[kind]}"}
+    else
+      {method:name,kind:kind,unrequestable:'schema name/kind has no explicit context mapping'}
+    end
+  end
+  requests=[{unrequestable:'schema programs empty'}] if requests.empty?
+  c.merge('group'=>groups.fetch(c.fetch('source')),'schema_sha256'=>sha.call(schema),'requests'=>requests)
+end
+File.write(File.join(output,'inputs.json'),JSON.pretty_generate({producer_sha256:sha.call(compiler),tool_sha256:sha.call(tool),ctx_table:ctx,cases:prepared})+"\n")
+ledger=File.open(File.join(output,'arms.jsonl'),'w');terminal=File.open(File.join(output,'inputs.jsonl'),'w')
+prepared.each do |c|
+  rows=[]
+  # One no-request inventory if schema metadata cannot supply any request.
+  arms=c.fetch('requests').select{|r|r[:request]}
+  missing=c.fetch('requests').map{|r|r[:unrequestable]}.compact
+  arms<<{unrequestable:missing.join('; ')} unless missing.empty?
+  arms.each_with_index do |r,index|
+    dir=File.join(output,'arms',c.fetch('id'),index.to_s);FileUtils.mkdir_p(dir)
+    target=File.join(dir,'facts.mlir')
+    args=[compiler,'-I',File.join(source_dir,'ruby/lib'),"--emit-mlir=#{target}"]
+    args<<"--analysis-root=#{r[:request]}" if r[:request]
+    args<<File.join(source_dir,c.fetch('source'))
+    system('/usr/bin/timeout','--kill-after=5s','60s',*args,chdir:source_dir,out:File.join(dir,'stdout'),err:File.join(dir,'stderr'))
+    status=$?
+    row={id:c.fetch('id'),source:c.fetch('source'),group:c.fetch('group'),arm:index,request:r,rc:status.exitstatus,signal:status.termsig,
+      timeout_s:60,kill_after_s:5,stdout_bytes:File.size(File.join(dir,'stdout')),artifact_bytes:File.file?(target)?File.size(target):0}
+    row[:sha256]=sha.call(target) if File.file?(target)
+    File.write(File.join(dir,'execution.json'),JSON.pretty_generate(row)+"\n")
+    if status.signaled? || ![0,1].include?(status.exitstatus) || row[:stdout_bytes]!=0 || (status.exitstatus==0 && row[:artifact_bytes]==0)
+      ledger.puts(JSON.generate(row.merge(unexpected:true)));ledger.flush;abort "STOP contract #{c['id']} arm#{index}"
+    end
+    if row[:artifact_bytes]>0
+      system(tool,'--verify-only',target,out:File.join(dir,'verify.stdout'),err:File.join(dir,'verify.stderr'))
+      vs=$?;row[:verify_rc]=vs.exitstatus;row[:verify_signal]=vs.termsig
+      abort 'STOP verifier crash' if vs.signaled?
+      inventory=FactsInventory.read(target)
+      File.write(File.join(dir,'inventory.json'),JSON.generate(inventory)+"\n")
+      row[:status]=inventory[:status];row[:version]=inventory[:version]
+      row[:selected_count]=inventory[:selected_count];row[:missing_type]=inventory[:missing_type];row[:missing_call_evidence]=inventory[:missing_call_evidence]
+      if status.exitstatus==0 && inventory[:status]!='success'
+        ledger.puts(JSON.generate(row.merge(unexpected:true)));ledger.flush;abort 'STOP successful rc with rejected status'
+      end
+    end
+    row[:supply_success]=row[:rc]==0 && row[:verify_rc]==0 && row[:status]=='success' && row[:artifact_bytes]>0
+    ledger.puts(JSON.generate(row));ledger.flush;rows<<row
+    puts "#{c['id']} arm#{index} rc=#{row[:rc]} verify=#{row[:verify_rc]} bytes=#{row[:artifact_bytes]}"
+  end
+  terminal.puts(JSON.generate({id:c.fetch('id'),source:c.fetch('source'),group:c.fetch('group'),schema_requests:c.fetch('requests'),arms:rows.length,supply_success:rows.all?{|r|r[:supply_success]}}));terminal.flush
+end
+ledger.close;terminal.close
+rows=File.readlines(File.join(output,'arms.jsonl')).map{|l|JSON.parse(l)}
+done=File.readlines(File.join(output,'inputs.jsonl')).map{|l|JSON.parse(l)}
+abort 'terminal set mismatch' unless done.map{|r|r['id']}.sort==prepared.map{|r|r['id']}.sort
+summary={inputs:done.length,arms:rows.length,rc:rows.group_by{|r|r['rc']}.transform_values(&:length),verify:rows.group_by{|r|r['verify_rc']}.transform_values(&:length),nonempty:rows.count{|r|r['artifact_bytes']>0},supply_success:rows.count{|r|r['supply_success']},groups:{}}
+groups.values.uniq.sort.each do |g|
+  gs=rows.select{|r|r['group']==g};summary[:groups][g]={inputs:done.count{|r|r['group']==g},arms:gs.length,rc:gs.group_by{|r|r['rc']}.transform_values(&:length),verify:gs.group_by{|r|r['verify_rc']}.transform_values(&:length),nonempty:gs.count{|r|r['artifact_bytes']>0},supply_success:gs.count{|r|r['supply_success']},missing_type:gs.sum{|r|r['missing_type']||0},missing_call_evidence:gs.sum{|r|r['missing_call_evidence']||0}}
+end
+File.write(File.join(output,'summary.json'),JSON.pretty_generate(summary)+"\n")
+puts JSON.generate(summary)

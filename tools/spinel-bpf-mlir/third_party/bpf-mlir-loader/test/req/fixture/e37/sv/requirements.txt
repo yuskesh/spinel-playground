@@ -1,0 +1,19 @@
+ebpf-requirements 9
+schema	sha256	22ec7a4919eeaa7d8865ab06bf5523228e33c3d5e93dcab92d8f993c0b6bfb77
+program	sv	sk_skb	14
+helper	sv	map_lookup_elem	1
+helper	sv	map_update_elem	2
+map	seen	array	2	u32	u32	8	0
+map	socks	sockmap	15	u32	u32	2	0
+attach	sv	sk_skb_stream_verdict	map:socks
+btf	array
+btf	datasec
+btf	func
+btf	func_global
+btf	func_proto
+btf	int
+btf	ptr
+btf	struct
+btf	var
+ctxaccess	sv	sk_skb_stream_verdict	__sk_buff	len	r	4
+ctxaccess	sv	sk_skb_stream_verdict	__sk_buff	local_port	r	4

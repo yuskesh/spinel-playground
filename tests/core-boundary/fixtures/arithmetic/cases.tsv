@@ -1,0 +1,92 @@
+# Arithmetic reference and refusal cases for decision 0007 task 2.
+#
+# Columns, tab-separated:
+#   id       unique; names the case in output
+#   source   the fixture file under src/
+#   entry    the method in it
+#   op       the operation family, used to derive the domain rule
+#   result   the contract's result type: i64, i32 or u32
+#   args     comma-separated i64 arguments, in order
+#   status   ok | arithmetic | refused
+#   value    expected i64 result for ok; `-` otherwise
+#   reason   for arithmetic: div-zero | overflow | negative-exponent.  For
+#            refused: the diagnostic category.  `-` for ok.  (shift-range
+#            was decision 0007's count rule; decision 0042's S1 replaced it.)
+#
+# `status`, `value` and `reason` are the CLAIM, written from decision 0007.
+# The runner derives all three again from CRuby and the domain rule and
+# requires them to agree; a case where they disagree is a failure here, not a
+# value to copy over.
+#
+#id	source	entry	op	result	args	status	value	reason
+fdiv-pp	floor_div.rb	floor_div	div	i64	7,2	ok	3	-
+fdiv-np	floor_div.rb	floor_div	div	i64	-7,2	ok	-4	-
+fdiv-pn	floor_div.rb	floor_div	div	i64	7,-2	ok	-4	-
+fdiv-nn	floor_div.rb	floor_div	div	i64	-7,-2	ok	3	-
+rem-pp	rem.rb	rem	rem	i64	7,2	ok	1	-
+rem-np	rem.rb	rem	rem	i64	-7,2	ok	1	-
+rem-pn	rem.rb	rem	rem	i64	7,-2	ok	-1	-
+rem-nn	rem.rb	rem	rem	i64	-7,-2	ok	-1	-
+fdiv-zero	floor_div.rb	floor_div	div	i64	1,0	arithmetic	-	div-zero
+rem-zero	rem.rb	rem	rem	i64	1,0	arithmetic	-	div-zero
+fdiv-min-neg1	floor_div.rb	floor_div	div	i64	-9223372036854775808,-1	arithmetic	-	overflow
+rem-min-neg1	rem.rb	rem	rem	i64	-9223372036854775808,-1	ok	0	-
+fdiv-min-1	floor_div.rb	floor_div	div	i64	-9223372036854775808,1	ok	-9223372036854775808	-
+rem-min-1	rem.rb	rem	rem	i64	-9223372036854775808,1	ok	0	-
+abs-neg	abs_of.rb	abs_of	abs	i64	-5	ok	5	-
+abs-i32min	abs_of.rb	abs_of	abs	i64	-2147483648	ok	2147483648	-
+abs-i64min	abs_of.rb	abs_of	abs	i64	-9223372036854775808	arithmetic	-	overflow
+shr-arith	shr.rb	shr	shr	i64	-8,1	ok	-4	-
+shr-63	shr.rb	shr	shr	i64	-1,63	ok	-1	-
+shr-0	shr.rb	shr	shr	i64	-1,0	ok	-1	-
+shl-62	shl.rb	shl	shl	i64	1,62	ok	4611686018427387904	-
+shl-63-over	shl.rb	shl	shl	i64	1,63	arithmetic	-	overflow
+shl-to-min	shl.rb	shl	shl	i64	-1,63	ok	-9223372036854775808	-
+shl-count-64	shl.rb	shl	shl	i64	0,64	ok	0	-
+shr-count-64	shr.rb	shr	shr	i64	-1,64	ok	-1	-
+shl-count-neg	shl.rb	shl	shl	i64	1,-1	ok	0	-
+and-mask	band.rb	band	and	i64	-1,255	ok	255	-
+or-min	bor.rb	bor	or	i64	-9223372036854775808,0	ok	-9223372036854775808	-
+xor-bits	bxor.rb	bxor	xor	i64	15,255	ok	240	-
+not-zero	bnot.rb	bnot	not	i64	0	ok	-1	-
+mask32-neg	mask32.rb	mask32	mask	i64	-1	ok	4294967295	-
+add-max-ok	add.rb	add	add	i64	9223372036854775807,0	ok	9223372036854775807	-
+add-over	add.rb	add	add	i64	9223372036854775807,1	arithmetic	-	overflow
+sub-under	sub.rb	sub	sub	i64	-9223372036854775808,1	arithmetic	-	overflow
+mul-over	mul.rb	mul	mul	i64	9223372036854775807,2	arithmetic	-	overflow
+neg-min	neg.rb	neg	neg	i64	-9223372036854775808	arithmetic	-	overflow
+neg-ok	neg.rb	neg	neg	i64	5	ok	-5	-
+narrow-i32-ok	add.rb	add	add	i32	2147483646,1	ok	2147483647	-
+narrow-i32-over	add.rb	add	add	i32	2147483647,1	arithmetic	-	overflow
+narrow-u32-ok	add.rb	add	add	u32	4294967294,1	ok	4294967295	-
+narrow-u32-neg	add.rb	add	add	u32	0,-1	arithmetic	-	overflow
+guard-zero	guarded_div.rb	guarded_div	div	i64	1,0	ok	0	-
+guard-nonzero	guarded_div.rb	guarded_div	div	i64	-7,2	ok	-4	-
+paren-order	paren.rb	paren	mix	i64	3,2	ok	5	-
+loop-sum	loop_sum.rb	loop_sum	mix	i64	3,4	ok	12	-
+loop-over	loop_sum.rb	loop_sum	mix	i64	9223372036854775807,2	arithmetic	-	overflow
+const-mix	const_mix.rb	const_mix	mix	i64	20	ok	43	-
+pow-ok	power.rb	power	pow	i64	2,3	ok	8	-
+pow-min	power.rb	power	pow	i64	-2,63	ok	-9223372036854775808	-
+pow-overflow	power.rb	power	pow	i64	2,63	arithmetic	-	overflow
+pow-negative	power.rb	power	pow	i64	2,-1	arithmetic	-	negative-exponent
+pow-big-one	power.rb	power	pow	i64	-1,64	ok	1	-
+mid-over	mid_over.rb	mid_over	mix	i64	9223372036854775807,1	arithmetic	-	overflow
+mid-ok	mid_over.rb	mid_over	mix	i64	5,1	ok	5	-
+guard-untaken-ok	guard_untaken.rb	guard_untaken	mix	i64	9223372036854775807,0	ok	9223372036854775807	-
+guard-untaken-taken	guard_untaken.rb	guard_untaken	mix	i64	9223372036854775807,1	arithmetic	-	overflow
+prop-ok	calls_helper.rb	calls_helper	mix	i64	3,4	ok	10	-
+prop-fail	calls_helper.rb	calls_helper	mix	i64	9223372036854775807,0	arithmetic	-	overflow
+cap-zero	capacity_when_zero.rb	capacity_when_zero	mix	i64	5,0	capacity	-	capacity
+cap-nonzero	capacity_when_zero.rb	capacity_when_zero	mix	i64	5,1	ok	6	-
+early-ret-taken	early_return.rb	early_return	mix	i64	3,0	ok	1	-
+early-ret-other	early_return.rb	early_return	mix	i64	3,4	ok	7	-
+deep-chain	deep_chain.rb	deep_chain	mix	i64	3,4	ok	8	-
+named-const	named_const.rb	named_const	mix	i64	2,1	ok	15	-
+named-const-over	named_const.rb	named_const	mix	i64	9223372036854775807,0	arithmetic	-	overflow
+i64min-const	int64_min.rb	int64_min	mix	i64	1,0	ok	-9223372036854775808	-
+i64min-literal	int64_min.rb	int64_min	mix	i64	0,0	ok	-9223372036854775808	-
+i64min-under	int64_min.rb	int64_min	mix	i64	0,-1	arithmetic	-	overflow
+op-assign-chain	op_assign.rb	op_assign	mix	i64	5,1	ok	12	-
+op-assign-over	op_assign.rb	op_assign	mix	i64	9223372036854775807,0	arithmetic	-	overflow
+

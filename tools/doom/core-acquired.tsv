@@ -1,0 +1,108 @@
+# tools/doom/core-acquired.tsv — decision 0008 task 5's ACQUIRED counts.
+#
+# tools/doom/core-counts.tsv answers "how long is this allocation", keyed by
+# the allocation site. Some fields have no allocation site at all: they are
+# handed a table someone else built (`@finesine = Tables.finesine`), or they
+# start as `[]` and are grown one push at a time while the WAD is read. The
+# audit cannot read a count off an allocation that is not there, and inventing
+# `fixed:1` for them is what made the schema declare 151 prepared arrays a
+# single element long.
+#
+# So they are listed here, by FIELD, with the count name 0008's grammar gives
+# them and where the number comes from. A stored or prepared array with
+# neither an allocation site nor a row here is refused by name.
+#
+# WHAT THE LENGTH IS A PROPERTY OF is what decides the count name, not where
+# the value arrives from:
+#
+#   * `table:finesine` and the info tables are packed binary constants in the
+#     source. Their lengths do not move with the map or the resolution.
+#   * everything else is a property of THIS WAD, THIS MAP or THIS SCRIPT.
+#     `table:lumps` is 1264 for one IWAD and another number for another;
+#     `table:scriptlines` is one for a one-line script. Writing today's
+#     measurements in as `fixed:` counts is precisely what the catalog exists
+#     to prevent, so they are NAMED here and MEASURED in
+#     examples/doom/core/full/resources.rb, per configuration.
+#
+#class@ivar	count	origin	why
+Game@@finesine	table:finesine	Doom::Tables.finesine	The fine sine table, expanded from FINESINE_BIN.
+Renderer@@finesine	table:finesine	Doom::Tables.finesine	The same table, handed to the renderer.
+Game@@tantoangle	table:tantoangle	Doom::Tables.tantoangle	The arctangent table, expanded from TANTOANGLE_BIN.
+Renderer@@tantoangle	table:tantoangle	Doom::Tables.tantoangle	The same table, handed to the renderer.
+Renderer@@finetangent	table:finetangent	Doom::Tables.finetangent	The fine tangent table, expanded from FINETANGENT_BIN.
+Game@@sprnames	table:sprnamebytes	Doom::Info.sprnames	The sprite names, stored as JOINED BYTES and not as 138 entries: the schema types this u8.
+Game@@state_action	table:states	Doom::Info.state_action	One per state.
+Game@@state_frame	table:states	Doom::Info.state_frame	One per state.
+Renderer@@state_frame	table:states	Doom::Info.state_frame	The same column, handed to the renderer.
+Game@@state_misc1	table:states	Doom::Info.state_misc1	One per state.
+Game@@state_misc2	table:states	Doom::Info.state_misc2	One per state.
+Game@@state_nextstate	table:states	Doom::Info.state_nextstate	One per state.
+Game@@state_sprite	table:states	Doom::Info.state_sprite	One per state.
+Renderer@@state_sprite	table:states	Doom::Info.state_sprite	The same column, handed to the renderer.
+Game@@state_tics	table:states	Doom::Info.state_tics	One per state.
+Game@@info_activesound	table:mobjinfo	Doom::Info.mobj_activesound	One per mobj type.
+Game@@info_damage	table:mobjinfo	Doom::Info.mobj_damage	One per mobj type.
+Game@@info_deathsound	table:mobjinfo	Doom::Info.mobj_deathsound	One per mobj type.
+Game@@info_deathstate	table:mobjinfo	Doom::Info.mobj_deathstate	One per mobj type.
+Game@@info_flags	table:mobjinfo	Doom::Info.mobj_flags	One per mobj type.
+Game@@info_height	table:mobjinfo	Doom::Info.mobj_height	One per mobj type.
+Game@@info_mass	table:mobjinfo	Doom::Info.mobj_mass	One per mobj type.
+Game@@info_meleestate	table:mobjinfo	Doom::Info.mobj_meleestate	One per mobj type.
+Game@@info_missilestate	table:mobjinfo	Doom::Info.mobj_missilestate	One per mobj type.
+Game@@info_painchance	table:mobjinfo	Doom::Info.mobj_painchance	One per mobj type.
+Game@@info_painstate	table:mobjinfo	Doom::Info.mobj_painstate	One per mobj type.
+Game@@info_radius	table:mobjinfo	Doom::Info.mobj_radius	One per mobj type.
+Game@@info_reactiontime	table:mobjinfo	Doom::Info.mobj_reactiontime	One per mobj type.
+Game@@info_seesound	table:mobjinfo	Doom::Info.mobj_seesound	One per mobj type.
+Game@@info_seestate	table:mobjinfo	Doom::Info.mobj_seestate	One per mobj type.
+Game@@info_spawnhealth	table:mobjinfo	Doom::Info.mobj_spawnhealth	One per mobj type.
+Game@@info_spawnstate	table:mobjinfo	Doom::Info.mobj_spawnstate	One per mobj type.
+Game@@info_speed	table:mobjinfo	Doom::Info.mobj_speed	One per mobj type.
+Game@@info_xdeathstate	table:mobjinfo	Doom::Info.mobj_xdeathstate	One per mobj type.
+Game@@weapon_ammo	table:weaponinfo	Doom::Info.weapon_ammo	One per weapon.
+Game@@weapon_atkstate	table:weaponinfo	Doom::Info.weapon_atkstate	One per weapon.
+Game@@weapon_downstate	table:weaponinfo	Doom::Info.weapon_downstate	One per weapon.
+Game@@weapon_flashstate	table:weaponinfo	Doom::Info.weapon_flashstate	One per weapon.
+Game@@weapon_readystate	table:weaponinfo	Doom::Info.weapon_readystate	One per weapon.
+Game@@weapon_upstate	table:weaponinfo	Doom::Info.weapon_upstate	One per weapon.
+Hud@@texts	table:hudmessages	Doom::Hud::MESSAGES	The messages, stored as JOINED BYTES: 1046 here, not the 41 strings.
+Wad@@lumps	table:lumps	Doom::Wad#lumps	One per lump in THIS IWAD's directory.
+Textures@@col_base	table:textures	Doom::Textures @col_base	One per TEXTURE, not per column: it holds 125 here where @collump holds 10776. The origin named #numtextures, which is where the COUNT comes from; the bytes are the ivar, grown at texture.rb:62.
+Textures@@collump	table:texcolumns	Doom::Textures @collump	One per texture column in this texture set.
+Textures@@colofs	table:texcolumns	Doom::Textures @colofs	One per texture column in this texture set.
+Textures@@tex_theight	table:textures	Doom::Textures @tex_theight	One per texture, grown at texture.rb:57. The count is table:textures; the origin used to name #numtextures, the count's source, rather than the field's bytes.
+Textures@@tex_widthmask	table:textures	Doom::Textures @tex_widthmask	One per texture, grown at texture.rb:56. As tex_theight: the origin named the count's source, not the bytes.
+Textures@@anim_basepic	table:animations	Doom::Textures @anim_basepic	One per animated texture this WAD defines.
+Textures@@anim_istexture	table:animations	Doom::Textures @anim_istexture	One per animated texture this WAD defines.
+Textures@@anim_numpics	table:animations	Doom::Textures @anim_numpics	One per animated texture this WAD defines.
+Textures@@anim_speed	table:animations	Doom::Textures @anim_speed	One per animated texture this WAD defines.
+Sprites@@lump	table:spriteframes	Doom::Sprites @lump	One per sprite frame.
+Sprites@@flip	table:spriteframes	Doom::Sprites @flip	One per sprite frame, beside the lump.
+Sprites@@rotate	table:spriterotations	Doom::Sprites @rotate	One per frame ENTRY, which is NOT the frame count: 261 against 2088 here.
+Game@@linespecials	level:linespecials	Doom::Game @linespecials	The INDICES of the lines whose special is 48, which Specials#spawn_specials selects from Level#line_special at specials.rb:58-67. It was declared derived-from:Doom::Level#line_special while no Game was constructed, because the source array was the only candidate and reading it is not the field. With the game constructed, the field's own ivar holds the selection's result, [352..359] for E1M1, so it is read off the object rather than the transformation being reimplemented here.
+KeyScript@@from	table:scriptlines	Doom::KeyScript @from	One per usable line of THIS script.
+KeyScript@@to	table:scriptlines	Doom::KeyScript @to	One per usable line of this script.
+KeyScript@@code	table:scriptlines	Doom::KeyScript @code	One per usable line of this script.
+Wad@@data	table:waddata	Doom::Wad#data	The whole IWAD, read once and handed to everything that reads lumps.
+Hud@@data	table:waddata	Doom::Wad#data	The same bytes, handed to the HUD.
+StatusBar@@data	table:waddata	Doom::Wad#data	The same bytes, handed to the status bar.
+Renderer@@wad_data	table:waddata	Doom::Wad#data	The same bytes, handed to the renderer.
+JobExecutor@@waddata	table:waddata	Doom::Wad#data	The same bytes, handed to the job executor.
+Renderer@@colormap	table:colormap	Doom::Wad#bytes_by_name:COLORMAP	The colormap lump, 34 maps of 256 bytes.
+JobExecutor@@colormap	table:colormap	Doom::Wad#bytes_by_name:COLORMAP	The same lump, handed to the job executor.
+JobExecutor@@atlas	table:texatlas	Doom::Textures#tex_atlas	The composed texture atlas.
+JobExecutor@@flatatlas	table:flatatlas	Doom::Textures#flat_atlas	The flat atlas.
+JobExecutor@@wall	limit:jobwallfields	Doom::Jobs @wall	Jobs' wall field bank, handed over by `jobs.wall_bank`; allocated in Jobs#initialize.
+JobExecutor@@span	limit:jobspanfields	Doom::Jobs @span	Jobs' span field bank, handed over by `jobs.span_bank`.
+JobExecutor@@masked	limit:jobmaskedfields	Doom::Jobs @masked	Jobs' masked field bank, handed over by `jobs.masked_bank`.
+JobExecutor@@sc_kind	limit:jobsched	Doom::Jobs @sc_kind	Jobs' schedule kinds, handed over by `jobs.sched_kind_bank`.
+JobExecutor@@sc_idx	limit:jobsched	Doom::Jobs @sc_idx	Jobs' schedule indices, handed over by `jobs.sched_idx_bank`.
+JobExecutor@@fuzzoffset	fixed:50	Doom::Renderer @fuzzoffset	The renderer's 50 fuzz offsets, handed to the executor at construction.
+Renderer@@dc_srcbuf	fixed:1	source-select:dc:res	A reference to the column source buffer, not storage with a length; the schema carries it as one selector and one base (core-representations.tsv, docs/core/doom-source-alias.md).
+Renderer@@ds_source	fixed:1	source-select:ds:res	A reference to the span source flat, carried as one selector and one base the same way.
+Lump@@name	table:lumpnamebytes	per-entry:Doom::Wad:name:8	Replaced in the schema by wad_lump_name (core-representations.tsv): each directory entry's Lump.name, what Bytes.name8 read, zero-padded to 8 bytes. It used to say fixed:8, which described one name.
+Lump@@pos	table:lumps	per-entry:Doom::Wad:pos	Replaced in the schema by wad_lump_pos: each directory entry's position, a marker's included.
+Lump@@size	table:lumps	per-entry:Doom::Wad:size	Replaced in the schema by wad_lump_size: each directory entry's size.
+Textures@@texdata	table:texatlas	Doom::Textures @texdata	The composed textures, stored as JOINED BYTES: the allocation counts 125 entries and the schema types this u8, so the count must be the byte length.
+Textures@@flatdata	table:flatatlas	Doom::Textures @flatdata	The flats, stored as JOINED BYTES: the allocation counts 56 entries and the schema types this u8.
+Level@@reject	table:rejectbytes	Doom::Level @reject	The REJECT lump, carried by the map and allocated by nothing; one bit per sector pair, 904 bytes for E1M1.

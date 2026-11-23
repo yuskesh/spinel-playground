@@ -1,0 +1,82 @@
+# tools/platform/menus.yaml -- THE ledger: platform -> supplied capability set.
+# (R016 T-3's coordinate system as a file.  P008 Phase 1, E090.)
+#
+# A capability's address is (required tier, supplying platform set) -- T-3.
+#   * The REQUIRED TIER is stated under `capabilities:` ("arena" means
+#     arena-and-above: core < arena < full, T-1).
+#   * The SUPPLYING SET is never written down as a set: platform P supplies
+#     capability C iff C appears in platforms.P.menu.  Rejection of a vendor
+#     capability is therefore ALWAYS the result of a menu lookup, never an
+#     if-statement in code -- "cloudflare/* => workers-only" must not be baked
+#     in, because R2 has an S3-compatible API and an HTTP transport would widen
+#     the set (P008 Phase 2 discipline, 2026-08-19 user decision).  Adding a
+#     transport, a vendor product or an attribution contract edits THIS FILE,
+#     nothing else.
+#
+# `arch:` menus are what a new-format profile's `arch:` field selects from
+# (T-5); when a platform's menu has exactly one entry the field may be omitted
+# and is derived.  `base:` names the old-format profile that carries the
+# target/abi/runtime facts for that (platform, arch) pair -- the facts stay in
+# one place until P008 Phase 2 decides whether they move in here when the old
+# format is retired.  A pair without `base:` has no freestanding lane today.
+#
+# platform values are RUNTIME PRODUCT names, never vendor names (T-5 naming
+# rule; `fastly` is the recorded exception -- the product name "Compute" is
+# too generic).
+
+tiers: [core, arena, full]        # the tier lattice, in order (T-1)
+
+capabilities:
+  edge/cgi:      { tier: arena }  # receive side: E013 CGI contract sugar (pure Ruby)
+  edge/http:     { tier: arena }  # send side: outbound HTTP (D-3 fetch)
+  edge/kv:       { tier: arena }  # KV.  Supplied by {workers, fastly} since the
+                                  # attribution contract (R017 §6.2, 8 clauses,
+                                  # 2026-08-20): no read-your-writes anywhere,
+                                  # miss != empty, byte-transparent values, and
+                                  # a portable envelope (key <= 512B minus
+                                  # Fastly's forbidden chars, value <= 25MB,
+                                  # 1 write/s/key) outside which the answer is
+                                  # the platform's own loud error.  The Fastly
+                                  # leg stays on the deprecated (no EOL)
+                                  # fastly_object_store ABI -- WATCH: moving to
+                                  # fastly_kv_store would retire the R008 §2.6
+                                  # unwritten-out-param miss idiom for free
+  cloudflare/r2: { tier: arena }  # vendor: object storage (binding transport today)
+  cloudflare/d1: { tier: arena }  # vendor: SQL
+  fastly/config: { tier: arena }  # vendor: Config Store (E058; the Ruby seat of
+                                  # SpinelHost::Config before E091).  Workers has
+                                  # no counterpart -- there the vars are in ENV --
+                                  # so the menu below lists it for fastly only
+  fastly/erl:    { tier: arena }  # vendor: edge rate limiting (hostcall only --
+                                  # no HTTP API exists, so widening is unlikely,
+                                  # but that too is a fact of THIS file, not code)
+
+platforms:
+  workers:                        # Cloudflare Workers (workerd)
+    arch:
+      wasm32: { base: tools/freestanding/profiles/wasm32-worker.yaml }
+    menu: [edge/cgi, edge/http, edge/kv, cloudflare/r2, cloudflare/d1]
+  fastly:                         # Fastly Compute (Viceroy locally)
+    arch:
+      wasm32: {}                  # no freestanding base yet: nothing builds a
+                                  # core-tier module aimed at fastly today
+    menu: [edge/cgi, edge/http, edge/kv, fastly/config, fastly/erl]
+  zephyr:
+    arch:
+      cortex-m33: { base: tools/freestanding/profiles/cortex-m33-zephyr.yaml }
+      riscv32:    { base: tools/freestanding/profiles/riscv32-zephyr.yaml }
+    menu: []                      # zephyr supplies profile EXTERNS (D-7, core
+                                  # tier), not require-able capabilities
+  native:
+    arch:
+      arm64: {}
+    menu: []                      # "a platform whose menu is still empty"
+                                  # (R016 T-3).  The E013 contract is reachable
+                                  # here through an INVOKER -- the launcher's
+                                  # discipline, not a require-able capability;
+                                  # edge/cgi sugar over it is P008 Phase 2
+  node:
+    arch:
+      wasm32: {}
+    menu: []                      # same as native: wasm runtime + wasi shim,
+                                  # hooks are the user's (R016 abstraction model)

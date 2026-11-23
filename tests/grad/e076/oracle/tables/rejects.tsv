@@ -1,0 +1,12 @@
+target	obstacle	reason
+oint	O2	`oint` returns `int`, not `float`. Enzyme builds an EMPTY adjoint for a non-float primal and says nothing (R013 s3.3 O2); the return value would be whatever was in the register
+oint_arg	O2	wrt: :n is inferred `int`. A gradient is a real concept: only `float` and `float_array` parameters can be active (R013 s3.3 O2)
+opoly	O4/O6	line 38: `t` is inferred TY_POLY. Enzyme's TypeAnalysis cannot resolve the boxed sp_RbVal union and refuses the module (R013 s3.3 O4). If this is a `while` loop carrying `t = t * k`, that is the bigint promotion (R013 s3.3 O6): wrap the multiply in a method (`def mulf(a,b) = a*b`) and the local stays mrb_float
+odecay	O4/O6	line 50: `v` is inferred TY_POLY. Enzyme's TypeAnalysis cannot resolve the boxed sp_RbVal union and refuses the module (R013 s3.3 O4). If this is a `while` loop carrying `v = v * k`, that is the bigint promotion (R013 s3.3 O6): wrap the multiply in a method (`def mulf(a,b) = a*b`) and the local stays mrb_float
+oconst	O7	line 68: toplevel constant `K` -- it is initialised by `main`, and the differentiation build never runs `main`, so it reads as 0 (R013 s3.3 O7). The finite-difference gate CANNOT see this one: 0 and its derivative 0 agree. Pass the value as a parameter instead
+ostr	subset	line 86: `StringNode` -- strings need the heap
+ohash	subset	line 93: `HashNode` -- hashes need the heap
+owrt	decl	wrt: :zzz is not a parameter of `owrt` (parameters are x)
+ofwd	mode	mode: :forward -- only :reverse exists in Phase 1 (forward mode is P007 Phase 4). Refusing rather than silently doing reverse
+onoprobe	probe	probe: is empty; G3/G4 have nothing to evaluate
+oalloc	O5	spinel-rtcheck says `REJECT` -- allocation reachable 3 Ruby call site(s) reach an allocator; 10 distinct terminal cause(s) [alloc=5; external=5] over a region of 66 functions | allocation path with no raise on it: sp_FloatArray_new -> malloc. A differentiable method has to be provably allocation-free: Enzyme refuses any function that writes @sp_gc_roots, and dropping those roots is only sound when collection cannot happen (E017, R013 s6.1)

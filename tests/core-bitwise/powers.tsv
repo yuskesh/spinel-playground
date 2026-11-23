@@ -1,0 +1,175 @@
+# tests/core-bitwise/powers.tsv -- decision 0042 stage 3: `a.abs` and `a ** n`,
+# by hand from Ruby's rules and 0042's. No other implementation produced a
+# value.
+#
+# Columns, tab-separated:
+#   w        the body width, 64 or 32
+#   op       abs (`a.abs`, n is 0 and unused), pow (`a ** n`), or powk
+#            (`a ** E` with the literal exponent E, given as n)
+#   a, n     the operands, as decimal Integers at that width
+#   checked  the answer where an overflow fails (the status lane, `--core`,
+#            freestanding `trap`): a value, `fail` past the width, or
+#            `negative` for a negative exponent
+#   wrap     the answer of freestanding `wrap`: the low w bits of the exact
+#            result read back as signed, or `negative`, which still traps
+#
+# `MIN.abs` is past the width, and `MIN` when wrapped. `a ** n` is the exact
+# power for n >= 0, and `0 ** 0` is 1; a negative exponent fails on every
+# route, `wrap` included. The status lane reports `fail` and `negative` alike
+# as ARITHMETIC.
+64	abs	0	0	0	0
+64	abs	5	0	5	5
+64	abs	-5	0	5	5
+64	abs	9223372036854775807	0	9223372036854775807	9223372036854775807
+64	abs	-9223372036854775807	0	9223372036854775807	9223372036854775807
+64	abs	-9223372036854775808	0	fail	-9223372036854775808
+64	pow	0	-1	negative	negative
+64	pow	0	0	1	1
+64	pow	0	62	0	0
+64	pow	0	63	0	0
+64	pow	0	64	0	0
+64	pow	0	65	0	0
+64	pow	1	-1	negative	negative
+64	pow	1	0	1	1
+64	pow	1	62	1	1
+64	pow	1	63	1	1
+64	pow	1	64	1	1
+64	pow	1	65	1	1
+64	pow	-1	-1	negative	negative
+64	pow	-1	0	1	1
+64	pow	-1	62	1	1
+64	pow	-1	63	-1	-1
+64	pow	-1	64	1	1
+64	pow	-1	65	-1	-1
+64	pow	2	-1	negative	negative
+64	pow	2	0	1	1
+64	pow	2	62	4611686018427387904	4611686018427387904
+64	pow	2	63	fail	-9223372036854775808
+64	pow	2	64	fail	0
+64	pow	2	65	fail	0
+64	pow	-2	-1	negative	negative
+64	pow	-2	0	1	1
+64	pow	-2	62	4611686018427387904	4611686018427387904
+64	pow	-2	63	-9223372036854775808	-9223372036854775808
+64	pow	-2	64	fail	0
+64	pow	-2	65	fail	0
+64	pow	3	-1	negative	negative
+64	pow	3	0	1	1
+64	pow	3	62	fail	5069619362125685561
+64	pow	3	63	fail	-3237885987332494933
+64	pow	3	64	fail	8733086111712066817
+64	pow	3	65	fail	7752514261426648835
+64	pow	3	39	4052555153018976267	4052555153018976267
+64	pow	3	40	fail	-6289078614652622815
+64	pow	-3	39	-4052555153018976267	-4052555153018976267
+64	pow	10	18	1000000000000000000	1000000000000000000
+64	pow	10	19	fail	-8446744073709551616
+64	pow	-9223372036854775808	0	1	1
+64	pow	-9223372036854775808	1	-9223372036854775808	-9223372036854775808
+64	pow	-9223372036854775808	2	fail	0
+64	pow	7	-3	negative	negative
+64	pow	-1	9223372036854775807	-1	-1
+64	pow	1	9223372036854775807	1	1
+64	pow	0	9223372036854775807	0	0
+64	pow	2	9223372036854775807	fail	0
+64	pow	3	9223372036854775807	fail	-6148914691236517205
+64	pow	-9223372036854775808	-9223372036854775808	negative	negative
+64	powk	3	0	1	1
+64	powk	-9223372036854775808	0	1	1
+64	powk	3	1	3	3
+64	powk	-9223372036854775808	1	-9223372036854775808	-9223372036854775808
+64	powk	3	2	9	9
+64	powk	-2	2	4	4
+64	powk	-9223372036854775808	2	fail	0
+64	powk	3037000499	2	9223372030926249001	9223372030926249001
+64	powk	3037000500	2	fail	-9223372036709301616
+64	powk	1	31	1	1
+64	powk	-1	31	-1	-1
+64	powk	0	31	0	0
+64	powk	2	31	2147483648	2147483648
+64	powk	-2	31	-2147483648	-2147483648
+64	powk	3	31	617673396283947	617673396283947
+64	powk	1	63	1	1
+64	powk	-1	63	-1	-1
+64	powk	0	63	0	0
+64	powk	2	63	fail	-9223372036854775808
+64	powk	-2	63	-9223372036854775808	-9223372036854775808
+64	powk	3	63	fail	-3237885987332494933
+32	abs	0	0	0	0
+32	abs	5	0	5	5
+32	abs	-5	0	5	5
+32	abs	2147483647	0	2147483647	2147483647
+32	abs	-2147483647	0	2147483647	2147483647
+32	abs	-2147483648	0	fail	-2147483648
+32	pow	0	-1	negative	negative
+32	pow	0	0	1	1
+32	pow	0	30	0	0
+32	pow	0	31	0	0
+32	pow	0	32	0	0
+32	pow	0	33	0	0
+32	pow	1	-1	negative	negative
+32	pow	1	0	1	1
+32	pow	1	30	1	1
+32	pow	1	31	1	1
+32	pow	1	32	1	1
+32	pow	1	33	1	1
+32	pow	-1	-1	negative	negative
+32	pow	-1	0	1	1
+32	pow	-1	30	1	1
+32	pow	-1	31	-1	-1
+32	pow	-1	32	1	1
+32	pow	-1	33	-1	-1
+32	pow	2	-1	negative	negative
+32	pow	2	0	1	1
+32	pow	2	30	1073741824	1073741824
+32	pow	2	31	fail	-2147483648
+32	pow	2	32	fail	0
+32	pow	2	33	fail	0
+32	pow	-2	-1	negative	negative
+32	pow	-2	0	1	1
+32	pow	-2	30	1073741824	1073741824
+32	pow	-2	31	-2147483648	-2147483648
+32	pow	-2	32	fail	0
+32	pow	-2	33	fail	0
+32	pow	3	-1	negative	negative
+32	pow	3	0	1	1
+32	pow	3	30	fail	-1010140999
+32	pow	3	31	fail	1264544299
+32	pow	3	32	fail	-501334399
+32	pow	3	33	fail	-1504003197
+32	pow	3	19	1162261467	1162261467
+32	pow	3	20	fail	-808182895
+32	pow	-3	19	-1162261467	-1162261467
+32	pow	10	9	1000000000	1000000000
+32	pow	10	10	fail	1410065408
+32	pow	-2147483648	0	1	1
+32	pow	-2147483648	1	-2147483648	-2147483648
+32	pow	-2147483648	2	fail	0
+32	pow	7	-3	negative	negative
+32	pow	-1	2147483647	-1	-1
+32	pow	1	2147483647	1	1
+32	pow	0	2147483647	0	0
+32	pow	2	2147483647	fail	0
+32	pow	3	2147483647	fail	-1431655765
+32	pow	-2147483648	-2147483648	negative	negative
+32	powk	3	0	1	1
+32	powk	-2147483648	0	1	1
+32	powk	3	1	3	3
+32	powk	-2147483648	1	-2147483648	-2147483648
+32	powk	3	2	9	9
+32	powk	-2	2	4	4
+32	powk	-2147483648	2	fail	0
+32	powk	46340	2	2147395600	2147395600
+32	powk	46341	2	fail	-2147479015
+32	powk	1	31	1	1
+32	powk	-1	31	-1	-1
+32	powk	0	31	0	0
+32	powk	2	31	fail	-2147483648
+32	powk	-2	31	-2147483648	-2147483648
+32	powk	3	31	fail	1264544299
+32	powk	1	63	1	1
+32	powk	-1	63	-1	-1
+32	powk	0	63	0	0
+32	powk	2	63	fail	0
+32	powk	-2	63	fail	0
+32	powk	3	63	fail	2111105451

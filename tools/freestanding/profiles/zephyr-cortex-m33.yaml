@@ -1,0 +1,15 @@
+# T-5 canonical form of cortex-m33-zephyr.yaml (P008 Phase 1, E090).
+#
+# The platform-first spelling: (platform, arch) select the target/abi/runtime
+# facts through the ledger (tools/platform/menus.yaml -> the old-format base
+# file, verbatim), `supplies:` says what this module receives from the
+# platform, `externs:` is D-7 unchanged.  supplies: trap-only is the honest
+# name for this surface -- the ONLY thing the old file's externs list carries
+# is the trap hook, which is implied.
+#
+# The old-format file stays beside this one: historical gates read it, and
+# results/E090's profile_equiv gate proves the two produce byte-identical
+# .o / header / undef-TSV output.
+platform: zephyr
+arch: cortex-m33            # zephyr's arch menu has two entries; chosen, not derived
+supplies: trap-only

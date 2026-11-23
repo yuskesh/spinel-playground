@@ -1,0 +1,7 @@
+core-contract 1
+root src/store_i16.rb
+entry store_i16
+result i64
+param dst buffer i16 inout count n_dst
+param n_dst scalar u64
+param v scalar i64

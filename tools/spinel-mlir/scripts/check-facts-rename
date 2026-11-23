@@ -1,0 +1,37 @@
+#!/usr/bin/env ruby
+require 'fileutils'
+require 'json'
+require 'digest'
+old_tree,new_tree,oracle,old_outputs,output=ARGV
+abort 'usage: check-facts-rename old-tree new-tree oracle old-artifacts new-output' unless output
+abort 'output exists' if File.exist?(output)
+FileUtils.mkdir_p(output)
+source_files=Dir.glob(File.join(old_tree,'src/*.{c,h}')).sort
+source_files.each do |old|
+  name=File.basename(old)
+  abort "STOP non-printer source changed: #{name}" unless File.binread(old)==File.binread(File.join(new_tree,'src',name))
+end
+old_inc=File.binread(File.join(old_tree,'src/emit_mlir.inc'))
+new_inc=File.binread(File.join(new_tree,'src/emit_mlir.inc'))
+abort 'STOP printer change beyond namespace' unless old_inc.gsub('spinel_bpf.','spinel_facts.')==new_inc
+File.open(File.join(output,'rename.jsonl'),'w') do |log|
+  cases=[['xdpcount',File.join(oracle,'examples/xdpcount/xdpcount.rb'),'xdpcount-a.mlir',0],
+    ['rejected',File.join(old_tree,'test/reject/const_get_runtime_name.rb'),'rejected.mlir',1]]
+  # Refusal source must keep exactly the path recorded in the old artifact.
+  cases[1][1]=File.join(File.dirname(old_tree),'base/test/reject/const_get_runtime_name.rb')
+  cases.each do |name,input,old_file,expected_rc|
+    target=File.join(output,"#{name}.mlir")
+    system(File.join(new_tree,'bin/spinel'),'-I',File.join(oracle,'ruby/lib'),"--emit-mlir=#{target}",input,
+      chdir:oracle,out:File.join(output,"#{name}.stdout"),err:File.join(output,"#{name}.stderr"))
+    status=$?
+    abort "STOP #{name} status" unless status.exitstatus==expected_rc && !status.signaled?
+    actual=File.binread(target)
+    expected=File.binread(File.join(old_outputs,old_file)).gsub('spinel_bpf.','spinel_facts.')
+    row={name:name,rc:status.exitstatus,stdout_bytes:File.size(File.join(output,"#{name}.stdout")),
+      only_namespace_changed:actual==expected,sha256:Digest::SHA256.hexdigest(actual)}
+    log.puts(JSON.generate(row)); log.flush
+    abort "STOP #{name} facts content changed" unless row[:only_namespace_changed] && row[:stdout_bytes]==0
+  end
+  log.puts(JSON.generate({source_c_h_identical:source_files.length,printer_only_namespace_changed:true,no_flag_repeat_needed:false}))
+end
+puts 'GREEN: source C/H unchanged; printer only namespace; success/refusal only namespace'

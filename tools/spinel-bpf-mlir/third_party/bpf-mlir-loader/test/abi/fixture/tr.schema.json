@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "coverage": {"programs": "complete", "maps": "complete", "records": "complete", "telemetry": "complete"},
+  "core": {
+    "records": [],
+    "maps": [
+      {"symbol": "ctl", "kind": "array", "key": {"kind":"int","bits":32,"signed":false,"endianness":"little","alignment":4}, "value": {"kind":"int","bits":64,"signed":false,"endianness":"little","alignment":8}, "max_entries": 1, "flags": 0, "record": "", "note": "E012: [0] は kp が数える thread の tid"},
+      {"symbol": "hits", "kind": "array", "key": {"kind":"int","bits":32,"signed":false,"endianness":"little","alignment":4}, "value": {"kind":"int","bits":64,"signed":false,"endianness":"little","alignment":8}, "max_entries": 8, "flags": 0, "record": "", "note": "E012: tr.mlir の頭の注"}
+    ],
+    "programs": [
+      {"name": "fe", "kind": "fentry", "attach_target": "bpf_fentry_test1", "maps": ["hits"], "note": "E012: test run の tracing が呼ぶ"},
+      {"name": "fx", "kind": "fexit", "attach_target": "bpf_fentry_test1", "nargs": 1, "ret": {"kind":"int","bits":32,"signed":true,"endianness":"little","alignment":4}, "maps": ["hits"], "note": "E012: bpf_fentry_test1(1) は 2 を返す"},
+      {"name": "kp", "kind": "kprobe", "attach_target": "do_sys_poll", "maps": ["ctl", "hits"], "arch": "x86_64",
+       "params": [{"n": 2, "type": {"kind":"int","bits":32,"signed":false,"endianness":"little","alignment":4}}], "note": "E012: do_sys_poll の nfds (unsigned int)"},
+      {"name": "xp", "kind": "xdp", "attach_target": "", "maps": [], "note": "E012: 種類の取り違えの対照"}
+    ]
+  },
+  "telemetry": {"clocks": [], "value_maps": [], "bounds_sets": [], "signals": []},
+  "extensions": {}
+}

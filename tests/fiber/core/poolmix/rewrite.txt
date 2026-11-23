@@ -1,0 +1,25 @@
+def tick(frame, turn, spl_b_live, spl_b_free, spl_b_top, spl_a_live, spl_a_free, spl_a_top)
+  t = turn[0]
+  v = -1
+  if t == 0
+    spl_b_alloc(spl_b_live, spl_b_free, spl_b_top)
+    x = outer(inner(spl_a_alloc(spl_a_live, spl_a_free, spl_a_top), spl_a_live, spl_a_free, spl_a_top), spl_b_live, spl_b_free, spl_b_top)
+    v = x * 100 + (ua(0, spl_a_live) + ua(1, spl_a_live)) * 10 + ub(0, spl_b_live) + ub(1, spl_b_live) + ub(2, spl_b_live)
+  elsif t == 1
+    y = outer2(inner2(spl_a_alloc(spl_a_live, spl_a_free, spl_a_top), spl_a_live, spl_a_free, spl_a_top), spl_b_live, spl_b_free, spl_b_top)
+    v = y * 100 + (ua(0, spl_a_live) + ua(1, spl_a_live)) * 10 + ub(0, spl_b_live) + ub(1, spl_b_live) + ub(2, spl_b_live)
+  elsif t == 2
+    spl_a_release(0, spl_a_live, spl_a_free, spl_a_top)
+    v = ua(0, spl_a_live) * 10 + ua(1, spl_a_live)
+  elsif t == 3
+    v = spl_a_alloc(spl_a_live, spl_a_free, spl_a_top)
+  elsif t == 4
+    v = ub(2, spl_b_live)
+  end
+  if t < 5
+    n = put_i32(frame, 0, v)
+    Telemetry.put(frame, n)
+    turn[0] = t + 1
+  end
+  0
+end

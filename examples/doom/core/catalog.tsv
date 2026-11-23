@@ -1,0 +1,99 @@
+# examples/doom/core/catalog.tsv — the prepared counts for ONE configuration.
+#
+# Decision 0008: a schema's `level:`, `screen:`, `limit:` or `table:` count
+# names something in the prepared resource and configuration catalog, and
+# there is no evaluation of Ruby expressions from a manifest. This is that
+# catalog, for **E1M1 at 320x200**, and every number in it was MEASURED rather
+# than recalled:
+#
+#   * the level counts by loading E1M1 from doom1.wad and reading them off
+#     `Doom::Level`;
+#   * the texture and flat counts the same way, through `Doom::Textures`;
+#   * the screen products by computing what the renderer computes at s = 1
+#     (`@plw = @sw + 2`, `@maxopenings = @sw * 64`), and the VIEW's the same
+#     way at setblocks 10 (render.rb:228): viewheight, viewpixels and
+#     jobspancells, because the program's Jobs is sized by the view
+#     (render.rb:465), not the screen;
+#   * the limits from the constants the source declares.
+#   * the work stacks of tools/doom/core-added.tsv from the level counts:
+#     sightcells 3 * (numnodes + 1), bspcells 3 * (numnodes + 2), soundcells
+#     6 * (numsectors + 1); sbshadowpixels is 1 because the screen is not
+#     scaled. knotcells, 256 frames of 21 cells, is a CONFIGURED CAPACITY
+#     rather than a measurement: the machine refuses deterministically at it
+#     (0008's clarification of 2026-09-18, core-added.tsv's header).
+#
+# A DIFFERENT MAP OR RESOLUTION IS A DIFFERENT CATALOG. That is the point of
+# naming counts rather than fixing them: Full prepares the resources, measures
+# them and hands the generator this file, and the generator checks the schema
+# against it. Nothing here is committed as a fact about DOOM in general.
+#
+# The IWAD itself is NOT in this repository and is not a build input; this
+# file is the measurement taken from one, which is what makes the numbers
+# reproducible without carrying the bytes.
+#
+#kind	name	value
+count	animations	2
+count	blockmapcells	828
+count	blockmapwords	3461
+count	bspcells	714
+count	colormap	8704
+count	demobytes	160014
+count	demotics	40000
+count	finesine	10240
+count	finetangent	4096
+count	flatatlas	229376
+count	flats	56
+count	hudmessages	1046
+count	jobmaskedcells	81920
+count	jobmaskedfields	73728
+count	jobsched	12288
+count	jobspancells	43008
+count	jobspanfields	21504
+count	jobwallcells	20480
+count	jobwallfields	28672
+count	jobzonecells	393216
+count	knotcells	5376
+count	linespecials	8
+count	lumpnamebytes	10112
+count	lumps	1264
+count	maxmobjs	4096
+count	maxthinkers	4096
+count	mobjinfo	137
+count	nodeboxes	1888
+count	numlines	475
+count	numnodes	236
+count	numsectors	85
+count	numsegs	732
+count	numsides	648
+count	numsubsectors	237
+count	numvertexes	467
+count	openings	20480
+count	pnames	350
+count	rejectbytes	904
+count	sbshadowpixels	1
+count	screenheight	200
+count	screenpixels	64000
+count	screenwidth	320
+count	screenwidthplus1	321
+count	scriptlines	1
+count	sectorboxes	340
+count	sectorlinetotal	642
+count	sightcells	711
+count	soundcells	516
+count	spriteframes	2088
+count	spritelumps	483
+count	spriterotations	261
+count	sprites	138
+count	sprnamebytes	552
+count	states	967
+count	statusbarbytes	10240
+count	switchnames	38
+count	tantoangle	2049
+count	texatlas	1379328
+count	texcolumns	10776
+count	textures	125
+count	viewheight	168
+count	viewpixels	53760
+count	visplanecells	41216
+count	waddata	4196020
+count	weaponinfo	9

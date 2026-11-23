@@ -1,0 +1,5 @@
+# spinelbpf build -o が作る実行 file の NEEDED で許す .so (E004 — 1 行 1 つ。一覧に無い .so が増えたら build が止まる)
+# Spinel の runtime (libm・libcrypt) と libc だけ。Go の c-archive は libc 以外の .so を足さない (E001)。
+libm.so.6
+libcrypt.so.1
+libc.so.6

@@ -1,0 +1,15 @@
+# generated from tools/app/templates/prj.conf.erb by spinel-core-app build
+# (decision 0014 §8 step 2). A tick is 100 us: every period is a multiple of
+# it, checked at step 1. A driver subsystem is enabled only when the
+# application refers to a class that needs it (class.tsv `subsystem`): a
+# driver the application never uses would still connect its interrupts, and
+# every connected interrupt must have an attested reserve (0014 §9).
+CONFIG_PRINTK=y
+CONFIG_SYS_CLOCK_TICKS_PER_SEC=10000
+CONFIG_CORTEX_M_SYSTICK_64BIT_CYCLE_COUNTER=y
+<% subsystems.each do |k| %><%= k %>=y
+<% end %><% if verification %>CONFIG_INIT_STACKS=y
+CONFIG_THREAD_STACK_INFO=y
+CONFIG_GPIO_EMUL=y
+CONFIG_ADC_EMUL=y
+<% end %>

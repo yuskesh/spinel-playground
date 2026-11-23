@@ -1,0 +1,332 @@
+diff --git a/doomgeneric/d_main.c b/doomgeneric/d_main.c
+--- a/doomgeneric/d_main.c
++++ b/doomgeneric/d_main.c
+@@ -1160,6 +1160,10 @@
+ //
+ // D_DoomMain
+ //
++#ifdef DG_DUMP_HOOK
++void DG_DumpHook(void);   // doomgeneric_dump.c
++#endif
++
+ void D_DoomMain (void)
+ {
+     int p;
+@@ -1377,6 +1381,14 @@
+ 
+     DEH_printf("W_Init: Init WADfiles.\n");
+     D_AddFile(iwadfile);
++
++#ifdef DG_DUMP_HOOK
++    // spinel-llvm E044 (P004 Phase 1): reference oracle dumps. No-op unless
++    // one of the DG_*_DUMP environment variables is set; exits when it is.
++    // Placed here because this is the first point where the lump directory is
++    // complete and the zone allocator is up, and no game state exists yet.
++    DG_DumpHook();
++#endif
+ #if ORIGCODE
+     numiwadlumps = numlumps;
+ #endif
+diff --git a/doomgeneric/Makefile.headless b/doomgeneric/Makefile.headless
+--- a/doomgeneric/Makefile.headless
++++ b/doomgeneric/Makefile.headless
+@@ -16,6 +16,7 @@
+ CFLAGS+=-g -Os
+ CFLAGS+=-Wall -DNORMALUNIX -DLINUX -D_DEFAULT_SOURCE
+ CFLAGS+=-DDG_FRAME_HOOK
++CFLAGS+=-DDG_DUMP_HOOK
+ # NOTE (macOS/arm64, Apple clang 21): the doomgeneric sources at dcb7a8d compile
+ # clean under -Wall with *no* -Wno-* suppressions and *no* source edits.
+ # The only macOS frictions are in the stock Makefile, and both are link flags
+@@ -28,7 +29,7 @@
+ OBJDIR=build_headless
+ OUTPUT=doomgeneric_headless
+ 
+-SRC_DOOM = dummy.o am_map.o doomdef.o doomstat.o dstrings.o d_event.o d_items.o d_iwad.o d_loop.o d_main.o d_mode.o d_net.o f_finale.o f_wipe.o g_game.o hu_lib.o hu_stuff.o info.o i_cdmus.o i_endoom.o i_joystick.o i_scale.o i_sound.o i_system.o i_timer.o memio.o m_argv.o m_bbox.o m_cheat.o m_config.o m_controls.o m_fixed.o m_menu.o m_misc.o m_random.o p_ceilng.o p_doors.o p_enemy.o p_floor.o p_inter.o p_lights.o p_map.o p_maputl.o p_mobj.o p_plats.o p_pspr.o p_saveg.o p_setup.o p_sight.o p_spec.o p_switch.o p_telept.o p_tick.o p_user.o r_bsp.o r_data.o r_draw.o r_main.o r_plane.o r_segs.o r_sky.o r_things.o sha1.o sounds.o statdump.o st_lib.o st_stuff.o s_sound.o tables.o v_video.o wi_stuff.o w_checksum.o w_file.o w_main.o w_wad.o z_zone.o w_file_stdc.o i_input.o i_video.o doomgeneric.o doomgeneric_headless.o
++SRC_DOOM = dummy.o am_map.o doomdef.o doomstat.o dstrings.o d_event.o d_items.o d_iwad.o d_loop.o d_main.o d_mode.o d_net.o f_finale.o f_wipe.o g_game.o hu_lib.o hu_stuff.o info.o i_cdmus.o i_endoom.o i_joystick.o i_scale.o i_sound.o i_system.o i_timer.o memio.o m_argv.o m_bbox.o m_cheat.o m_config.o m_controls.o m_fixed.o m_menu.o m_misc.o m_random.o p_ceilng.o p_doors.o p_enemy.o p_floor.o p_inter.o p_lights.o p_map.o p_maputl.o p_mobj.o p_plats.o p_pspr.o p_saveg.o p_setup.o p_sight.o p_spec.o p_switch.o p_telept.o p_tick.o p_user.o r_bsp.o r_data.o r_draw.o r_main.o r_plane.o r_segs.o r_sky.o r_things.o sha1.o sounds.o statdump.o st_lib.o st_stuff.o s_sound.o tables.o v_video.o wi_stuff.o w_checksum.o w_file.o w_main.o w_wad.o z_zone.o w_file_stdc.o i_input.o i_video.o doomgeneric.o doomgeneric_headless.o doomgeneric_dump.o
+ OBJS += $(addprefix $(OBJDIR)/, $(SRC_DOOM))
+ 
+ all: $(OUTPUT)
+diff --git a/doomgeneric/doomgeneric_dump.c b/doomgeneric/doomgeneric_dump.c
+new file mode 100644
+--- /dev/null
++++ b/doomgeneric/doomgeneric_dump.c
+@@ -0,0 +1,278 @@
++//
++// doomgeneric_dump.c
++//
++// spinel-llvm / E044 (P004 Phase 1) reference oracle hooks.
++//
++// Additive on top of the R007 headless harness: dumps, straight out of the
++// reference implementation's own data structures, the two things Phase 1 has
++// to match byte for byte.
++//
++//   1. the WAD directory + every lump's bytes  (W_ layer)
++//   2. patch (picture format) decode results   (V_DrawPatch)
++//
++// Both are read from the *reference* code paths, not re-implemented here:
++// lump bytes come out of W_ReadLump(), and the decoded 8bit index plane is
++// produced by V_DrawPatch() itself drawing into a buffer we hand it through
++// V_UseBuffer(). Transparency therefore has exactly vanilla's meaning:
++// "a pixel V_DrawPatch never writes", which is why the plane is pre-filled
++// with a marker byte (default 255) instead of zero.
++//
++// Environment variables (all optional; the hook is a no-op unless one of the
++// two *_DUMP paths is set, and exits the process once it has written them):
++//
++//   DG_LUMP_DUMP    TSV path: index, name, filepos, size, sha256, fnv1a64
++//   DG_LUMP_BLOB    if set, also write every lump's bytes, concatenated in
++//                   directory order, to this path (one sha256 over the lot is
++//                   then a literal "all lump bytes agree" oracle)
++//   DG_PATCH_DUMP   TSV path: index, name, w, h, leftoffset, topoffset,
++//                             opaque, sha256, fnv1a64  (over the w*h plane)
++//   DG_PATCH_LIST   file with one *lump index* per line, naming what to decode
++//                   (required for the above). Indices, not names: DOOM1.WAD has
++//                   a duplicated lump name (SW18_7 at 1120 and 1121) and Phase 1
++//                   wants every picture lump covered, not every distinct name.
++//   DG_PATCH_DIR    if set, also write the raw w*h index plane of each patch
++//                   to DG_PATCH_DIR/<index>_<NAME>.idx
++//   DG_PATCH_BG     background/transparent marker byte, decimal (default 255)
++//
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <stdint.h>
++
++#include "doomtype.h"
++#include "doomdef.h"
++#include "i_system.h"
++#include "m_misc.h"
++#include "i_swap.h"
++#include "r_defs.h"
++#include "v_video.h"
++#include "w_wad.h"
++#include "z_zone.h"
++
++#ifdef __APPLE__
++#include <CommonCrypto/CommonDigest.h>
++#define HAVE_SHA256 1
++#endif
++
++// NOTE (E044): the offset basis is written in hex on purpose. The R007 headless
++// harness (doomgeneric_headless.c:fnv1a64) writes it in decimal as
++// 1469598103934665603ULL, which is 0x14650fb0739d0383 -- one digit short of the
++// real FNV-1a 64 basis 14695981039346656037 == 0xcbf29ce484222325. Its frame
++// golden is self-consistent and still a perfectly good hash, but a Ruby side
++// written from the *documentation* will not reproduce that column. See E044.
++static uint64_t dump_fnv1a64(const unsigned char *p, size_t n)
++{
++    uint64_t h = 0xcbf29ce484222325ULL;
++    size_t i;
++    for (i = 0; i < n; i++)
++    {
++        h ^= (uint64_t)p[i];
++        h *= 0x100000001b3ULL;
++    }
++    return h;
++}
++
++static void dump_sha256(const unsigned char *p, size_t n, char out[65])
++{
++#ifdef HAVE_SHA256
++    unsigned char md[CC_SHA256_DIGEST_LENGTH];
++    int i;
++    CC_SHA256(p, (CC_LONG)n, md);
++    for (i = 0; i < CC_SHA256_DIGEST_LENGTH; i++)
++        snprintf(out + i * 2, 3, "%02x", md[i]);
++#else
++    (void)p; (void)n;
++    strcpy(out, "-");
++#endif
++}
++
++// ------------------------------------------------------------------ lumps
++
++static void dump_lumps(const char *path, const char *blobpath)
++{
++    FILE *fp = fopen(path, "w");
++    FILE *blob = NULL;
++    unsigned int i;
++
++    if (fp == NULL)
++        I_Error("DG_DumpHook: cannot open %s", path);
++    if (blobpath != NULL && blobpath[0] != '\0')
++    {
++        blob = fopen(blobpath, "wb");
++        if (blob == NULL)
++            I_Error("DG_DumpHook: cannot open %s", blobpath);
++    }
++
++    fprintf(fp, "#index\tname\tfilepos\tsize\tsha256\tfnv1a64\n");
++
++    for (i = 0; i < (unsigned int)numlumps; i++)
++    {
++        char name[9];
++        char sha[65];
++        unsigned char *buf;
++        uint64_t fh;
++        int size = lumpinfo[i].size;
++
++        memcpy(name, lumpinfo[i].name, 8);
++        name[8] = '\0';
++
++        // W_ReadLump() I_Errors on size 0? No -- it reads 0 bytes, but the
++        // read backend can be unhappy about a NULL destination, so a marker
++        // lump gets a 1-byte scratch buffer and a 0-length hash.
++        buf = malloc((size_t)(size > 0 ? size : 1));
++        if (buf == NULL)
++            I_Error("DG_DumpHook: out of memory for lump %u (%d bytes)", i, size);
++        if (size > 0)
++            W_ReadLump(i, buf);
++
++        dump_sha256(buf, (size_t)(size > 0 ? size : 0), sha);
++        fh = dump_fnv1a64(buf, (size_t)(size > 0 ? size : 0));
++
++        fprintf(fp, "%u\t%s\t%d\t%d\t%s\t%016llx\n",
++                i, name, lumpinfo[i].position, size, sha,
++                (unsigned long long)fh);
++        if (blob != NULL && size > 0)
++            fwrite(buf, 1, (size_t)size, blob);
++        free(buf);
++    }
++
++    if (blob != NULL)
++        fclose(blob);
++    fclose(fp);
++    fprintf(stderr, "DG_DumpHook: wrote %d lumps to %s\n", numlumps, path);
++}
++
++// ------------------------------------------------------------------ patches
++
++static void dump_patches(const char *path, const char *listpath, const char *dir,
++                         unsigned char bg)
++{
++    FILE *fp = fopen(path, "w");
++    FILE *lf = fopen(listpath, "r");
++    unsigned char *screen;
++    unsigned char *plane;
++    char line[64];
++
++    if (fp == NULL)
++        I_Error("DG_DumpHook: cannot open %s", path);
++    if (lf == NULL)
++        I_Error("DG_DumpHook: cannot open %s", listpath);
++
++    screen = malloc(SCREENWIDTH * SCREENHEIGHT);
++    plane = malloc(SCREENWIDTH * SCREENHEIGHT);
++    if (screen == NULL || plane == NULL)
++        I_Error("DG_DumpHook: out of memory for the patch screen");
++
++    fprintf(fp, "#index\tname\twidth\theight\tleftoffset\ttopoffset\topaque\tsha256\tfnv1a64\n");
++
++    while (fgets(line, sizeof(line), lf) != NULL)
++    {
++        char lname[9];
++        char sha[65];
++        int lumpnum;
++        patch_t *patch;
++        int w, h, x, y, opaque;
++        uint64_t fh;
++
++        if (line[0] == '\0' || line[0] == '\n' || line[0] == '#')
++            continue;
++        lumpnum = (int)strtol(line, NULL, 10);
++        if (lumpnum < 0 || lumpnum >= numlumps)
++            I_Error("DG_DumpHook: lump index out of range: %d", lumpnum);
++        memcpy(lname, lumpinfo[lumpnum].name, 8);
++        lname[8] = '\0';
++
++        patch = W_CacheLumpNum(lumpnum, PU_STATIC);
++        w = SHORT(patch->width);
++        h = SHORT(patch->height);
++
++        if (w <= 0 || h <= 0 || w > SCREENWIDTH || h > SCREENHEIGHT)
++            I_Error("DG_DumpHook: %s is %dx%d, does not fit the reference screen",
++                    lname, w, h);
++
++        memset(screen, bg, SCREENWIDTH * SCREENHEIGHT);
++
++        // V_DrawPatch subtracts the patch's own offsets, so passing them back
++        // in lands the patch's top-left corner exactly at (0,0).
++        V_UseBuffer(screen);
++        V_DrawPatch(SHORT(patch->leftoffset), SHORT(patch->topoffset), patch);
++        V_RestoreBuffer();
++
++        // Extract the w*h sub-rectangle: the Ruby side decodes into a w*h
++        // plane, not into a 320x200 screen.
++        opaque = 0;
++        for (y = 0; y < h; y++)
++        {
++            for (x = 0; x < w; x++)
++            {
++                unsigned char v = screen[y * SCREENWIDTH + x];
++                plane[y * w + x] = v;
++                if (v != bg)
++                    opaque++;
++            }
++        }
++
++        dump_sha256(plane, (size_t)(w * h), sha);
++        fh = dump_fnv1a64(plane, (size_t)(w * h));
++
++        fprintf(fp, "%d\t%s\t%d\t%d\t%d\t%d\t%d\t%s\t%016llx\n",
++                lumpnum, lname, w, h, SHORT(patch->leftoffset),
++                SHORT(patch->topoffset), opaque, sha, (unsigned long long)fh);
++
++        if (dir != NULL && dir[0] != '\0')
++        {
++            char out[512];
++            FILE *raw;
++            snprintf(out, sizeof(out), "%s/%04d_%s.idx", dir, lumpnum, lname);
++            raw = fopen(out, "wb");
++            if (raw == NULL)
++                I_Error("DG_DumpHook: cannot write %s", out);
++            fwrite(plane, 1, (size_t)(w * h), raw);
++            fclose(raw);
++        }
++
++        W_ReleaseLumpNum(lumpnum);
++    }
++
++    fclose(lf);
++    fclose(fp);
++    free(screen);
++    free(plane);
++    fprintf(stderr, "DG_DumpHook: wrote patch dump to %s\n", path);
++}
++
++// ------------------------------------------------------------------ entry
++
++// Called from D_DoomMain() right after the IWAD has been added, i.e. with the
++// zone allocator up and the lump directory built, but before any game state
++// exists. Exits the process when it has produced its output.
++void DG_DumpHook(void)
++{
++    const char *lump_out = getenv("DG_LUMP_DUMP");
++    const char *patch_out = getenv("DG_PATCH_DUMP");
++    const char *lump_blob = getenv("DG_LUMP_BLOB");
++    const char *patch_list = getenv("DG_PATCH_LIST");
++    const char *patch_dir = getenv("DG_PATCH_DIR");
++    const char *bg_env = getenv("DG_PATCH_BG");
++    unsigned char bg = 255;
++
++    if ((lump_out == NULL || lump_out[0] == '\0') &&
++        (patch_out == NULL || patch_out[0] == '\0'))
++        return;
++
++    if (bg_env != NULL && bg_env[0] != '\0')
++        bg = (unsigned char)strtoul(bg_env, NULL, 10);
++
++    if (lump_out != NULL && lump_out[0] != '\0')
++        dump_lumps(lump_out, lump_blob);
++
++    if (patch_out != NULL && patch_out[0] != '\0')
++    {
++        if (patch_list == NULL || patch_list[0] == '\0')
++            I_Error("DG_DumpHook: DG_PATCH_DUMP set but DG_PATCH_LIST is empty");
++        dump_patches(patch_out, patch_list, patch_dir, bg);
++    }
++
++    exit(0);
++}

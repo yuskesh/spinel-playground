@@ -1,0 +1,16 @@
+-- west build: running target run
+[0/1] To exit from QEMU enter: 'CTRL+a, x'[QEMU] CPU: cortex-m33
+char device redirected to /dev/ttys000 (label hostS0)
+qemu-system-arm: warning: nic lan9118.0 has no peer
+*** Booting Zephyr OS build v4.4.0-3236-g7fd932b9357e ***
+#kern 84
+#rows 64
+#iters 12
+#nw 5
+#trapprobe 1
+E084	TRAP	code=4 a=6 b=5 detail=hvp_probe: length argument 7 of hvp_loss exceeds the declared length of w
+r0/a1:  0x00000004  r1/a2:  0x10006a1e  r2/a3:  0x00000000
+r3/a4:  0x00000004 r12/ip:  0x38000170 r14/lr:  0x10003547
+ xpsr:  0x21000000
+Faulting instruction address (r15/pc): 0x10003556
+qemu-system-arm: terminating on signal 15 from pid 41310 (<unknown process>)

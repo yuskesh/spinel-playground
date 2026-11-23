@@ -1,0 +1,7 @@
+core-contract 1
+root src/dc_i64.rb
+entry dc_i64
+result i64
+param data buffer i64 in count n_data
+param n_data scalar u64
+param i scalar i64

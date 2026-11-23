@@ -1,0 +1,2381 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+#
+# spinel-gradgen -- synthesise gradients for `grad_def`-declared Ruby methods.
+#
+#     tools/grad/spinel-gradgen app.rb -o build/grad [--emit-ruby grad.gen.rb]
+#
+# E171 checkpoint 2. **A copy of the frozen Python `tools/grad/frozen/spinel-gradgen`**.
+# The claim is that argv / stdout / stderr / rc and the `-o` tree (`.c` / `.ll` / `.o` / 6 tables /
+# `.gen.rb` / `rtcheck/`) do not differ by a single byte, and the differential check is
+# `tools/grad/ab/test_e171.rb`. **The source of the behaviour is the frozen Python side**, so
+# before fixing anything here, always read that side first. The meaning of the stages, where the obstacles come from
+# and the reasons for each decision are canonical in the frozen side's comments; here only the points that were hard to copy are written.
+#
+# What this tool does itself is only **text work** (the pin regex, the appended C shim,
+# the C drivers of G3/G4, `.gen.rb`, formatting the 6 tables) and **the subprocesses' argv**;
+# composing the adjoint is Enzyme's (`opt`), types are typedump's, the allocation proof is rtcheck's (native),
+# and GC roots are `libSpinelGCRoots.so`'s (design D-1).
+#
+# What needs copying of Python's semantics (cut out into helpers):
+#   * `py_splitlines` / `universal_newlines` — Python's text mode collapses `\r\n` and
+#     `\r` into `\n`, and `splitlines` also splits at `\v` `\f` and others.
+#   * `py_split` — `str.split(sep)` does not collapse empty fields, and gives `['']` from an empty string.
+#   * `pyfloat` / `pyint` — the accepted sets of `Float()` / `Integer()` are the reverse.
+#   * `pynum` — the `%g` family. Python writes inf / nan in lower case.
+#   * `py_repr` — argparse's diagnostics.
+#   * `split(/ /, 4)` — Ruby's `split(" ", 4)` falls into awk mode.
+
+require "json"
+require "open3"
+require "fileutils"
+
+PROG = "spinel-gradgen"
+
+HERE = File.dirname(File.expand_path(__FILE__))
+ROOT = File.dirname(File.dirname(HERE))
+
+# Spinel Extended: the LLVM and the Enzyme plugin come from the environment
+# (LLVM_PREFIX, ENZYME) before the spinel-llvm defaults; the plugin is named
+# after the LLVM major it was built against (23 here, 22 in spinel-llvm).
+DEF_LLVM = ENV["LLVM_PREFIX"] ? File.join(ENV["LLVM_PREFIX"], "bin") : "/opt/homebrew/opt/llvm/bin"
+DEF_SPINEL = File.join(ROOT, "vendor", "spinel", "bin", "spinel")
+DEF_TYPEDUMP = File.join(ROOT, "tools", "contract", "build", "spinel-typedump")
+DEF_RTCHECK = File.join(ROOT, "tools", "realtime", "spinel-rtcheck")
+DEF_ENZYME = ENV["ENZYME"] || File.join(ROOT, "third_party", "enzyme", "build", "Enzyme",
+                       RUBY_PLATFORM.include?("darwin") ? "LLVMEnzyme-23.dylib" : "LLVMEnzyme-23.so")
+DEF_GCPASS = File.join(ROOT, "tools", "llvm", "passes", "build",
+                       "libSpinelGCRoots.so")
+DEF_RULES_DIR = File.join(HERE, "rules")
+
+RULES_MODULE = "SPGR"
+
+# ===========================================================================
+# Python's semantics
+# ===========================================================================
+
+# Python's text mode (`newline=None`) collapses `\r\n` / `\r` into `\n` when reading.
+def universal_newlines(str)
+  str.gsub(/\r\n?/, "\n")
+end
+
+# Python's `str.splitlines()`. Trailing empty elements are dropped.
+PY_LINE_BOUNDARY = /\r\n|[\n\r\v\f  ]/.freeze
+
+def py_splitlines(str)
+  return [] if str.empty?
+
+  out = str.split(PY_LINE_BOUNDARY, -1)
+  out.pop if out.last == ""
+  out
+end
+
+# Python's `str.split(sep)`. An empty string gives [''], and trailing empty fields are not dropped.
+def py_split(str, sep)
+  return [""] if str.empty?
+
+  str.split(sep, -1)
+end
+
+PY_WS = Regexp.escape(" \t\n\r\f\v")
+
+def py_strip(str)
+  str.sub(/\A[#{PY_WS}]+/, "").sub(/[#{PY_WS}]+\z/, "")
+end
+
+def pyint(str)
+  s = py_strip(str)
+  unless s =~ /\A[+-]?[0-9](?:_?[0-9])*\z/
+    raise ArgumentError, "invalid literal for int() with base 10: #{str.inspect}"
+  end
+
+  Integer(s.delete("_"), 10)
+end
+
+def pyfloat(str)
+  s = py_strip(str)
+  if s =~ /\A([+-]?)(inf(?:inity)?|nan)\z/i
+    neg = Regexp.last_match(1) == "-"
+    return Regexp.last_match(2).downcase.start_with?("inf") ? (neg ? -Float::INFINITY : Float::INFINITY) : Float::NAN
+  end
+  d = "[0-9](?:_?[0-9])*"
+  unless s =~ /\A[+-]?(?:#{d}\.?(?:#{d})?|\.#{d})(?:[eE][+-]?#{d})?\z/
+    raise ArgumentError, "could not convert string to float: #{str.inspect}"
+  end
+
+  Float(s.delete("_"))
+end
+
+# Python's `"%..g" % x` and the like. **Ruby writes inf / nan as `Inf` / `NaN`**.
+def pynum(fmt, val)
+  if val.is_a?(Float) && !val.finite?
+    return val.nan? ? "nan" : (val.negative? ? "-inf" : "inf")
+  end
+
+  format(fmt, val)
+end
+
+# Python's `repr(str)`. argparse's diagnostics use it.
+def py_repr(str)
+  q = str.include?("'") && !str.include?('"') ? '"' : "'"
+  body = +""
+  str.each_char do |ch|
+    body << case ch
+            when "\\" then "\\\\"
+            when q then "\\#{q}"
+            when "\n" then "\\n"
+            when "\r" then "\\r"
+            when "\t" then "\\t"
+            else
+              o = ch.ord
+              o < 0x20 || o == 0x7f ? format("\\x%02x", o) : ch
+            end
+  end
+  "#{q}#{body}#{q}"
+end
+
+# `os.path.abspath` does not expand `~` (`File.expand_path` does).
+def py_abspath(path)
+  p = path.start_with?("/") ? path : File.join(Dir.pwd, path)
+  parts = []
+  p.split("/").each do |c|
+    next if c.empty? || c == "."
+
+    if c == ".."
+      parts.pop unless parts.empty?
+    else
+      parts << c
+    end
+  end
+  "/" + parts.join("/")
+end
+
+# `os.path.splitext(basename)[0]`
+def py_stem(path)
+  b = File.basename(path)
+  i = b.rindex(".")
+  i.nil? || i.zero? ? b : b[0...i]
+end
+
+def read_text(path)
+  universal_newlines(File.binread(path).force_encoding("UTF-8"))
+end
+
+def write_text(path, str)
+  File.binwrite(path, str)
+end
+
+# ===========================================================================
+# the custom-rule registry (E082)
+# ===========================================================================
+def load_rules(rules_dir)
+  out = {}
+  tsv = File.join(rules_dir, "rules.tsv")
+  return out unless File.exist?(tsv)
+
+  py_splitlines(read_text(tsv)).each_with_index do |line, i|
+    c = py_split(line.sub(/\n+\z/, ""), "\t")
+    next if i.zero? || c.size < 4
+
+    sig = nil
+    if (m = /\A([\w ]+?)\(([^)]*)\)\z/.match(c[1]))
+      # Spinel Extended: `int64` is spelled int64_t, as the pinned compiler spells the
+      # FFI declaration it emits for the same primitive; `long long` (spinel-llvm)
+      # conflicts with it where int64_t is `long` (Linux x86_64).
+      argl = m[2].split(",", -1).map { |t| t.strip.gsub(/\bint64\b/, "int64_t") }
+                 .reject { |t| t.empty? }
+      sig = format("%s %s(%s)", m[1].strip, c[0], argl.join(", "))
+    end
+    out[c[0]] = { "reverse" => c[2] == "yes", "forward" => c[3] == "yes",
+                  "alloc_free" => c.size > 4 && c[4] == "yes", "sig" => sig }
+  end
+  out
+end
+
+class Die < StandardError; end
+
+def die(msg)
+  raise Die, msg
+end
+
+Proc_ = Struct.new(:out, :err, :status) do
+  def returncode = status.exitstatus
+end
+
+def run(cmd)
+  out, err, st = Open3.capture3(*cmd)
+  Proc_.new(universal_newlines(out.force_encoding("UTF-8")),
+            universal_newlines(err.force_encoding("UTF-8")), st)
+end
+
+def must(cmd, what)
+  p = run(cmd)
+  if p.returncode != 0
+    die(format("%s failed (exit %d)\n  cmd: %s\n%s%s",
+               what, p.returncode, cmd.join(" "), p.out || "", p.err || ""))
+  end
+  p
+end
+
+# ===========================================================================
+# no signal poll in a differentiated method (Spinel Extended)
+# ===========================================================================
+# Upstream afd8ef8a0 gives a loop a signal poll that calls sp_sig_poll_raise,
+# which reaches an allocation and an abort that is not a raise; G2 refuses
+# every gradient that has one. The pinned compiler's opt-in
+# --no-loop-sig-poll (SPINEL_NO_LOOP_SIG_POLL, vendor 6aa5f6395) leaves loop
+# polls out and says so in the C. gradgen turns it on for every compile it
+# runs, including rtcheck's, and checks the C each one produced: the #define
+# must be there, and no differentiated method may call any poll the runtime
+# has -- a condition still polls for threads or finalizers when the program
+# has them, and the flag does not remove those.
+NO_POLL_DEFINE = "#define SP_NO_LOOP_SIG_POLL 1"
+POLL_CALLS = %w[sp_sig_poll_raise sp_sig_run_pending sp_safepoint sp_fin_run_pending].freeze
+ENV["SPINEL_NO_LOOP_SIG_POLL"] = "1"
+
+# The C body of the function named `cname`, or nil.
+def c_function_body(csrc, cname)
+  m = /^[^\n;]*\b#{Regexp.escape(cname)}\([^;{]*\)\s*\{\n.*?^\}/m.match(csrc)
+  m && m[0]
+end
+
+# The C name the compiler gave the top-level method `name`, read from the C
+# it generated (Spinel Extended). It is not sp_<name> in general: the compiler
+# gives a method whose plain name would sit in the runtime's own namespace an
+# `rb_` infix (mc_top; `def oint` is sp_rb_oint since upstream a07741ff1 added
+# the type sp_oint), and that set grows with the runtime. The fact used is the
+# compiler's own line map: the #line before a definition names the file and
+# line of the `def`, which the AST gives. Exactly one definition must match.
+def def_site(ast, name)
+  defs = ast.n.values.select do |nd|
+    nd.kind == "DefNode" && nd.get("name") == name && ast.ref(nd, "receiver").nil?
+  end
+  return nil unless defs.size == 1
+
+  [ast.files[defs[0].get("node_file", -1)], defs[0].get("node_line", 0)]
+end
+
+def c_name_of(csrc, site)
+  file, line = site
+  want = format("#line %d \"%s\"", line, file)
+  found = []
+  prev = nil
+  csrc.each_line do |l|
+    if prev == want && (m = /^static\b[^;{(]*?\b(sp_[A-Za-z_0-9]+)\s*\([^;{]*\)\s*\{\s*$/.match(l))
+      found << m[1]
+    end
+    prev = l.chomp if l.start_with?("#line ")
+    prev = nil unless l.start_with?("#line ")
+  end
+  found.uniq.size == 1 ? found[0] : nil
+end
+
+# What makes `csrc` unfit for differentiating `names`, as text; nil when fit.
+def poll_problem(csrc, names, what)
+  return "#{what} lacks `#{NO_POLL_DEFINE}`: it was not built with --no-loop-sig-poll" \
+    unless csrc.include?(NO_POLL_DEFINE)
+
+  names.each do |n|
+    # A method the C does not define (force-inlined, or a --bite target)
+    # carries no poll of its own; whether it must exist is the pin's question.
+    body = c_function_body(csrc, n)
+    next if body.nil?
+
+    hit = POLL_CALLS.find { |f| body.include?(f + "(") }
+    return "#{what}: #{n} still calls #{hit}" if hit
+  end
+  nil
+end
+
+# ===========================================================================
+# input contract 1: `spinel --dump-ast`
+# ===========================================================================
+class Node
+  attr_accessor :id, :kind, :f
+
+  def initialize(nid)
+    @id = nid
+    @kind = nil
+    @f = {}
+  end
+
+  def get(k, d = nil) = @f.fetch(k, d)
+end
+
+class Ast
+  attr_reader :n, :root, :files
+
+  def initialize(text)
+    @n = {}
+    @root = nil
+    @files = {}
+    py_splitlines(text).each do |line|
+      next if line.empty?
+
+      # **Do not make it `split(" ", 4)`** — in Ruby that is awk mode, which splits at runs of
+      # whitespace and drops leading whitespace too.
+      t = line.split(/ /, 4)
+      tag = t[0]
+      if tag == "ROOT"
+        @root = pyint(t[1])
+        next
+      end
+      if tag == "FILE"
+        @files[pyint(t[1])] = t[2..].join(" ")
+        next
+      end
+      next if tag == "SOURCE_FILE"
+      next if t.size < 3
+
+      nid = pyint(t[1])
+      nd = (@n[nid] ||= Node.new(nid))
+      case tag
+      when "N" then nd.kind = t[2]
+      when "S" then nd.f[t[2]] = t.size > 3 ? t[3] : ""
+      when "I" then nd.f[t[2]] = pyint(t[3])
+      when "F" then nd.f[t[2]] = pyfloat(t[3])
+      when "R" then nd.f[t[2]] = ["R", pyint(t[3])]
+      when "A"
+        raw = t.size > 3 ? t[3] : ""
+        ids = py_split(raw, ",").reject { |x| x == "" }.map { |x| pyint(x) }
+        nd.f[t[2]] = ["A", ids]
+      end
+    end
+  end
+
+  def node(nid) = @n[nid]
+
+  def ref(nd, field)
+    v = nd.get(field)
+    return nil unless v.is_a?(Array) && v[0] == "R"
+
+    v[1] >= 0 ? @n[v[1]] : nil
+  end
+
+  def arr(nd, field)
+    v = nd.nil? ? nil : nd.get(field)
+    return [] unless v.is_a?(Array) && v[0] == "A"
+
+    v[1].select { |i| @n.key?(i) }.map { |i| @n[i] }
+  end
+
+  def toplevel
+    r = node(@root)
+    return [] if r.nil?
+
+    st = ref(r, "statements")
+    if st.nil?
+      @n.values.sort_by(&:id).each do |nd|
+        if nd.kind == "StatementsNode"
+          st = nd
+          break
+        end
+      end
+    end
+    st.nil? ? [] : arr(st, "body")
+  end
+end
+
+class DeclError < StandardError; end
+
+def lit(ast, nd, where)
+  raise DeclError, "#{where}: missing value" if nd.nil?
+
+  case nd.kind
+  when "SymbolNode" then ["sym", nd.get("value", "")]
+  when "FloatNode" then ["num", nd.get("value", 0.0).to_f]
+  when "IntegerNode" then ["num", nd.get("value", 0).to_f]
+  when "ArrayNode" then ["arr", ast.arr(nd, "elements").map { |e| lit(ast, e, where) }]
+  when "TrueNode" then ["bool", true]
+  when "FalseNode" then ["bool", false]
+  else
+    raise DeclError, format("%s: `%s` is not a literal a grad_def declaration " \
+                            "may carry (only Symbols, numbers and Arrays of them)",
+                            where, nd.kind)
+  end
+end
+
+# ===========================================================================
+# the declaration
+# ===========================================================================
+KEYS = %w[wrt mode tol probe export hvp jvp].freeze
+
+class Decl
+  attr_accessor :name, :line, :wrt, :mode, :tol, :probe, :export, :hvp, :jvp, :cname
+
+  def initialize(name, line)
+    @name = name
+    @line = line
+    @wrt = []
+    @mode = "reverse"
+    @tol = 1e-6
+    @probe = []
+    @export = nil
+    @hvp = false
+    @jvp = false
+  end
+
+  def stem = @export || @name
+
+  def wants_forward = @hvp || @jvp
+
+  def sig_text(params)
+    base = format("grad_def:%s|wrt=%s|mode=%s|tol=%s|params=%s|ret=float",
+                  @name, @wrt.join(","), @mode, pynum("%.17g", @tol),
+                  params.map { |n, t| "#{n}:#{t}" }.join(","))
+    base += "|hvp" if @hvp
+    base += "|jvp" if @jvp
+    base
+  end
+end
+
+FNV_MASK = 0xFFFFFFFFFFFFFFFF
+
+def fnv1a64(str)
+  h = 0xcbf29ce484222325
+  str.dup.force_encoding(Encoding::BINARY).each_byte do |b|
+    h ^= b
+    h = (h * 0x100000001b3) & FNV_MASK
+  end
+  h
+end
+
+def read_decls(ast)
+  out = []
+  ast.toplevel.each do |st|
+    next if st.kind != "CallNode" || st.get("name") != "grad_def"
+
+    line = st.get("node_line", 0)
+    unless ast.ref(st, "receiver").nil?
+      raise DeclError, format("grad_def (line %d): must be a top-level call " \
+                              "with no receiver", line)
+    end
+    args = ast.ref(st, "arguments")
+    items = args.nil? ? [] : ast.arr(args, "arguments")
+    if items.empty?
+      raise DeclError, format("grad_def (line %d): missing the method name", line)
+    end
+
+    kind, name = lit(ast, items[0], format("grad_def (line %d)", line))
+    unless kind == "sym"
+      raise DeclError, format("grad_def (line %d): the first argument must be " \
+                              "a Symbol (the method name)", line)
+    end
+
+    d = Decl.new(name, line)
+    where = format("grad_def :%s (line %d)", name, line)
+    seen = []
+    items[1..].each do |extra|
+      unless extra.kind == "KeywordHashNode"
+        raise DeclError, "#{where}: only keyword arguments may follow the method name"
+      end
+
+      ast.arr(extra, "elements").each do |assoc|
+        k = ast.ref(assoc, "key")
+        kk, kname = lit(ast, k, where)
+        if kk != "sym" || !KEYS.include?(kname)
+          raise DeclError, format("%s: unknown keyword `%s:`; grad_def takes %s",
+                                  where, kname, KEYS.join("/"))
+        end
+        raise DeclError, format("%s: `%s:` given twice", where, kname) if seen.include?(kname)
+
+        seen << kname
+        vk, vv = lit(ast, ast.ref(assoc, "value"), where)
+        case kname
+        when "wrt"
+          if vk == "sym"
+            d.wrt = [vv]
+          elsif vk == "arr"
+            vv.each { |e| raise DeclError, "#{where}: wrt: takes Symbols" if e[0] != "sym" }
+            d.wrt = vv.map { |e| e[1] }
+          else
+            raise DeclError, "#{where}: wrt: takes a Symbol or an Array of Symbols"
+          end
+        when "mode"
+          raise DeclError, "#{where}: mode: takes a Symbol" if vk != "sym"
+
+          d.mode = vv
+        when "tol"
+          raise DeclError, "#{where}: tol: takes a number" if vk != "num"
+
+          d.tol = vv
+        when "export"
+          raise DeclError, "#{where}: export: takes a Symbol" if vk != "sym"
+
+          d.export = vv
+        when "hvp", "jvp"
+          raise DeclError, format("%s: %s: takes true or false", where, kname) if vk != "bool"
+
+          d.send("#{kname}=", vv)
+        when "probe"
+          unless vk == "arr"
+            raise DeclError, "#{where}: probe: takes an Array of argument lists"
+          end
+
+          vv.each do |pt|
+            unless pt[0] == "arr"
+              raise DeclError, "#{where}: every probe entry is itself an Array " \
+                               "(one argument list)"
+            end
+
+            d.probe << pt[1]
+          end
+        end
+      end
+    end
+    if d.wrt.empty?
+      raise DeclError, "#{where}: wrt: is required -- there is no default set of " \
+                       "parameters to differentiate"
+    end
+
+    out << d
+  end
+  out
+end
+
+# ===========================================================================
+# input contract 2: tools/contract/spinel-typedump (NODE-ID BASED)
+# ===========================================================================
+class Types
+  attr_reader :methods, :nodes
+
+  def initialize(typedump, path)
+    @methods = {}
+    p = must([typedump, path, "methods"], "spinel-typedump methods")
+    py_splitlines(p.out)[1..].to_a.each do |line|
+      c = py_split(line, "\t")
+      next if c.size < 7
+
+      params = []
+      unless c[5].empty?
+        c[5].split(",", -1).each do |tok|
+          nm, _sep, ty = tok.partition(":")
+          params << [nm, ty]
+        end
+      end
+      @methods[c[1]] = { "scope" => pyint(c[0]), "cls" => c[2], "ret" => c[3],
+                         "params" => params }
+    end
+    @nodes = []
+    p = must([typedump, path, "json"], "spinel-typedump json")
+    JSON.parse(p.out)["nodes"].each { |nd| @nodes << nd }
+  end
+
+  def body_nodes(meth) = @nodes.select { |n| n["scope_name"] == meth }
+end
+
+VALUE_KINDS = %w[
+  LocalVariableWriteNode LocalVariableReadNode LocalVariableOperatorWriteNode
+  CallNode FloatNode IntegerNode InstanceVariableReadNode
+  InstanceVariableWriteNode ArrayNode IndexNode
+].freeze
+
+BAD_TYPES = %w[poly bigint].freeze
+
+FORBIDDEN_KINDS = {
+  "ConstantPathNode" => ["O7", "same as ConstantReadNode"],
+  "StringNode" => ["subset", "strings need the heap"],
+  "InterpolatedStringNode" => ["subset", "strings need the heap"],
+  "HashNode" => ["subset", "hashes need the heap"],
+  "YieldNode" => ["subset", "a block is an indirect call the adjoint cannot see"],
+  "RescueNode" => ["subset", "the differentiation build has no exception path"],
+  "BeginNode" => ["subset", "the differentiation build has no exception path"],
+}.freeze
+
+MATH_MODULES = %w[Math].freeze
+
+FLOATY = %w[float].freeze
+ARRAYY = %w[float_array].freeze
+CONSTOK = %w[float float_array int bool].freeze
+
+class Reject < StandardError
+  attr_reader :obstacle, :msg
+
+  def initialize(obstacle, msg)
+    super(msg)
+    @obstacle = obstacle
+    @msg = msg
+  end
+end
+
+def gate1(decl, types)
+  m = types.methods[decl.name]
+  if m.nil?
+    raise Reject.new("decl", format("no method `%s` in this file (grad_def names " \
+                                    "a method defined in the same file)", decl.name))
+  end
+  if m["cls"] != "-"
+    raise Reject.new("subset", format("`%s` is a method of class %s; grad_def " \
+                                      "covers free functions only in Phase 1",
+                                      decl.name, m["cls"]))
+  end
+  if decl.mode != "reverse"
+    raise Reject.new("mode", format("mode: :%s -- only :reverse exists in Phase 1 " \
+                                    "(forward mode is P007 Phase 4).  Refusing " \
+                                    "rather than silently doing reverse", decl.mode))
+  end
+  body = types.body_nodes(decl.name)
+  if body.empty?
+    raise Reject.new("decl", format("`%s` has no body nodes in the type dump", decl.name))
+  end
+
+  body.each do |nd|
+    k = nd["kind"]
+    if k == "ConstantReadNode"
+      next if nd["type"] == "class" && MATH_MODULES.include?(nd["detail"])
+      next if nd["type"] == "class" && nd["detail"] == RULES_MODULE
+
+      raise Reject.new("O7", format("line %d: toplevel constant `%s` -- it is " \
+                                    "initialised by `main`, and the differentiation " \
+                                    "build never runs `main`, so it reads as 0 (R013 " \
+                                    "s3.3 O7).  The finite-difference gate CANNOT see " \
+                                    "this one: 0 and its derivative 0 agree.  Pass the " \
+                                    "value as a parameter instead",
+                                    nd["line"], nd["detail"].nil? || nd["detail"] == "" ? "?" : nd["detail"]))
+    end
+    if FORBIDDEN_KINDS.key?(k)
+      obst, why = FORBIDDEN_KINDS[k]
+      raise Reject.new(obst, format("line %d: `%s` -- %s", nd["line"], k, why))
+    end
+    next unless VALUE_KINDS.include?(k) && BAD_TYPES.include?(nd["type"])
+
+    det = nd["detail"].nil? || nd["detail"] == "" ? k : nd["detail"]
+    if nd["type"] == "poly"
+      raise Reject.new("O4/O6", format("line %d: `%s` is inferred TY_POLY.  Enzyme's " \
+                                       "TypeAnalysis cannot resolve the boxed " \
+                                       "sp_RbVal union and refuses the module " \
+                                       "(R013 s3.3 O4).  If this is a `while` loop " \
+                                       "carrying `%s = %s * k`, that is the bigint " \
+                                       "promotion (R013 s3.3 O6): wrap the multiply " \
+                                       "in a method (`def mulf(a,b) = a*b`) and the " \
+                                       "local stays sp_float",
+                                       nd["line"], det, det, det))
+    end
+    raise Reject.new("O2", format("line %d: `%s` is inferred TY_BIGINT -- integers, " \
+                                  "arbitrary precision or not, have no derivative",
+                                  nd["line"], det))
+  end
+
+  unless FLOATY.include?(m["ret"])
+    obst = %w[int bigint].include?(m["ret"]) ? "O2" : "O4"
+    raise Reject.new(obst, format("`%s` returns `%s`, not `float`.  Enzyme builds an " \
+                                  "EMPTY adjoint for a non-float primal and says nothing " \
+                                  "(R013 s3.3 O2); the return value would be whatever " \
+                                  "was in the register", decl.name, m["ret"]))
+  end
+
+  params = m["params"]
+  pnames = params.map { |n, _| n }
+  ptypes = params.to_h
+  decl.wrt.each do |w|
+    unless ptypes.key?(w)
+      raise Reject.new("decl", format("wrt: :%s is not a parameter of `%s` " \
+                                      "(parameters are %s)", w, decl.name,
+                                      pnames.join(", ")))
+    end
+
+    t = ptypes[w]
+    next if (FLOATY + ARRAYY).include?(t)
+
+    obst = %w[int bigint].include?(t) ? "O2" : "O4"
+    raise Reject.new(obst, format("wrt: :%s is inferred `%s`.  A gradient is a real " \
+                                  "concept: only `float` and `float_array` parameters " \
+                                  "can be active (R013 s3.3 O2)", w, t))
+  end
+  params.each do |n, t|
+    next if CONSTOK.include?(t)
+
+    raise Reject.new("O4", format("parameter `%s` is inferred `%s`; the differentiable " \
+                                  "subset carries float / float_array / int / bool " \
+                                  "arguments only (R013 s3.3 O4: TY_POLY breaks " \
+                                  "Enzyme's TypeAnalysis outright)", n, t))
+  end
+
+  if decl.hvp || decl.jvp
+    what = %w[hvp jvp].select { |k| decl.send(k) }.join("/")
+    if decl.wrt.size != 1 || ptypes[decl.wrt[0]] != "float_array"
+      raise Reject.new("fwd1", format("%s: requires wrt: to be exactly one " \
+                                      "Array[Float] parameter (it is [%s]).  That is " \
+                                      "the forward-over-reverse shape E078 s5 " \
+                                      "verified; anything wider is refused until the " \
+                                      "surface grows deliberately",
+                                      what,
+                                      decl.wrt.map { |w| "#{w}:#{ptypes[w]}" }.join(", ")))
+    end
+  end
+  params
+end
+
+# ===========================================================================
+# G2 -- tools/realtime/spinel-rtcheck
+# ===========================================================================
+def rtverdict(d)
+  tsv = File.join(d, "verdict.tsv")
+  return ["?", ""] unless File.exist?(tsv)
+
+  py_splitlines(read_text(tsv)).each do |line|
+    c = py_split(line.sub(/\n+\z/, ""), "\t")
+    return [c[0].strip, c[2..].to_a.join("\t")] if c.size >= 2 && c[0] != "verdict"
+  end
+  ["?", ""]
+end
+
+def alloc_chains(paths_txt)
+  return [] unless File.exist?(paths_txt)
+
+  chains = []
+  cur = nil
+  started = false
+  py_splitlines(read_text(paths_txt)).each do |line|
+    st = py_strip(line)
+    if st.start_with?("ALLOC ") || st.start_with?("EXTERNAL ")
+      started = true
+      chains << cur if cur && !cur.empty?
+      cur = []
+      next
+    end
+    next unless started
+
+    if st.empty?
+      chains << cur if cur && !cur.empty?
+      cur = nil
+      next
+    end
+    cur << st[3..].split[0] if !cur.nil? && st.start_with?("-> ")
+  end
+  chains << cur if cur && !cur.empty?
+  chains.reject(&:empty?)
+end
+
+# A step that raises: the runtime's sp_raise* entries, and the one raise entry
+# whose name does not say so (Spinel Extended).
+#
+#   sp_nil_recv  NoMethodError "undefined method '<op>' for nil". Declared
+#                SP_NORETURN SP_COLD (vendor/spinel/lib/sp_alloc.h:845); its
+#                body (lib/sp_str.c:189) is straight-line -- root the name,
+#                allocate and format the message, root it, sp_raise_cls --
+#                with no path that returns. Since upstream a07741ff1 an Array
+#                element read that finds nil calls it (sp_ofloat_val), beside
+#                its siblings sp_raise_nil_to_int / sp_raise_nil_opnd, which the
+#                prefix already covered. Listed by name; no other entry is.
+RAISE_ENTRIES = %w[sp_nil_recv].freeze
+
+def raise_step?(step)
+  base = step.sub(/\.\d+\z/, "")
+  base.start_with?("sp_raise") || RAISE_ENTRIES.include?(base)
+end
+
+# The rules key a name rtcheck reports refers to. rtcheck prints an asm-label
+# symbol without its \01 marker, so a Mach-O ffi extern arrives as
+# _spg_lut1: the target's prefix is taken off when what remains is a rule.
+def rule_key(name, rules)
+  base = name.sub(/\.\d+\z/, "")
+  return base if rules.key?(base) || $label_prefix.empty? || !base.start_with?($label_prefix)
+
+  rest = base[$label_prefix.size..]
+  rules.key?(rest) ? rest : base
+end
+
+def chain_ok?(chain, rules)
+  return true if chain.any? { |step| raise_step?(step) }
+
+  unless chain.empty?
+    term = rule_key(chain[-1], rules)
+    return true if rules.key?(term) && rules[term]["alloc_free"]
+  end
+  false
+end
+
+# A chain through a root push and no raise: the push of a root, which the
+# GC-root elision pass removes before Enzyme runs. Upstream 8940de62e lets a
+# push past SP_GC_STACK_MAX grow an overflow segment (sp_gc_root_push_slow ->
+# realloc), so every push now reaches an allocator. Before elision G2 defers
+# these chains; G2E then requires that none is left in the IR that is
+# differentiated (Spinel Extended).
+def root_push_chain?(chain)
+  chain.any? { |step| step.start_with?("_sp_gc_root_push", "sp_gc_root_push_slow") } &&
+    chain.none? { |step| raise_step?(step) }
+end
+
+# G2 over `path`. With final: false (G2) `path` is the source, rtcheck builds
+# it, its C is checked for loop polls, and root-push chains are deferred. With
+# final: true (G2E) `path` is the TU after the elision pass, linked with the
+# runtime by rtcheck (`link`), and nothing is deferred.
+def gate2(path, decl, rtcheck, outdir, verbose, rules, final: false, link: [])
+  d = File.join(outdir, final ? "rtcheck-final" : "rtcheck", decl.name)
+  FileUtils.mkdir_p(d)
+  if final
+    p = run([rtcheck, path, *link, "--entry", decl.cname, "-o", d])
+  else
+    p = run([rtcheck, path, "--entry", decl.cname, "--keep", "-o", d])
+    kept = p.err[/intermediates in (\S+)/, 1]
+    cfile = kept && File.join(kept, File.basename(path, ".rb") + ".c")
+    bad_poll = if cfile && File.exist?(cfile)
+                 poll_problem(read_text(cfile), [decl.cname], "rtcheck's C")
+               else
+                 "rtcheck kept no C to check (#{kept || 'no intermediates line'})"
+               end
+    FileUtils.rm_rf(kept) if kept && File.directory?(kept)
+    return [false, "NOPOLL", bad_poll] if bad_poll
+  end
+
+  verdict, detail = rtverdict(d)
+  return [true, verdict, detail] if p.returncode.zero? && verdict.upcase == "PROVEN"
+
+  # rtcheck stopped before judging (no runtime bitcode, a failed build): say
+  # why it stopped, which only its stderr knows (Spinel Extended).
+  unless File.exist?(File.join(d, "verdict.tsv"))
+    last = p.err.to_s.lines.map(&:strip).reject(&:empty?).last
+    how = p.returncode ? format("exit %d", p.returncode) : format("signal %d", p.status.termsig)
+    return [false, verdict, format("rtcheck wrote no verdict (%s)%s", how, last ? ": " + last : "")]
+  end
+
+  chains = alloc_chains(File.join(d, "paths.txt"))
+  return [false, verdict, detail + " | no allocation paths to audit"] if chains.empty?
+
+  deferred = final ? [] : chains.select { |c| root_push_chain?(c) }
+  chains -= deferred
+  note = deferred.empty? ? "" : format(" | %d root-push chain(s) deferred to G2E", deferred.size)
+  if chains.empty?
+    return [true, "DEFERRED", detail + note]
+  end
+
+  bad = chains.reject { |c| chain_ok?(c, rules) }
+  unless bad.empty?
+    return [false, verdict,
+            detail + " | allocation path with no raise on it: " + bad[0].join(" -> ")]
+  end
+
+  ext_rule = chains.reject { |c| c.any? { |step| raise_step?(step) } }
+  d2 = d + "-abort"
+  FileUtils.mkdir_p(d2)
+  p2 = run([rtcheck, path, *(final ? link : []), "--entry", decl.cname, "--allow-abort", "-o", d2])
+  v2, det2 = rtverdict(d2)
+  if verbose
+    $stderr.write(format("  rtcheck %s -> %s, --allow-abort -> %s\n",
+                         decl.name, verdict, v2))
+  end
+  unless ext_rule.empty?
+    chains2 = alloc_chains(File.join(d2, "paths.txt"))
+    chains2 -= chains2.select { |c| root_push_chain?(c) } unless final
+    bad2 = chains2.reject { |c| chain_ok?(c, rules) }
+    raise_left = chains2.select { |c| c.any? { |step| raise_step?(step) } }
+    ok = bad2.empty? && raise_left.empty?
+    return [ok, v2,
+            det2 + format(" | strict verdict %s; %d raise chain(s), %d " \
+                          "registered-primitive chain(s) (ledger-excused)",
+                          verdict, chains.size - ext_rule.size, ext_rule.size) + note]
+  end
+  ok = (p2.returncode.zero? && v2.upcase == "PROVEN-MODULO-ABORT") ||
+       (!final && !deferred.empty? && v2.upcase == "REJECT" &&
+        alloc_chains(File.join(d2, "paths.txt")).all? { |c| root_push_chain?(c) })
+  [ok, v2, det2 + format(" | strict verdict %s; all %d allocation path(s) go " \
+                         "through a raise", verdict, chains.size) + note]
+end
+
+# ===========================================================================
+# the C shim
+# ===========================================================================
+def cdecl_args(params)
+  out = []
+  params.each do |n, t|
+    if t == "float_array"
+      out << "const double *a_#{n}"
+      out << "long long n_#{n}"
+    elsif t == "float"
+      out << "double v_#{n}"
+    else
+      out << "long long v_#{n}"
+    end
+  end
+  out
+end
+
+def ruby_ffi_types(params, wrt)
+  out = []
+  params.each do |_n, t|
+    if t == "float_array"
+      out += [":float_array", ":int64"]
+    elsif t == "float"
+      out << ":double"
+    else
+      out << ":int64"
+    end
+  end
+  wrt.each { out << ":float_array" }
+  out
+end
+
+def emit_shim(_decls, accepted, params_of)
+  l = []
+  l << ""
+  l << "/* ================= spinel-gradgen: generated shim ================= */"
+  l << "/* Appended to Spinel's own generated C so that the primal, the"
+  l << " * __enzyme_autodiff call site and the sp_FloatArray typedef all live"
+  l << " * in ONE module -- Enzyme is a MODULE pass and will not look across"
+  l << " * translation units (docs/tools/enzyme.md). */"
+  l << "extern int enzyme_const;"
+  l << "double __enzyme_autodiff(void *, ...);"
+  if accepted.any?(&:wants_forward)
+    l << "extern int enzyme_dup;"
+    l << "double __enzyme_fwddiff(void *, ...);"
+  end
+  # The frozen Python's `w` leaks out of the for statement (jvp/hvp imply wants_forward,
+  # so there is no real harm). The copy keeps the same lifetime.
+  w = nil
+  accepted.each do |d|
+    params = params_of[d.name]
+    st = d.stem
+    cargs = cdecl_args(params)
+    ptypes = params.to_h
+
+    mk_arrays = lambda do |shadow_for|
+      body = []
+      params.each do |n, t|
+        next if t != "float_array"
+
+        # Spinel Extended: the pinned runtime names the element type sp_float
+        # (spinel-llvm's pin: mrb_float); here and in the hvp direction below.
+        # Zero-initialised: since upstream a07741ff1 an sp_FloatArray also
+        # tracks nil elements (nil_lo, nilbits), and a NULL nilbits says it
+        # has none, which a caller's double buffer never does.
+        body << format("  sp_FloatArray fa_%s = {0}; fa_%s.data = (sp_float *)a_%s; " \
+                       "fa_%s.len = n_%s; fa_%s.cap = n_%s; fa_%s.frozen = 0;",
+                       n, n, n, n, n, n, n, n)
+        next unless shadow_for.include?(n)
+
+        body << format("  sp_FloatArray sh_%s = {0}; sh_%s.data = d_%s; " \
+                       "sh_%s.len = n_%s; sh_%s.cap = n_%s; sh_%s.frozen = 0;",
+                       n, n, n, n, n, n, n, n)
+      end
+      body
+    end
+
+    call_args = lambda do
+      params.map { |n, t| t == "float_array" ? "&fa_#{n}" : "v_#{n}" }
+    end
+
+    l << ""
+    l << format("double spg_val_%s(%s)", st, cargs.join(", "))
+    l << "{"
+    l.concat(mk_arrays.call([]))
+    l << format("  return (double)%s(%s);", d.cname, call_args.call.join(", "))
+    l << "}"
+
+    l << ""
+    l << format("long long spg_sig_%s(void) { return %dLL; }",
+                st, fnv1a64(d.sig_text(params)) & 0x7FFFFFFFFFFFFFFF)
+
+    shadow_args = d.wrt.map { |x| "double *d_#{x}" }
+    arr_wrt = d.wrt.select { |x| ptypes[x] == "float_array" }
+    sca_wrt = d.wrt.reject { |x| ptypes[x] == "float_array" }
+    l << ""
+    l << "/* Reverse mode.  Shadows are ASSIGNED, not accumulated: the shim"
+    l << format(" * zeroes them, so `spg_grad_%s` returns THE gradient at the point", st)
+    l << " * rather than adding to whatever the caller had. */"
+    l << format("double spg_grad_%s(%s)", st, (cargs + shadow_args).join(", "))
+    l << "{"
+    l.concat(mk_arrays.call(arr_wrt))
+    arr_wrt.each do |x|
+      l << format("  { long long i; for (i = 0; i < n_%s; i++) d_%s[i] = 0.0; }", x, x)
+    end
+    unless arr_wrt.empty?
+      aa = []
+      params.each do |n, t|
+        if t == "float_array"
+          aa << (arr_wrt.include?(n) ? "&fa_#{n}, &sh_#{n}" : "enzyme_const, &fa_#{n}")
+        else
+          aa << "enzyme_const, v_#{n}"
+        end
+      end
+      l << format("  __enzyme_autodiff((void *)%s, %s);", d.cname, aa.join(", "))
+    end
+    sca_wrt.each do |x|
+      aa = []
+      params.each do |n, t|
+        if t == "float_array"
+          aa << "enzyme_const, &fa_#{n}"
+        elsif n == x
+          aa << "v_#{n}"
+        else
+          aa << "enzyme_const, v_#{n}"
+        end
+      end
+      l << format("  d_%s[0] = __enzyme_autodiff((void *)%s, %s);",
+                  x, d.cname, aa.join(", "))
+    end
+    l << format("  return (double)%s(%s);", d.cname, call_args.call.join(", "))
+    l << "}"
+
+    w = d.wrt[0] if d.wants_forward
+    if d.jvp
+      aa = []
+      params.each do |n, t|
+        if t == "float_array"
+          aa << (n == w ? "enzyme_dup, &fa_#{n}, &fv_#{n}" : "enzyme_const, &fa_#{n}")
+        else
+          aa << "enzyme_const, v_#{n}"
+        end
+      end
+      l << ""
+      l << "/* Forward mode on the primal: returns (grad f . v). */"
+      l << format("double spg_jvp_%s(%s, const double *dir_%s)", st, cargs.join(", "), w)
+      l << "{"
+      l.concat(mk_arrays.call([]))
+      l << format("  sp_FloatArray fv_%s = {0}; fv_%s.data = (sp_float *)dir_%s; " \
+                  "fv_%s.len = n_%s; fv_%s.cap = n_%s; fv_%s.frozen = 0;",
+                  w, w, w, w, w, w, w, w)
+      l << format("  return __enzyme_fwddiff((void *)%s, %s);", d.cname, aa.join(", "))
+      l << "}"
+    end
+    next unless d.hvp
+
+    aa = []
+    zdecl = []
+    params.each do |n, t|
+      if t == "float_array"
+        if n == w
+          aa << "enzyme_dup, a_#{n}, dir_#{n}"
+        else
+          zdecl << n
+          aa << "enzyme_dup, a_#{n}, z_#{n}"
+        end
+        aa << "enzyme_const, n_#{n}"
+      else
+        aa << "enzyme_const, v_#{n}"
+      end
+    end
+    aa << "enzyme_dup, g, hv"
+    l << ""
+    l << "/* Hessian-vector product by forward-over-reverse. */"
+    l << format("double spg_hvp_%s(%s, const double *dir_%s, double *g, double *hv)",
+                st, cargs.join(", "), w)
+    l << "{"
+    l << format("  { long long i; for (i = 0; i < n_%s; i++) { g[i] = 0.0; hv[i] = 0.0; } }", w)
+    zdecl.each do |zn|
+      l << format("  double z_%s[n_%s > 0 ? n_%s : 1];", zn, zn, zn)
+      l << format("  { long long i; for (i = 0; i < n_%s; i++) z_%s[i] = 0.0; }", zn, zn)
+    end
+    l << format("  return __enzyme_fwddiff((void *)spg_grad_%s, %s);", st, aa.join(", "))
+    l << "}"
+  end
+  l << ""
+  l.join("\n")
+end
+
+# ===========================================================================
+# the norule gate (E082)
+# ===========================================================================
+LIBM_OK = %w[
+  exp exp2 expm1 log log2 log10 log1p sqrt cbrt
+  pow sin cos tan asin acos atan atan2 sinh
+  cosh tanh fabs fmax fmin floor ceil trunc round
+  fma hypot copysign
+].freeze
+
+# The target's symbol prefix, `_` on Mach-O and empty on ELF, as the C
+# compiler defines it (__USER_LABEL_PREFIX__); set once the clang is known.
+$label_prefix = ""
+
+def label_prefix_of(clang)
+  out, _err, st = Open3.capture3(clang, "-dM", "-E", "-x", "c", File::NULL)
+  return "" unless st.success?
+
+  out[/^#define __USER_LABEL_PREFIX__ ?(\S*)$/, 1].to_s
+end
+
+# An IR function name as the C source spells it. Since upstream 0baaaf5d2 an
+# ffi_func extern is declared under a private name bound to its symbol by an
+# asm label carrying the target's prefix, so on Mach-O the IR names it
+# @"\01_spg_lut1" and on ELF @spg_lut1. The \01 says the name is the object
+# symbol; the prefix is removed only then, and only the target's own.
+def ir_c_name(raw)
+  n = raw.start_with?('"') ? raw[1..-2] : raw
+  return n unless n.start_with?("\\01")
+
+  n = n[3..]
+  $label_prefix.empty? || !n.start_with?($label_prefix) ? n : n[$label_prefix.size..]
+end
+
+IR_NAME = /@("(?:[^"\\]|\\.)*"|[\w.$]+)/.freeze
+
+def ll_call_graph(text)
+  g = {}
+  text.scan(/^define[^\n]*?#{IR_NAME}\(.*?^\}/m) do
+    body = Regexp.last_match(0)
+    name = ir_c_name(Regexp.last_match(1))
+    calls = body.scan(/(?:\bcall|\binvoke)[^\n]*?#{IR_NAME}/).flatten.map { |c| ir_c_name(c) }.uniq
+    calls -= [name]
+    g[name] = calls
+  end
+  g
+end
+
+PRUNE_PREFIXES = %w[sp_raise sp_exc_ sp_unwind sp_trap sp_sig
+                    sp_str_dup_external].freeze
+
+def pruned?(name) = PRUNE_PREFIXES.any? { |p| name.start_with?(p) }
+
+def reachable_externs(graph, entry)
+  seen = {}
+  stack = [entry]
+  ext = {}
+  until stack.empty?
+    f = stack.pop
+    next if seen.key?(f)
+
+    seen[f] = true
+    graph.fetch(f, []).each do |c|
+      next if pruned?(c.sub(/\.\d+\z/, ""))
+
+      if graph.key?(c)
+        stack << c
+      else
+        ext[c] = true
+      end
+    end
+  end
+  ext.keys
+end
+
+def norule_scan(lltext, decl, rules)
+  graph = ll_call_graph(lltext)
+  entry = decl.cname
+  return ["norule", format("%s not found in the scan IR", entry)] unless graph.key?(entry)
+
+  reachable_externs(graph, entry).sort.each do |name|
+    base = name.sub(/\.\d+\z/, "")
+    next if base.start_with?("llvm.") || base.start_with?("__enzyme")
+    next if LIBM_OK.include?(base)
+    next if raise_step?(base) || base == "abort"
+    next if base == "sp_FloatArray_ffi_data"
+
+    if rules.key?(base)
+      unless rules[base]["reverse"]
+        return ["norule",
+                format("calls `%s`, which is in the SPGR surface but the " \
+                       "ledger (tools/grad/rules/rules.tsv) registers NO " \
+                       "reverse rule for it.  Register one or remove the " \
+                       "call; silently differentiating an opaque function " \
+                       "as zero is the failure shape this gate exists to " \
+                       "refuse", base)]
+      end
+      if decl.wants_forward && !rules[base]["forward"]
+        return ["norulefwd",
+                format("hvp:/jvp: requested, but the target reaches `%s`, " \
+                       "whose ledger row has no FORWARD rule (Enzyme " \
+                       "v0.0.290 cannot resolve a forward registration at " \
+                       "a call site with constant arguments -- " \
+                       "EnzymeLogic.cpp:4903, measured in E082).  Drop the " \
+                       "forward products or avoid the primitive", base)]
+      end
+      next
+    end
+    return ["norule",
+            format("calls extern `%s`, which has no Enzyme rule.  The ledger of " \
+                   "differentiable runtime primitives is tools/grad/rules/" \
+                   "rules.tsv; anything not on it is refused at compile time " \
+                   "rather than differentiated wrong at run time", base)]
+  end
+  nil
+end
+
+# ===========================================================================
+# G5 -- fast-math flags in the synthesised adjoints (E079 s4.3)
+# ===========================================================================
+# Every fast-math flag on a floating-point operation in an adjoint is a site,
+# with one exception. LLVM's instcombine, which runs after Enzyme, marks an
+# operation `nnan` or `ninf` when it can prove the flag, and a value converted
+# from an integer (sitofp/uitofp) is never NaN or infinite. When every operand
+# of an fneg or of a two-operand arithmetic or comparison instruction is such a
+# conversion in the same function, `nnan` and `ninf` there state a fact about
+# the operands rather than licensing a rewrite, and they are counted apart.
+# Constants and arguments do not qualify, and neither does any other flag.
+G5_SITE = /=\s*(?:fneg|fadd|fsub|fmul|fdiv|frem|fcmp|call|select|phi)\s+((?:fast|nnan|ninf|nsz|arcp|contract|afn|reassoc)\s+)+/
+G5_VALUE = /%(?:"[^"]*"|[-\w$.]+)/
+G5_BINARY = /=\s*(?:fadd|fsub|fmul|fdiv|frem)\s+(?:\w+\s+)+?(?:double|float|half|bfloat|fp128|x86_fp80|ppc_fp128|<[^>]*>)\s+(#{G5_VALUE}|[^,\s]+),\s*(#{G5_VALUE}|[^,\s]+)/
+G5_FCMP = /=\s*fcmp\s+(?:\w+\s+)+?(?:double|float|half|bfloat|fp128|x86_fp80|ppc_fp128|<[^>]*>)\s+(#{G5_VALUE}|[^,\s]+),\s*(#{G5_VALUE}|[^,\s]+)/
+G5_FNEG = /=\s*fneg\s+(?:\w+\s+)*?(?:double|float|half|bfloat|fp128|x86_fp80|ppc_fp128|<[^>]*>)\s+(#{G5_VALUE}|\S+)/
+G5_INT_FACTS = %w[nnan ninf].freeze
+
+# Scans the functions `names` of the module text `dtext`. Returns
+# [sites, int_derived]: each an array of [function, flags, instruction].
+def g5_scan(dtext, names)
+  sites = []
+  int_derived = []
+  names.each do |name|
+    m = /^define[^\n]*@#{Regexp.escape(name)}\(.*?^\}/m.match(dtext)
+    next if m.nil?
+
+    defs = {}
+    m[0].each_line do |l|
+      d = /^\s*(#{G5_VALUE})\s*=\s*(\w+)/.match(l)
+      defs[d[1]] = d[2] if d
+    end
+    m[0].each_line do |l|
+      s = G5_SITE.match(l)
+      next if s.nil?
+
+      flags = l[s.begin(0)...s.end(0)].scan(/\b(?:fast|nnan|ninf|nsz|arcp|contract|afn|reassoc)\b/).uniq
+      ops = (G5_BINARY.match(l) || G5_FCMP.match(l) || G5_FNEG.match(l))&.captures
+      fact = (flags - G5_INT_FACTS).empty? && !ops.nil? &&
+             ops.all? { |v| %w[sitofp uitofp].include?(defs[v]) }
+      (fact ? int_derived : sites) << [name, flags, l.strip]
+    end
+  end
+  [sites, int_derived]
+end
+
+# ===========================================================================
+# the pin (obstacle O1)
+# ===========================================================================
+# `cnames` are the C names (c_name_of). Upstream spells always_inline as its
+# portable SP_ALWAYS_INLINE; either spelling is the attribute the pin removes.
+def pin(src, cnames)
+  hits = {}
+  cnames.each do |n|
+    rx = /static\s+inline\s+(?:(?:__attribute__\(\(always_inline\)\)|SP_ALWAYS_INLINE)\s+)?([A-Za-z_][A-Za-z_0-9]*\s*\**\s*#{Regexp.escape(n)}\s*\()/
+    k = 0
+    src = src.gsub(rx) do
+      k += 1
+      "__attribute__((noinline)) #{Regexp.last_match(1)}"
+    end
+    if k.zero?
+      rx2 = /static\s+([A-Za-z_][A-Za-z_0-9]*\s*\**\s*#{Regexp.escape(n)}\s*\()/
+      src = src.gsub(rx2) do
+        k += 1
+        "__attribute__((noinline)) #{Regexp.last_match(1)}"
+      end
+    end
+    hits[n] = k
+  end
+  [src, hits]
+end
+
+# ===========================================================================
+# the gate driver (G3 + G4)
+# ===========================================================================
+def probe_c_name(dname, pi, ai) = format("pb_%s_%d_%d", dname, pi, ai)
+
+def emit_driver(accepted, params_of)
+  l = []
+  l << "/* spinel-gradgen: generated G3/G4 driver.  DO NOT EDIT. */"
+  l << "#include <stdio.h>"
+  l << "#include <stdlib.h>"
+  l << "#include <math.h>"
+  l << "#include <string.h>"
+  l << ""
+  l << "/* G3's step.  The central difference error is truncation"
+  l << " * O(h^2 f''') plus rounding O(eps|f|/h); for double the optimum is"
+  l << " * h ~ cbrt(eps) ~ 6e-6 and the best reachable relative error is"
+  l << " * eps^(2/3) ~ 3.7e-11 (R013 s3.2).  h = 1e-5*max(1,|x|) sits on that"
+  l << " * optimum, which is why the default tol of 1e-6 has ~5 decades of"
+  l << " * headroom over the noise floor and ~5 decades of bite against a"
+  l << " * dropped term (those are O(1) relative). */"
+  l << "static double step_h(double x) { double a = fabs(x); return 1e-5 * (a > 1.0 ? a : 1.0); }"
+  l << "static int g3_fail = 0, g4_fail = 0, rows = 0;"
+  l << "static double worst_rel = 0.0;"
+  any_fwd = accepted.any?(&:wants_forward)
+  if any_fwd
+    l << "static int gf_fail = 0;"
+    l << "static double worst_fwd = 0.0;"
+  end
+  if any_fwd
+    l << ""
+    l << "/* E082 forward-product gates.  The two probe directions are"
+    l << " * DETERMINISTIC (no RNG anywhere in a gate): dir0 = all ones,"
+    l << " * dir1 cycles {-1.75,-0.75,0.25,1.25,2.25}, never parallel to dir0. */"
+    l << "static void mk_dir(double *v, long long n, int which) {"
+    l << "  long long i;"
+    l << "  for (i = 0; i < n; i++)"
+    l << "    v[i] = which == 0 ? 1.0 : ((double)(i % 5) - 2.0 + 0.25);"
+    l << "}"
+    l << "static double dotv(const double *a, const double *b, long long n) {"
+    l << "  double s = 0.0; long long i;"
+    l << "  for (i = 0; i < n; i++) s += a[i] * b[i];"
+    l << "  return s;"
+    l << "}"
+    l << "static double relerr(double got, double ref) {"
+    l << "  double den = fabs(ref) > 1.0 ? fabs(ref) : 1.0;"
+    l << "  return fabs(got - ref) / den;"
+    l << "}"
+  end
+  l << ""
+  accepted.each do |d|
+    st = d.stem
+    params = params_of[d.name]
+    cargs = cdecl_args(params)
+    shadow_args = d.wrt.map { |w| "double *d_#{w}" }
+    l << format("extern double spg_val_%s(%s);", st, cargs.join(", "))
+    l << format("extern double spg_grad_%s(%s);", st, (cargs + shadow_args).join(", "))
+    l << format("extern long long spg_sig_%s(void);", st)
+    if d.jvp
+      l << format("extern double spg_jvp_%s(%s, const double *);", st, cargs.join(", "))
+    end
+    next unless d.hvp
+
+    l << format("extern double spg_hvp_%s(%s, const double *, double *, double *);",
+                st, cargs.join(", "))
+  end
+  l << ""
+  accepted.each do |d|
+    params = params_of[d.name]
+    d.probe.each_with_index do |pt, pi|
+      params.each_with_index do |(_n, t), ai|
+        v = pt[ai]
+        next if t != "float_array"
+
+        vals = v[1].map { |e| pynum("%.17g", e[1]) }.join(", ")
+        l << format("static double %s[] = { %s };",
+                    probe_c_name(d.name, pi, ai), vals.empty? ? "0.0" : vals)
+      end
+    end
+  end
+  l << ""
+  l << "int main(void)"
+  l << "{"
+  l << '  printf("gate\\ttarget\\twrt\\tindex\\tprobe\\tenzyme\\tfd\\trel\\tverdict\\n");'
+  accepted.each do |d|
+    st = d.stem
+    params = params_of[d.name]
+    ptypes = params.to_h
+    tol17 = pynum("%.17g", d.tol)
+    l << format("  /* ---------------- %s ---------------- */", d.name)
+    l << "  {"
+    l << format("    double nz[%d];", [1, d.wrt.size].max)
+    l << "    memset(nz, 0, sizeof nz);"
+    if d.hvp
+      l << "    /* E082 G4H bookkeeping: max |Hv| over every probe and"
+      l << "     * direction, plus a LINEARITY WITNESS -- an identically-"
+      l << "     * zero Hessian is only accepted when the gradient is the"
+      l << "     * same at x and at x + dir0, WITH THE SAME non-wrt"
+      l << "     * arguments (probes may differ in those, so comparing"
+      l << "     * across probes proves nothing).  A zero HVP and a broken"
+      l << "     * HVP look identical otherwise (E078 s5.4). */"
+      l << "    double hv_absmax = 0.0;"
+      l << "    int lin_checked = 0, lin_same = 0;"
+    end
+    d.probe.each_with_index do |pt, pi|
+      l << format("    { /* probe %d */", pi)
+      args = []
+      params.each_with_index do |(n, t), ai|
+        v = pt[ai]
+        if t == "float_array"
+          nm = probe_c_name(d.name, pi, ai)
+          ln = v[1].size
+          l << format("      double %s_c[%d]; memcpy(%s_c, %s, sizeof %s);",
+                      n, [1, ln].max, n, nm, nm)
+          args += ["#{n}_c", "#{ln}LL"]
+        elsif t == "float"
+          l << format("      double %s_c = %s;", n, pynum("%.17g", v[1]))
+          args << "#{n}_c"
+        else
+          l << format("      long long %s_c = %dLL;", n, v[1].to_i)
+          args << "#{n}_c"
+        end
+      end
+      d.wrt.each do |w|
+        ln = 1
+        if ptypes[w] == "float_array"
+          ai = params.index { |n, _| n == w }
+          ln = pt[ai][1].size
+        end
+        l << format("      double d_%s[%d]; memset(d_%s, 0, sizeof d_%s);",
+                    w, [1, ln].max, w, w)
+      end
+      l << format("      spg_grad_%s(%s%s);", st, args.join(", "),
+                  d.wrt.map { |w| ", d_#{w}" }.join)
+      d.wrt.each do |w|
+        ai = params.index { |n, _| n == w }
+        if ptypes[w] == "float_array"
+          ln = pt[ai][1].size
+          tgt = "#{w}_c"
+          l << format("      { int k; for (k = 0; k < %d; k++) {", ln)
+          l << format("        double s = %s[k], h = step_h(s);", tgt)
+          l << format("        %s[k] = s + h; double fp = spg_val_%s(%s);", tgt, st, args.join(", "))
+          l << format("        %s[k] = s - h; double fm = spg_val_%s(%s);", tgt, st, args.join(", "))
+          l << format("        %s[k] = s;", tgt)
+          l << "        double fd = (fp - fm) / (2 * h);"
+          l << "        double den = fabs(fd) > 1.0 ? fabs(fd) : 1.0;"
+          l << format("        double rel = fabs(d_%s[k] - fd) / den;", w)
+          l << "        if (rel > worst_rel) worst_rel = rel;"
+          l << format("        if (!(rel < %s)) g3_fail++;", tol17)
+          l << format("        if (fabs(d_%s[k]) > 0.0) nz[%d] = 1.0;", w, d.wrt.index(w))
+          l << "        rows++;"
+          l << format('        printf("G3\\t%s\\t%s\\t%%d\\t%d\\t%%.15e\\t%%.15e\\t%%.3e\\t%%s\\n",',
+                      d.name, w, pi)
+          l << format('               k, d_%s[k], fd, rel, rel < %s ? "OK" : "MISMATCH");', w, tol17)
+          l << "      } }"
+        else
+          tgt = "#{w}_c"
+          l << format("      { double s = %s, h = step_h(s);", tgt)
+          l << format("        %s = s + h; double fp = spg_val_%s(%s);", tgt, st, args.join(", "))
+          l << format("        %s = s - h; double fm = spg_val_%s(%s);", tgt, st, args.join(", "))
+          l << format("        %s = s;", tgt)
+          l << "        double fd = (fp - fm) / (2 * h);"
+          l << "        double den = fabs(fd) > 1.0 ? fabs(fd) : 1.0;"
+          l << format("        double rel = fabs(d_%s[0] - fd) / den;", w)
+          l << "        if (rel > worst_rel) worst_rel = rel;"
+          l << format("        if (!(rel < %s)) g3_fail++;", tol17)
+          l << format("        if (fabs(d_%s[0]) > 0.0) nz[%d] = 1.0;", w, d.wrt.index(w))
+          l << "        rows++;"
+          l << format('        printf("G3\\t%s\\t%s\\t0\\t%d\\t%%.15e\\t%%.15e\\t%%.3e\\t%%s\\n",',
+                      d.name, w, pi)
+          l << format('               d_%s[0], fd, rel, rel < %s ? "OK" : "MISMATCH");', w, tol17)
+          l << "      }"
+        end
+      end
+      if d.wants_forward
+        fw = d.wrt[0]
+        fai = params.index { |n, _| n == fw }
+        fln = pt[fai][1].size
+        agz = args.join(", ")
+        l << format("      { /* E082 forward gates, probe %d */", pi)
+        l << format("        double sv[%d], dirs[2][%d];", fln, fln)
+        l << "        double h, mx, rel; long long k; int di;"
+        l << format("        memcpy(sv, %s_c, sizeof sv);", fw)
+        l << format("        mx = 1.0; for (k = 0; k < %d; k++) if (fabs(sv[k]) > mx) mx = fabs(sv[k]);", fln)
+        l << "        h = 1e-5 * mx;"
+        l << format("        for (di = 0; di < 2; di++) mk_dir(dirs[di], %d, di);", fln)
+        l << format("        double hvs[2][%d], gg[2][%d];", fln, fln) if d.hvp
+        l << "        for (di = 0; di < 2; di++) {"
+        if d.jvp
+          l << format("          double jv = spg_jvp_%s(%s, dirs[di]);", st, agz)
+          l << format("          for (k = 0; k < %d; k++) %s_c[k] = sv[k] + h * dirs[di][k];", fln, fw)
+          l << format("          double fp = spg_val_%s(%s);", st, agz)
+          l << format("          for (k = 0; k < %d; k++) %s_c[k] = sv[k] - h * dirs[di][k];", fln, fw)
+          l << format("          double fm = spg_val_%s(%s);", st, agz)
+          l << format("          memcpy(%s_c, sv, sizeof sv);", fw)
+          l << "          double fdd = (fp - fm) / (2 * h);"
+          l << "          rel = relerr(jv, fdd);"
+          l << "          if (rel > worst_fwd) worst_fwd = rel;"
+          l << format("          if (!(rel < %s)) gf_fail++;", tol17)
+          l << "          rows++;"
+          l << format('          printf("G3F\\t%s\\t%s\\td%%d\\t%d\\t%%.15e\\t%%.15e\\t%%.3e\\t%%s\\n",',
+                      d.name, fw, pi)
+          l << format('                 di, jv, fdd, rel, rel < %s ? "OK" : "MISMATCH");', tol17)
+          l << "          /* cross-mode: forward tangent vs (reverse gradient . dir)."
+          l << format("           * d_%s still holds the assigned gradient from the G3 block. */", fw)
+          l << format("          double dt = dotv(d_%s, dirs[di], %d);", fw, fln)
+          l << "          rel = relerr(jv, dt);"
+          l << "          if (rel > worst_fwd) worst_fwd = rel;"
+          l << format("          if (!(rel < %s)) gf_fail++;", tol17)
+          l << "          rows++;"
+          l << format('          printf("GXF\\t%s\\t%s\\td%%d\\t%d\\t%%.15e\\t%%.15e\\t%%.3e\\t%%s\\n",',
+                      d.name, fw, pi)
+          l << format('                 di, jv, dt, rel, rel < %s ? "OK" : "MISMATCH");', tol17)
+        end
+        if d.hvp
+          l << format("          double hret = spg_hvp_%s(%s, dirs[di], gg[di], hvs[di]);", st, agz)
+          l << format("          double hdt = dotv(gg[di], dirs[di], %d);", fln)
+          l << "          rel = relerr(hret, hdt);"
+          l << "          if (rel > worst_fwd) worst_fwd = rel;"
+          l << format("          if (!(rel < %s)) gf_fail++;", tol17)
+          l << "          rows++;"
+          l << format('          printf("GDOT\\t%s\\t%s\\td%%d\\t%d\\t%%.15e\\t%%.15e\\t%%.3e\\t%%s\\n",',
+                      d.name, fw, pi)
+          l << format('                 di, hret, hdt, rel, rel < %s ? "OK" : "MISMATCH");', tol17)
+          l << "          /* H v against a central difference of the EXACT gradient */"
+          l << format("          double gp[%d], gm[%d];", fln, fln)
+          l << format("          for (k = 0; k < %d; k++) %s_c[k] = sv[k] + h * dirs[di][k];", fln, fw)
+          l << format("          spg_grad_%s(%s, gp);", st, agz)
+          l << format("          for (k = 0; k < %d; k++) %s_c[k] = sv[k] - h * dirs[di][k];", fln, fw)
+          l << format("          spg_grad_%s(%s, gm);", st, agz)
+          l << format("          memcpy(%s_c, sv, sizeof sv);", fw)
+          l << format("          for (k = 0; k < %d; k++) {", fln)
+          l << "            double hfd = (gp[k] - gm[k]) / (2 * h);"
+          l << "            rel = relerr(hvs[di][k], hfd);"
+          l << "            if (rel > worst_fwd) worst_fwd = rel;"
+          l << format("            if (!(rel < %s)) gf_fail++;", tol17)
+          l << "            if (fabs(hvs[di][k]) > hv_absmax) hv_absmax = fabs(hvs[di][k]);"
+          l << "            rows++;"
+          l << format('            printf("G3H\\t%s\\t%s\\td%%dk%%lld\\t%d\\t%%.15e\\t%%.15e\\t%%.3e\\t%%s\\n",',
+                      d.name, fw, pi)
+          l << format('                   di, k, hvs[di][k], hfd, rel, rel < %s ? "OK" : "MISMATCH");', tol17)
+          l << "          }"
+        end
+        l << "        }"
+        if d.hvp
+          l << "        /* symmetry: u . (H v) == v . (H u), the second-order G4"
+          l << "         * companion E078 s5.2 measured at exactly 0. */"
+          l << format("        { double uhv = dotv(dirs[1], hvs[0], %d);", fln)
+          l << format("          double vhu = dotv(dirs[0], hvs[1], %d);", fln)
+          l << "          rel = relerr(uhv, vhu);"
+          l << "          if (rel > worst_fwd) worst_fwd = rel;"
+          l << format("          if (!(rel < %s)) gf_fail++;", tol17)
+          l << "          rows++;"
+          l << format('          printf("GSYM\\t%s\\t%s\\t-\\t%d\\t%%.15e\\t%%.15e\\t%%.3e\\t%%s\\n",',
+                      d.name, fw, pi)
+          l << format('                 uhv, vhu, rel, rel < %s ? "OK" : "MISMATCH");', tol17)
+          l << "        }"
+          if pi.zero?
+            l << "        /* linearity witness: the gradient at x + dir0,"
+            l << "         * same non-wrt arguments, against gg[0] = grad at x */"
+            l << format("        { double gl[%d];", fln)
+            l << format("          for (k = 0; k < %d; k++) %s_c[k] = sv[k] + dirs[0][k];", fln, fw)
+            l << format("          spg_grad_%s(%s, gl);", st, agz)
+            l << format("          memcpy(%s_c, sv, sizeof sv);", fw)
+            l << "          lin_checked = 1; lin_same = 1;"
+            l << format("          for (k = 0; k < %d; k++)", fln)
+            l << format("            if (!(relerr(gl[k], gg[0][k]) < %s)) lin_same = 0;", tol17)
+            l << "        }"
+          end
+        end
+        l << "      }"
+      end
+      l << "    }"
+    end
+    l << "    /* G4: the gradient must not be identically zero over the"
+    l << "     * probe set.  R013 s4.1 walked into a relu-saturated network"
+    l << "     * where Enzyme and finite differences BOTH said 0.0, so G3"
+    l << "     * was green on a dead model.  Same hole E066 patched with a"
+    l << "     * distribution gate after its differential oracle went blind"
+    l << "     * to a bad mixer. */"
+    d.wrt.each_with_index do |w, i|
+      l << format('    printf("G4\\t%s\\t%s\\t-\\t-\\t%%.15e\\t-\\t-\\t%%s\\n", nz[%d],',
+                  d.name, w, i)
+      l << format('           nz[%d] > 0.0 ? "OK" : "IDENTICALLY-ZERO");', i)
+      l << format("    if (!(nz[%d] > 0.0)) g4_fail++;", i)
+    end
+    if d.hvp
+      l << "    /* G4H -- non-triviality lifted to second order (E078 s5.4:"
+      l << "     * a zero Hessian is indistinguishable from a broken HVP)."
+      l << "     * An identically-zero HVP is accepted ONLY when the"
+      l << "     * gradient is probe-independent, i.e. the target is"
+      l << "     * genuinely linear -- and that needs two probes to see. */"
+      l << "    {"
+      l << "      const char *v4 = \"OK\";"
+      l << "      int v4_fail = 0;"
+      l << "      if (!(hv_absmax > 0.0)) {"
+      l << "        if (!lin_checked) { v4 = \"ZERO-UNWITNESSED\"; v4_fail = 1; }"
+      l << "        else if (lin_same) v4 = \"ZERO-LINEAR-CONSISTENT\";"
+      l << "        else { v4 = \"ZERO-BUT-GRADIENT-VARIES\"; v4_fail = 1; }"
+      l << "      }"
+      l << "      if (v4_fail) gf_fail++;"
+      l << format('      printf("G4H\\t%s\\t%s\\t-\\t-\\t%%.15e\\t-\\t-\\t%%s\\n", hv_absmax, v4);',
+                  d.name, d.wrt[0])
+      l << "      rows++;"
+      l << "    }"
+    end
+    l << "  }"
+  end
+  if any_fwd
+    l << '  printf("#\\trows=%d\\tg3_fail=%d\\tg4_fail=%d\\tworst_rel=%.3e' \
+         '\\tgf_fail=%d\\tworst_fwd=%.3e\\n",'
+    l << "         rows, g3_fail, g4_fail, worst_rel, gf_fail, worst_fwd);"
+    l << "  return (g3_fail || g4_fail || gf_fail) ? 1 : 0;"
+  else
+    l << '  printf("#\\trows=%d\\tg3_fail=%d\\tg4_fail=%d\\tworst_rel=%.3e\\n",'
+    l << "         rows, g3_fail, g4_fail, worst_rel);"
+    l << "  return (g3_fail || g4_fail) ? 1 : 0;"
+  end
+  l << "}"
+  l.join("\n")
+end
+
+# ===========================================================================
+# the generated Ruby
+# ===========================================================================
+def emit_ruby(src_name, accepted, params_of)
+  l = []
+  l << format("# GENERATED by tools/grad/spinel-gradgen from %s -- do not edit.",
+              File.basename(src_name))
+  l << "#"
+  l << "# `require_relative` this next to the object file gradgen produced and"
+  l << "# link it with `spinel app.rb -o app --link <stem>_grad.o`.  The"
+  l << "# gradient is an ordinary C function; nothing in the program knows"
+  l << "# what a tape is."
+  l << "#"
+  l << "# Shadows are ASSIGNED (the shim zeroes them first), so a wrapper"
+  l << "# returns the primal value and leaves the gradient in the arrays you"
+  l << "# passed.  Those arrays must be Array[Float] and must STAY"
+  l << "# Array[Float]: if inference widens one to poly the write-back"
+  l << "# silently disappears (R004 P14)."
+  l << "module SPG"
+  accepted.each do |d|
+    params = params_of[d.name]
+    st = d.stem
+    l << format("  ffi_func :spg_val_%s, [%s], :double", st, ruby_ffi_types(params, []).join(", "))
+    l << format("  ffi_func :spg_grad_%s, [%s], :double", st, ruby_ffi_types(params, d.wrt).join(", "))
+    if d.jvp
+      l << format("  ffi_func :spg_jvp_%s, [%s], :double",
+                  st, (ruby_ffi_types(params, []) + [":float_array"]).join(", "))
+    end
+    if d.hvp
+      l << format("  ffi_func :spg_hvp_%s, [%s], :double",
+                  st, (ruby_ffi_types(params, []) + [":float_array"] * 3).join(", "))
+    end
+    l << format("  ffi_func :spg_sig_%s, [], :int64", st)
+  end
+  l << "end"
+  l << ""
+  l << "class GradError < StandardError"
+  l << "end"
+  l << ""
+  l << "# Fails loud when a stale .gen.rb meets a fresh object file: the hash"
+  l << "# covers the method name, the wrt set, the mode, the tolerance and"
+  l << "# every parameter type (E033 s4's discipline, one lane over)."
+  l << "def grad_check_signatures!"
+  accepted.each do |d|
+    h = fnv1a64(d.sig_text(params_of[d.name])) & 0x7FFFFFFFFFFFFFFF
+    l << format("  if SPG.spg_sig_%s != %d", d.stem, h)
+    l << format("    raise GradError, \"grad_def :%s -- the linked object was built " \
+                "from a different declaration\"", d.name)
+    l << "  end"
+  end
+  l << "  true"
+  l << "end"
+  accepted.each do |d|
+    params = params_of[d.name]
+    st = d.stem
+    rb_args = params.map { |n, _| n }
+    call = []
+    params.each do |n, t|
+      call << n
+      call << "#{n}.length" if t == "float_array"
+    end
+    l << ""
+    l << format("# f(%s) -- the ordinary call, through the SAME object file the",
+                rb_args.join(", "))
+    l << "# gradient came from (so the two can never drift apart)."
+    l << format("def gdval_%s(%s)", st, rb_args.join(", "))
+    l << format("  SPG.spg_val_%s(%s)", st, call.join(", "))
+    l << "end"
+    l << ""
+    l << format("# Returns f(%s); writes d f / d %s into the trailing arrays.",
+                rb_args.join(", "), d.wrt.join(", d "))
+    l << format("def grad_%s(%s)", st, (rb_args + d.wrt.map { |w| "d_#{w}" }).join(", "))
+    l << format("  SPG.spg_grad_%s(%s)", st, (call + d.wrt.map { |w| "d_#{w}" }).join(", "))
+    l << "end"
+    if d.jvp
+      w = d.wrt[0]
+      l << ""
+      l << "# Returns (grad f . dir) by FORWARD mode on the primal (E082)."
+      l << format("def jvp_%s(%s)", st, (rb_args + ["dir_#{w}"]).join(", "))
+      l << format("  SPG.spg_jvp_%s(%s)", st, (call + ["dir_#{w}"]).join(", "))
+      l << "end"
+    end
+    next unless d.hvp
+
+    w = d.wrt[0]
+    l << ""
+    l << "# Hessian-vector product by forward-over-reverse (E082, E078 s5)."
+    l << "# Writes grad f into g_out and H.dir into hv_out (both assigned,"
+    l << "# not accumulated); returns (grad f . dir)."
+    l << format("def hvp_%s(%s)", st, (rb_args + ["dir_#{w}", "g_out", "hv_out"]).join(", "))
+    l << format("  SPG.spg_hvp_%s(%s)", st, (call + ["dir_#{w}", "g_out", "hv_out"]).join(", "))
+    l << "end"
+  end
+  l << ""
+  l.join("\n")
+end
+
+# ===========================================================================
+# argparse (only the faces this parser has)
+# ===========================================================================
+USAGE_LINES = [
+  "usage: spinel-gradgen [-h] -o OUT [--emit-ruby FILE] [--llvm LLVM]",
+  "                      [--spinel SPINEL] [--typedump TYPEDUMP]",
+  "                      [--rtcheck RTCHECK] [--enzyme ENZYME]",
+  "                      [--gc-pass GC_PASS] [--rules-dir RULES_DIR] [--no-gates]",
+  "                      [--allow-rejects] [--bite NAME] [-v]",
+  "                      source",
+].freeze
+
+HELP_LINES = (USAGE_LINES + [
+  "",
+  "positional arguments:",
+  "  source",
+  "",
+  "options:",
+  "  -h, --help            show this help message and exit",
+  "  -o, --out OUT         output directory",
+  "  --emit-ruby FILE      write the ffi_func wrappers here (default",
+  "                        <stem>_grad.gen.rb)",
+  "  --llvm LLVM",
+  "  --spinel SPINEL",
+  "  --typedump TYPEDUMP",
+  "  --rtcheck RTCHECK",
+  "  --enzyme ENZYME",
+  "  --gc-pass GC_PASS",
+  "  --rules-dir RULES_DIR",
+  "                        directory holding rules.tsv + the rule sources",
+  "                        (tools/grad/rules). The tsv is the authority on which",
+  "                        runtime primitives are differentiable",
+  "  --no-gates            build the object but do not run G3/G4 (still runs",
+  "                        G1/G2)",
+  "  --allow-rejects       exit 0 even when some declarations were refused (for",
+  "                        the reject corpus)",
+  "  --bite NAME           DEMONSTRATION ONLY (E076 bite-proof). Force NAME past",
+  "                        G1 and past the empty-adjoint check, so that what G1",
+  "                        prevents can be observed rather than asserted. Never",
+  "                        use this to ship a gradient: R013 s3.3 O2 measured",
+  "                        that the number it produces is wrong, deterministic",
+  "                        and undiagnosed.",
+  "  -v, --verbose",
+]).freeze
+
+USAGE = "#{USAGE_LINES.join("\n")}\n"
+HELP = "#{HELP_LINES.join("\n")}\n"
+
+def arg_error(msg)
+  $stderr.write(USAGE)
+  $stderr.write("#{PROG}: error: #{msg}\n")
+  exit 2
+end
+
+LONG_OPTS = {
+  "--help" => [:help, false], "--out" => [:out, true],
+  "--emit-ruby" => [:emit_ruby, true], "--llvm" => [:llvm, true],
+  "--spinel" => [:spinel, true], "--typedump" => [:typedump, true],
+  "--rtcheck" => [:rtcheck, true], "--enzyme" => [:enzyme, true],
+  "--gc-pass" => [:gc_pass, true], "--rules-dir" => [:rules_dir, true],
+  "--no-gates" => [:no_gates, false], "--allow-rejects" => [:allow_rejects, false],
+  "--bite" => [:bite, true], "--verbose" => [:verbose, false],
+}.freeze
+
+SHORT_OPTS = { "-h" => "--help", "-o" => "--out", "-v" => "--verbose" }.freeze
+
+def parse_args(argv)
+  o = { out: nil, emit_ruby: nil, llvm: DEF_LLVM, spinel: DEF_SPINEL,
+        typedump: DEF_TYPEDUMP, rtcheck: DEF_RTCHECK, enzyme: DEF_ENZYME,
+        gc_pass: DEF_GCPASS, rules_dir: DEF_RULES_DIR, no_gates: false,
+        allow_rejects: false, bite: [], verbose: false }
+  positional = []
+  extras = []
+  only_positional = false
+  i = 0
+  take = lambda do |spelling, inline, has_inline|
+    if has_inline
+      i += 1
+      inline
+    else
+      arg_error("argument #{spelling}: expected one argument") if i + 1 >= argv.size
+      v = argv[i + 1]
+      i += 2
+      v
+    end
+  end
+  set = lambda do |key, spelling, inline, has_inline|
+    case key
+    when :help
+      arg_error("argument -h/--help: ignored explicit argument #{py_repr(inline)}") if has_inline
+      $stdout.write(HELP)
+      exit 0
+    when :no_gates, :allow_rejects, :verbose
+      arg_error("argument #{spelling}: ignored explicit argument #{py_repr(inline)}") if has_inline
+      o[key] = true
+      i += 1
+    when :bite
+      o[:bite] << take.call(spelling, inline, has_inline)
+    else
+      o[key] = take.call(spelling, inline, has_inline)
+    end
+  end
+
+  while i < argv.size
+    a = argv[i]
+    if only_positional
+      positional << a
+      i += 1
+      next
+    end
+    if a == "--"
+      only_positional = true
+      i += 1
+      next
+    end
+    if a.start_with?("--")
+      name, eq, inline = a.partition("=")
+      hits = LONG_OPTS.key?(name) ? [name] : LONG_OPTS.keys.select { |k| k.start_with?(name) }
+      if hits.empty?
+        extras << a
+        i += 1
+        next
+      elsif hits.size > 1
+        arg_error("ambiguous option: #{name} could match #{hits.join(', ')}")
+      end
+      set.call(LONG_OPTS[hits.first][0], hits.first, inline, !eq.empty?)
+      next
+    end
+    if a.start_with?("-") && a != "-" && !(a =~ /\A-\d+\z|\A-\d*\.\d+\z/)
+      long = SHORT_OPTS[a[0, 2]]
+      if long.nil?
+        extras << a
+        i += 1
+        next
+      end
+      spelling = "#{a[0, 2]}/#{long}"
+      rest = a[2..]
+      if LONG_OPTS[long][1]
+        if rest.empty?
+          set.call(LONG_OPTS[long][0], spelling, nil, false)
+        else
+          # The `-oDIR` form. argparse takes the rest as the value.
+          v = rest.start_with?("=") ? rest[1..] : rest
+          o[LONG_OPTS[long][0]] = v
+          i += 1
+        end
+      else
+        set.call(LONG_OPTS[long][0], spelling, nil, false)
+      end
+      next
+    end
+    positional << a
+    i += 1
+  end
+  # argparse puts the missing required arguments on one line **in `_actions` order**
+  # (`source` was added before `-o/--out`).
+  missing = []
+  missing << "source" if positional.empty?
+  missing << "-o/--out" if o[:out].nil?
+  arg_error("the following arguments are required: #{missing.join(', ')}") unless missing.empty?
+
+  extras.concat(positional[1..])
+  arg_error("unrecognized arguments: #{extras.join(' ')}") unless extras.empty?
+
+  o[:source] = positional.first
+  o
+end
+
+# ===========================================================================
+# main
+# ===========================================================================
+def gradgen_main(argv)
+  a = parse_args(argv)
+
+  src = py_abspath(a[:source])
+  die("no such file: #{src}") unless File.exist?(src)
+
+  out = py_abspath(a[:out])
+  FileUtils.mkdir_p(out)
+  stem = py_stem(src)
+
+  [[a[:spinel], "vendor/spinel/bin/spinel"],
+   [a[:typedump], "tools/contract/build/spinel-typedump"],
+   [a[:rtcheck], "tools/realtime/spinel-rtcheck"]].each do |tool, what|
+    die("#{what} not found at #{tool}") unless File.exist?(tool)
+  end
+  clang = File.join(a[:llvm], "clang")
+  $label_prefix = label_prefix_of(clang)
+  opt = File.join(a[:llvm], "opt")
+  link = File.join(a[:llvm], "llvm-link")
+  nm = File.join(a[:llvm], "llvm-nm")
+  [clang, opt, link].each do |t|
+    die("llvm tool missing: #{t} (docs/tools/llvm.md pins llvm@22)") unless File.exist?(t)
+  end
+  die("Enzyme plugin missing: #{a[:enzyme]} (docs/tools/enzyme.md)") unless File.exist?(a[:enzyme])
+
+  # ---- 1. declarations ---------------------------------------------------
+  p = must([a[:spinel], src, "--dump-ast"], "spinel --dump-ast")
+  ast = Ast.new(p.out)
+  begin
+    decls = read_decls(ast)
+  rescue DeclError => e
+    die(e.message)
+  end
+  if decls.empty?
+    die("no grad_def declaration in #{src}.\n" \
+        "  gradgen differentiates DECLARED methods, exactly as --tensor and\n" \
+        "  --freestanding compile declared ones:\n\n" \
+        "      grad_def :dense_loss, wrt: [:w], probe: [[...]]\n")
+  end
+
+  # ---- 2. G1 -------------------------------------------------------------
+  types = Types.new(a[:typedump], src)
+  accepted = []
+  rejects = []
+  params_of = {}
+  gates = []
+  decls.each do |d|
+    params = nil
+    refused = false
+    begin
+      params = gate1(d, types)
+    rescue Reject => r
+      if a[:bite].include?(d.name)
+        m = types.methods[d.name]
+        params = m ? m["params"] : []
+        $stderr.write(format("spinel-gradgen: --bite %s: G1 said REFUSED (%s: " \
+                             "%s) and is being ignored on purpose\n",
+                             d.name, r.obstacle, r.msg.split.join(" ")))
+        gates << ["G1", d.name, d.wrt.join(","), "-", "-", "-", "-",
+                  r.obstacle, "REFUSED-BUT-FORCED"]
+      else
+        rejects << [d, r.obstacle, r.msg]
+        gates << ["G1", d.name, "-", "-", "-", "-", "-", r.obstacle, "REFUSED"]
+        refused = true
+      end
+    else
+      gates << ["G1", d.name, d.wrt.join(","), "-", "-", "-", "-", "-", "OK"]
+    end
+    next if refused
+
+    params_of[d.name] = params
+    bad = nil
+    bad = "probe: is empty; G3/G4 have nothing to evaluate" if d.probe.empty?
+    d.probe.each do |pt|
+      if pt.size != params.size
+        bad = format("a probe entry has %d arguments, `%s` takes %d",
+                     pt.size, d.name, params.size)
+        break
+      end
+      params.each_with_index do |(n, t), idx|
+        v = pt[idx]
+        bad = "probe argument `#{n}` must be an Array (it is Array[Float])" if t == "float_array" && v[0] != "arr"
+        bad = "probe argument `#{n}` must be a number" if t != "float_array" && v[0] != "num"
+      end
+    end
+    if bad
+      rejects << [d, "probe", bad]
+      gates[-1] = ["G1", d.name, "-", "-", "-", "-", "-", "-", "REFUSED"]
+      params_of.delete(d.name)
+      next
+    end
+    accepted << d
+  end
+
+  # ---- 2b. the C, and each method's name in it ----------------------------
+  # Generated once here, before G2, because G2 already needs the C name
+  # (c_name_of) to name rtcheck's entry; step 4 uses the same text.
+  p = must([a[:spinel], src, "-S"], "spinel -S")
+  csrc = p.out
+  accepted.each do |d|
+    site = def_site(ast, d.name)
+    d.cname = site && c_name_of(csrc, site)
+    next if d.cname
+
+    die(format("could not find the C definition of `%s` in the generated C " \
+               "(obstacle O1): no single definition follows the #line of its def%s",
+               d.name, site ? format(" (%s:%d)", *site) : ""))
+  end
+
+  # ---- 3. G2 -------------------------------------------------------------
+  rules = load_rules(a[:rules_dir])
+  still = []
+  accepted.each do |d|
+    ok, verdict, detail = gate2(src, d, a[:rtcheck], out, a[:verbose], rules)
+    gates << ["G2", d.name, "-", "-", "-", "-", "-", verdict, ok ? "OK" : "REFUSED"]
+    if ok || a[:bite].include?(d.name)
+      still << d
+    else
+      rejects << [d, "O5",
+                  format("spinel-rtcheck says `%s`%s.  A differentiable " \
+                         "method has to be provably allocation-free: " \
+                         "Enzyme refuses any function that writes " \
+                         "@sp_gc_roots, and dropping those roots is only " \
+                         "sound when collection cannot happen (E017, " \
+                         "R013 s6.1)",
+                         verdict, detail.nil? || detail.empty? ? "" : " -- " + detail)]
+    end
+  end
+  accepted = still
+
+  write_reports = lambda do
+    File.open(File.join(out, "rejects.tsv"), "wb") do |f|
+      f.write("target\tobstacle\treason\n")
+      rejects.each { |d, obst, msg| f.write(format("%s\t%s\t%s\n", d.name, obst, msg.split.join(" "))) }
+    end
+    File.open(File.join(out, "gates.tsv"), "wb") do |f|
+      f.write("gate\ttarget\twrt\tindex\tprobe\tenzyme\tfd\trel\tverdict\n")
+      gates.each { |row| f.write(row.map(&:to_s).join("\t") + "\n") }
+    end
+  end
+
+  if accepted.empty?
+    write_reports.call
+    $stderr.write(format("spinel-gradgen: every declaration was refused " \
+                         "(see %s/rejects.tsv)\n", out))
+    return a[:allow_rejects] ? 0 : 1
+  end
+
+  # ---- 4. spinel -c ------------------------------------------------------
+  cfile = File.join(out, stem + ".c")
+  write_text(cfile, csrc)
+  c_sha = fnv1a64(csrc)
+  bad_poll = poll_problem(csrc, accepted.map(&:cname), "spinel -S's C")
+  die("#{bad_poll} (afd8ef8a0's loop poll reaches an allocation; see NO_POLL_DEFINE)") if bad_poll
+
+  pinned, hits = pin(csrc, accepted.map(&:cname))
+  accepted.each do |d|
+    next unless hits[d.cname].zero?
+
+    die(format("could not pin %s in the generated C (obstacle O1).  Spinel " \
+               "force-inlines small toplevel methods and the target would be " \
+               "gone before Enzyme runs.", d.cname))
+  end
+
+  # ---- 4b. the norule scan (E082) ---------------------------------------
+  scanfile = File.join(out, stem + "_scan.c")
+  write_text(scanfile, pinned)
+  scanll = File.join(out, stem + "_scan.ll")
+  scancc = [clang, "-O2", "-Wno-everything",
+            "-I", File.join(ROOT, "vendor", "spinel", "lib"),
+            "-I", File.join(ROOT, "vendor", "spinel", "lib", "regexp"),
+            "-Dmain=spinel_unused_main"]
+  # The scan reads the IR as step 5 will make it: with the GC-root elision
+  # pass and the rules' NOGC list, so a root push the pass removes is not
+  # counted as a call of the extern sp_gc_root_push_slow (upstream 8940de62e).
+  # A push the pass leaves still shows up here as that extern. Step 5 passes
+  # the list only when a rule is used; a push it keeps that the scan did not
+  # see is refused there, by the @sp_gc_roots check and by G2E.
+  if File.exist?(a[:gc_pass])
+    scannogc = File.join(out, "rules_nogc_scan.txt")
+    File.open(scannogc, "wb") do |f|
+      f.write("# generated by spinel-gradgen from rules.tsv (alloc_free column)\n")
+      rules.keys.sort.each { |r| f.write(r + "\n") if rules[r]["alloc_free"] }
+      f.write("sp_FloatArray_ffi_data\n")
+    end
+    scancc += ["-fpass-plugin=" + a[:gc_pass], "-mllvm", "-spinel-gc-callee-roots=false",
+               "-mllvm", "-spinel-nogc-list=" + scannogc]
+  end
+  scancc += ["-S", "-emit-llvm", scanfile, "-o", scanll]
+  must(scancc, "clang -emit-llvm (norule scan)")
+  scantext = read_text(scanll)
+  used_rules = {}
+  still = []
+  accepted.each do |d|
+    hit = norule_scan(scantext, d, rules)
+    if !hit.nil? && !a[:bite].include?(d.name)
+      obst, msg = hit
+      rejects << [d, obst, msg]
+      gates << ["G1R", d.name, d.wrt.join(","), "-", "-", "-", "-", obst, "REFUSED"]
+      next
+    end
+    graph = ll_call_graph(scantext)
+    reachable_externs(graph, d.cname).each do |name|
+      base = name.sub(/\.\d+\z/, "")
+      used_rules[base] = true if rules.key?(base) && rules[base]["reverse"]
+    end
+    still << d
+  end
+  accepted = still
+  if accepted.empty?
+    write_reports.call
+    $stderr.write(format("spinel-gradgen: every declaration was refused " \
+                         "(see %s/rejects.tsv)\n", out))
+    return a[:allow_rejects] ? 0 : 1
+  end
+
+  any_fwd = accepted.any?(&:wants_forward)
+  pinned += emit_shim(decls, accepted, params_of)
+  unless used_rules.empty?
+    # Each primitive is declared under its object symbol, as the compiler
+    # declares an ffi_func extern since upstream 0baaaf5d2: an asm label with
+    # the target's __USER_LABEL_PREFIX__. On ELF that is the plain name; on
+    # Mach-O the kernel calls @"\01_spg_lut1", and a plain declaration here
+    # was a second global, @spg_lut1, for the same symbol -- the Enzyme
+    # registration below bound to it, and Enzyme found no rule for the call
+    # ("No augmented forward pass found for _spg_lut1"). Declared first, the
+    # label carries over to the rules file's own declarations.
+    proto = ["#include <stdint.h>",
+             "/* spinel-gradgen: registered rules primitives are pure " \
+             "(E082, rules.tsv) */",
+             "#define SPG_RULE_STR_(x) #x",
+             "#define SPG_RULE_STR(x) SPG_RULE_STR_(x)",
+             "#ifdef __USER_LABEL_PREFIX__",
+             "#define SPG_RULE_SYM(s) SPG_RULE_STR(__USER_LABEL_PREFIX__) s",
+             "#else",
+             "#define SPG_RULE_SYM(s) s",
+             "#endif"]
+    rules.keys.sort.each do |r|
+      sig = rules[r]["sig"]
+      proto << "#{sig} __asm__(SPG_RULE_SYM(\"#{r}\")) __attribute__((pure));" if sig
+    end
+    pinned = proto.join("\n") + "\n" + pinned
+    pinned += "\n" + read_text(File.join(a[:rules_dir], "spinel_grad_rules_enzyme.c"))
+  end
+  pinfile = File.join(out, stem + "_pin.c")
+  write_text(pinfile, pinned)
+
+  rules_impl_o = nil
+  unless used_rules.empty?
+    rules_impl_o = File.join(out, "rules_impl.o")
+    must([clang, "-O2", "-Wno-everything", "-c",
+          File.join(a[:rules_dir], "spinel_grad_rules_impl.c"),
+          "-o", rules_impl_o], "clang -c (rules impl)")
+    pu = run([nm, "-u", rules_impl_o])
+    undef_impl = py_splitlines(pu.out).map { |x| x.strip }.reject(&:empty?)
+                                      .map { |x| x.split[-1] }.uniq.sort
+    gates << ["RIMPL", "rules_impl.o", "-", "-", "-", "-", "-",
+              undef_impl.empty? ? "-" : undef_impl.join(";"),
+              undef_impl.empty? ? "OK" : "RED"]
+    unless undef_impl.empty?
+      write_reports.call
+      die(format("rules_impl.o has undefined symbols (%s); the G2 audit " \
+                 "accepts registered-primitive frontiers ON THE GROUND that " \
+                 "this object is self-contained", undef_impl.join(", ")))
+    end
+  end
+
+  # ---- 5. IR, with GC roots removed on the strength of G2 ---------------
+  ll = File.join(out, stem + "_grad.ll")
+  cc = [clang, "-O2", "-Wno-everything",
+        "-I", File.join(ROOT, "vendor", "spinel", "lib"),
+        "-I", File.join(ROOT, "vendor", "spinel", "lib", "regexp"),
+        "-Dmain=spinel_unused_main"]
+  if File.exist?(a[:gc_pass])
+    cc += ["-fpass-plugin=" + a[:gc_pass], "-mllvm", "-spinel-gc-callee-roots=false"]
+    unless used_rules.empty?
+      nogc = File.join(out, "rules_nogc.txt")
+      File.open(nogc, "wb") do |f|
+        f.write("# generated by spinel-gradgen from rules.tsv (alloc_free column)\n")
+        rules.keys.sort.each { |r| f.write(r + "\n") if rules[r]["alloc_free"] }
+        f.write("sp_FloatArray_ffi_data\n")
+      end
+      cc += ["-mllvm", "-spinel-nogc-list=" + nogc]
+    end
+  end
+  cc += ["-S", "-emit-llvm", pinfile, "-o", ll]
+  must(cc, "clang -emit-llvm")
+
+  unless used_rules.empty?
+    must([opt, "-passes=dse,adce,instcombine<no-verify-fixpoint>,simplifycfg",
+          "-S", ll, "-o", ll], "opt (post-elision cleanup)")
+  end
+
+  body = read_text(ll)
+
+  root_traffic_ok = lambda do |fnbody|
+    next false if fnbody.include?("sp_gc_roots")
+
+    loads = fnbody.scan(/(%[\w.]+) = load i32, ptr @sp_gc_nroots/).flatten
+    stores = fnbody.scan(/store i32 (%[\w.]+|-?\d+), ptr @sp_gc_nroots/).flatten
+    next true if loads.empty? && stores.empty?
+
+    loads.size == 1 && stores.size == 1 && stores[0] == loads[0]
+  end
+
+  accepted.each do |d|
+    m = /^define[^\n]*@#{Regexp.escape(d.cname)}\(.*?^\}/m.match(body)
+    die(format("%s did not survive into the IR", d.cname)) if m.nil?
+    next if root_traffic_ok.call(m[0])
+
+    die(format("%s still writes @sp_gc_roots after the elision pass; Enzyme " \
+               "will refuse it (R013 s3.3 O5)", d.cname))
+  end
+
+  # ---- 5b. G2E: G2 again, on the IR that is differentiated ---------------
+  # G2 deferred the chains through a root push; this is where they must be
+  # gone. The TU after the elision pass is linked with the runtime bitcode
+  # (rtcheck --link-runtime) and judged by G2's rules with nothing deferred.
+  link = [csrc.include?("/* SPINEL_USES_THREADS */") ? "--link-runtime-mt" : "--link-runtime"]
+  g2e_bad = []
+  accepted.each do |d|
+    ok, verdict, detail = gate2(ll, d, a[:rtcheck], out, a[:verbose], rules,
+                                final: true, link: link)
+    gates << ["G2E", d.name, "-", "-", "-", "-", "-", verdict, ok ? "OK" : "REFUSED"]
+    next if ok
+
+    rejects << [d, "O5", format("spinel-rtcheck on the elided IR says `%s` -- %s", verdict, detail)]
+    g2e_bad << d.name
+  end
+  unless g2e_bad.empty?
+    write_reports.call
+    die(format("G2E refused %s on the IR after the elision pass (see %s/rejects.tsv)",
+               g2e_bad.join(", "), out))
+  end
+
+  # ---- 6. Enzyme --------------------------------------------------------
+  diff = File.join(out, stem + "_diff.ll")
+  passes = "enzyme,function(mem2reg,instcombine<no-verify-fixpoint>,simplifycfg),globaldce"
+  passes = "preserve-nvvm," + passes unless used_rules.empty?
+  optcmd = [opt, "-load-pass-plugin=" + a[:enzyme], "-passes=" + passes]
+  g5_active = any_fwd || !used_rules.empty?
+  optcmd << "-enzyme-fast-math=0" if g5_active
+  must(optcmd + ["-S", ll, "-o", diff], "opt -passes=enzyme")
+  dtext = read_text(diff)
+  adjoints = dtext.scan(/^define[^\n]*@(diffe\w+)/).flatten
+  fwd_adjoints = dtext.scan(/^define[^\n]*@(fwddiffe\w+)/).flatten
+
+  if g5_active
+    fm_sites, fm_int = g5_scan(dtext, adjoints | fwd_adjoints)
+    detail = format("%d fastmath sites", fm_sites.size)
+    detail += format(", %d int-derived nnan/ninf", fm_int.size) unless fm_int.empty?
+    gates << ["G5", stem, "-", "-", "-", "-", "-", detail, fm_sites.empty? ? "OK" : "RED"]
+    unless fm_sites.empty?
+      write_reports.call
+      die(format("G5: %d fast-math site(s) in the synthesised adjoints even " \
+                 "with -enzyme-fast-math=0, with flag(s) %s (first: @%s: %s) -- " \
+                 "a fast-math flag licences rewrites that change the result, " \
+                 "and is a determinism leak (E079 s4.3)",
+                 fm_sites.size, fm_sites.flat_map { |s| s[1] }.uniq.join(", "),
+                 fm_sites[0][0], fm_sites[0][2]))
+    end
+  end
+
+  accepted.each do |d|
+    if d.hvp && !fwd_adjoints.any? { |x| x.start_with?("fwddiffespg_grad_" + d.stem) }
+      die(format("hvp: requested for %s but Enzyme produced no forward " \
+                 "adjoint of spg_grad_%s", d.name, d.stem))
+    end
+    next unless d.jvp && !fwd_adjoints.any? { |x| x.start_with?("fwddiffe" + d.cname) }
+
+    die(format("jvp: requested for %s but Enzyme produced no forward " \
+               "adjoint of %s", d.name, d.cname))
+  end
+  accepted.each do |d|
+    want = "diffe" + d.cname
+    die(format("Enzyme produced no adjoint @%s", want)) unless adjoints.include?(want)
+
+    m = /^define[^\n]*@#{want}\(.*?^\}/m.match(dtext)
+    next unless m.nil? || !m[0].include?("double")
+
+    msg = format("the adjoint @%s carries no floating point -- this is R013 " \
+                 "s3.3 O2 (the silent empty adjoint) and it means G1 let a " \
+                 "non-float primal through", want)
+    if a[:bite].include?(d.name)
+      $stderr.write(format("spinel-gradgen: --bite %s: %s\n", d.name, msg))
+      write_text(File.join(out, format("bite_%s_adjoint.ll", d.name)),
+                 m ? m[0] : "(no adjoint at all)\n")
+    else
+      die(msg)
+    end
+  end
+
+  exports = []
+  accepted.each do |d|
+    exports += ["spg_grad_" + d.stem, "spg_val_" + d.stem, "spg_sig_" + d.stem]
+    exports << "spg_jvp_" + d.stem if d.jvp
+    exports << "spg_hvp_" + d.stem if d.hvp
+  end
+  minll = File.join(out, stem + "_min.ll")
+  must([opt, "-passes=internalize,globaldce",
+        "-internalize-public-api-list=" + exports.join(","),
+        "-S", diff, "-o", minll], "opt -passes=internalize,globaldce")
+  obj = File.join(out, stem + "_grad.o")
+  must([clang, "-O2", "-c", minll, "-o", obj], "clang -c")
+
+  # ---- 7. G3 / G4 -------------------------------------------------------
+  g3fail = 0
+  g4fail = 0
+  gffail = 0
+  worst = 0.0
+  worst_fwd = 0.0
+  unless a[:no_gates]
+    drv = File.join(out, stem + "_gate.c")
+    write_text(drv, emit_driver(accepted, params_of))
+    exe = File.join(out, stem + "_gate")
+    gatecc = [clang, "-O2", "-Wno-everything", drv, diff]
+    gatecc << rules_impl_o if rules_impl_o
+    gatecc += ["-o", exe, "-lm",
+               "-L", File.join(ROOT, "vendor", "spinel", "lib"), "-lspinel_rt"]
+    # Spinel Extended: off macOS the runtime needs libcrypt (String#crypt), as
+    # vendor/spinel/src/main.c links it for every program.
+    gatecc << "-lcrypt" unless RUBY_PLATFORM.include?("darwin")
+    must(gatecc, "clang (gate driver)")
+    p = run([exe])
+    $stdout.write(p.out)
+    $stderr.write(p.err) unless p.err.empty?
+    py_splitlines(p.out).each do |line|
+      c = py_split(line, "\t")
+      if !c.empty? && %w[G3 G4 G3F GXF G3H GDOT GSYM G4H].include?(c[0])
+        gates << c
+      end
+      next unless line.start_with?("#\t")
+
+      py_split(line, "\t")[1..].each do |tok|
+        k, _sep, v = tok.partition("=")
+        case k
+        when "g3_fail" then g3fail = pyint(v)
+        when "g4_fail" then g4fail = pyint(v)
+        when "worst_rel" then worst = pyfloat(v)
+        when "gf_fail" then gffail = pyint(v)
+        when "worst_fwd" then worst_fwd = pyfloat(v)
+        end
+      end
+    end
+    unless p.returncode.zero?
+      write_reports.call
+      die(format("G3/G4%s red: g3_fail=%d g4_fail=%d gf_fail=%d (see %s/gates.tsv)",
+                 any_fwd ? "/fwd" : "", g3fail, g4fail, gffail, out))
+    end
+  end
+
+  # ---- 8. reports -------------------------------------------------------
+  rb = a[:emit_ruby] || File.join(out, stem + "_grad.gen.rb")
+  write_text(rb, emit_ruby(src, accepted, params_of))
+
+  undef_syms = ""
+  if File.exist?(nm)
+    pu = run([nm, "-u", obj])
+    undef_syms = py_splitlines(pu.out).map { |x| x.strip }.reject(&:empty?)
+                                 .map { |x| x.split[-1] }.uniq.sort.join(";")
+  end
+  File.open(File.join(out, "targets.tsv"), "wb") do |f|
+    f.write("target\twrt\tmode\ttol\tparams\tret\tsig_fnv1a\texports\tprobes\n")
+    accepted.each do |d|
+      params = params_of[d.name]
+      f.write(format("%s\t%s\t%s\t%s\t%s\tfloat\t%016x\t%s\t%d\n",
+                     d.name, d.wrt.join(","), d.mode, pynum("%g", d.tol),
+                     params.map { |n, t| "#{n}:#{t}" }.join(","),
+                     fnv1a64(d.sig_text(params)) & 0x7FFFFFFFFFFFFFFF,
+                     ["spg_grad_" + d.stem, "spg_val_" + d.stem,
+                      "spg_sig_" + d.stem].join(","),
+                     d.probe.size))
+    end
+  end
+  write_reports.call
+  File.open(File.join(out, "build.tsv"), "wb") do |f|
+    f.write("key\tvalue\n")
+    f.write(format("source\t%s\n", File.basename(src)))
+    f.write(format("generated_c_fnv1a\t%016x\n", c_sha))
+    f.write(format("targets\t%d\n", accepted.size))
+    f.write(format("rejects\t%d\n", rejects.size))
+    f.write(format("adjoints\t%s\n", adjoints.uniq.sort.join(",")))
+    f.write(format("object\t%s\n", File.basename(obj)))
+    f.write(format("object_undefined\t%s\n", undef_syms))
+    f.write(format("g3_fail\t%d\n", g3fail))
+    f.write(format("g4_fail\t%d\n", g4fail))
+    f.write(format("worst_rel\t%s\n", pynum("%.3e", worst)))
+    f.write("enzyme_fast_math\t0\n") if any_fwd || !used_rules.empty?
+    if any_fwd
+      f.write(format("fwd_adjoints\t%s\n", fwd_adjoints.uniq.sort.join(",")))
+      f.write(format("gf_fail\t%d\n", gffail))
+      f.write(format("worst_fwd\t%s\n", pynum("%.3e", worst_fwd)))
+    end
+    unless used_rules.empty?
+      f.write(format("rules_used\t%s\n", used_rules.keys.sort.join(",")))
+      f.write(format("rules_impl_object\t%s\n", File.basename(rules_impl_o)))
+    end
+  end
+
+  if any_fwd
+    File.open(File.join(out, "fwd_targets.tsv"), "wb") do |f|
+      f.write("target\twrt\thvp\tjvp\texports\n")
+      accepted.each do |d|
+        next unless d.wants_forward
+
+        ex = []
+        ex << "spg_hvp_" + d.stem if d.hvp
+        ex << "spg_jvp_" + d.stem if d.jvp
+        f.write(format("%s\t%s\t%s\t%s\t%s\n", d.name, d.wrt[0],
+                       d.hvp ? "yes" : "no", d.jvp ? "yes" : "no", ex.join(",")))
+      end
+    end
+  end
+  unless used_rules.empty?
+    File.open(File.join(out, "rules_used.tsv"), "wb") do |f|
+      f.write("function\treverse_rule\tforward_rule\n")
+      used_rules.keys.sort.each do |r|
+        f.write(format("%s\t%s\t%s\n", r, rules[r]["reverse"] ? "yes" : "no",
+                       rules[r]["forward"] ? "yes" : "no"))
+      end
+    end
+  end
+
+  $stderr.write(format("spinel-gradgen: %d target(s), %d reject(s), worst_rel=%s -> %s\n",
+                       accepted.size, rejects.size, pynum("%.3e", worst), out))
+  return 1 if !rejects.empty? && !a[:allow_rejects]
+
+  0
+end
+
+if $PROGRAM_NAME == __FILE__
+  begin
+    exit(gradgen_main(ARGV))
+  rescue Die => e
+    $stderr.write("#{PROG}: #{e.message}\n")
+    exit 1
+  end
+end

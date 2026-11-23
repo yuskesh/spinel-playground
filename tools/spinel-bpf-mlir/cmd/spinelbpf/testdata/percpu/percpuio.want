@@ -1,0 +1,13 @@
+PA[0] len_is_possible=true packets_slots=[2] sum=3 bytes_sum=180
+PI[1] slots=[2] sum=6
+PH[7] slots=[2] sum=15 has=true has8=false
+PA[1] round trip=true
+PI[0] round trip=true sum_ok=true
+PH[9] round trip=true keys=[7, 9]
+del9=true del9again=false
+get PH[9] err=SpinelBPF::NotFound
+put short err=SpinelBPF::ValueRange
+map_get on PI err=SpinelBPF::MapMismatch
+hash_get on PH err=SpinelBPF::MapMismatch
+percpu_get on PH err=SpinelBPF::MapMismatch
+alive

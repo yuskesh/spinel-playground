@@ -1,0 +1,4 @@
+target	wrt	hvp	jvp	exports
+cubic	x	yes	yes	spg_hvp_cubic,spg_jvp_cubic
+chain_px	x	yes	no	spg_hvp_chain_px
+chain_gam_px	x	yes	no	spg_hvp_chain_gam_px

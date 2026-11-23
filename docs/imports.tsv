@@ -1,0 +1,240 @@
+# docs/imports.tsv -- every tracked file, under exactly one row: which import
+# batch it came with and what licence applies to it. THIRD_PARTY.md is
+# generated from it.
+#
+# ROWS (tab-separated)
+#   glob     a path from the repository root, matched with File.fnmatch
+#            (FNM_PATHNAME, FNM_EXTGLOB and FNM_DOTMATCH: `*` stays in one
+#            directory, `**/` crosses them, `{a,b}` is either)
+#   batch    `original` (written here), or batch names declared by an
+#            `@batch` line below, joined with `+` when a directory holds
+#            files of several batches
+#   license  MIT, Apache-2.0, GPL-2.0, GPL-3.0, LGPL-2.1, LGPL-3.0,
+#            BSD-2-Clause, BSD-3-Clause, ISC, zlib, Unicode-3.0, project
+#            (written here: the project licence, Apache-2.0 WITH
+#            LLVM-exception, in LICENSE), project-ported (ported from the
+#            owner's earlier repositories, which stated no licence; the
+#            owner put them under the project licence on 2026-11-20), joined
+#            with `+` when a file carries two
+#   note     anything the review needs to know
+#
+# `@batch NAME HEADING` declares a batch: HEADING is the heading of its
+# section in docs/provenance.md, without the leading #s.
+#
+# tools/provenance/check-imports.rb fails when a tracked file is under no row
+# or under two, a row matches no tracked file, a batch or licence is not
+# declared, or a file's SPDX-License-Identifier names a licence its row does
+# not (a project-ported row only counts them: a file's own SPDX line keeps
+# its licence). Every import adds its rows in the same commit; so does every
+# new file a row does not already cover.
+#
+# Files written here inside an imported directory are project, and so are the
+# notices written here for imports. A README translated or
+# rewritten here from the source's own, and an imported file rewritten here,
+# stay with the batch, and the note says so.
+@batch	spinel-baseline	Spinel baseline
+@batch	zephyr-dts	Zephyr v4.4.2 and SDK 1.0.1 (2026-09-22)
+@batch	core-slice	Imported component: the native core slice
+@batch	doom-hosted	DOOM hosted import (2026-09-11)
+@batch	doom-extractions	DOOM capability extractions (2026-09-12)
+@batch	doom-reference	DOOM reference patches for doomgeneric (2026-09-11)
+@batch	spinel-fork-fixtures	Spinel fork reproducers (2026-09-12)
+@batch	freestanding	Freestanding target profiles and lanes (2026-09-23)
+@batch	wasm-edge	WASM and edge capability (2026-09-23)
+@batch	tensor	Tensor lane: tensor_def, fusion and tensor_extern through IREE (2026-09-23)
+@batch	host-analysis	Host analysis tools: the allocation-freedom prover and the boxing census (2026-09-23)
+@batch	grad	Differentiable Ruby: grad_def and the gradient lanes (2026-09-23)
+@batch	raster	DOOM GPU raster: the Job IR lane attached to this tree's DOOM (2026-09-23)
+@batch	ebpf	spinel-ebpf: the eBPF-accelerated Ruby HTTP server and probe DSL (2026-09-23)
+@batch	gcmon	GC monitoring: the section probe, the driver and DOOM's allocation gate (2026-09-23)
+@batch	shader	Shader lane: Ruby shaders to SPIR-V, WGSL and MSL (2026-09-23)
+@batch	llvm-vi-blog	LLVM backend driver, spinel-vi and mvc-blog (2026-09-23)
+@batch	doom-ppm	DOOM PPM writer and the examples index (2026-09-23)
+@batch	spbpf-go	The SpBPF MLIR lane and the Go path to eBPF (2026-09-23)
+@batch	spinel-mlir-facts	Patch 2: spinel-mlir M1–M3, the spinel_facts contract v2, 2026-10-25
+@batch	spinel-bpf-mlir	spinel-bpf-mlir v0.7.0 and its loader bml: the bcc tools (2026-10-26)
+@batch	spinel-mlir-consumer	spinel-mlir's consumer: the BPF side from spinel_facts v2 (2026-10-26)
+@batch	spinel-mlir-m4	Patch 3: spinel-mlir M4′, the typing probe, 2026-10-27
+@batch	spinel-modular	spinel-modular as a submodule (2026-11-23)
+#
+#glob	batch	license	note
+#
+# --- the repository root, the documents and the pinned compiler
+{.gitignore,.gitmodules,AGENTS.md,CLAUDE.md,CONTRIBUTING.md,NOTICE,README.md,THIRD_PARTY.md}	original	project
+LICENSE	original	project	the project licence, Apache-2.0 WITH LLVM-exception (owner, 2026-11-20): tools/spinel-bpf-mlir/LICENSE byte for byte, the text the owner's bpf-mlir repositories use
+docs/**/*	original	project
+vendor/spinel	spinel-baseline	MIT	a submodule entry; the pinned tree keeps its own notices
+vendor/spinel-modular	spinel-modular	Apache-2.0	a submodule entry (Apache-2.0 WITH LLVM-exception); the pinned tree keeps its own notices
+third_party/spinel-mlir/SPINEL_MLIR_PATCHES.md	spinel-mlir-facts+spinel-mlir-m4	project-ported	verbatim from spinel-mlir 4624b901: E083's English text of f96ac6d's (3accdcd's text with M4's entry); spinel-mlir states no licence, and the owner put this copy under the project licence (2026-11-20)
+third_party/spinel-mlir/spinel_facts.md	spinel-mlir-facts+spinel-mlir-consumer+spinel-mlir-m4	project-ported	from spinel-mlir 4624b901 with one local change (one call-sign replaced by its role, 2026-11-16; docs/provenance.md): E083's English text of f96ac6d's (3accdcd's text with E076's and the typing probe's (E078, E079) sections); spinel-mlir states no licence, and the owner put this copy under the project licence (2026-11-20)
+#
+# --- the native core slice, and the later spinel-llvm batches in the same trees
+tools/contract/spinel_contract.h	core-slice	project-ported+MIT	reproduces two Spinel functions (MIT, Yukihiro Matsumoto): slc_file_path mirrors emit_file_path and slc_ty_tag reproduces ty_tag_into (src/codegen.c); their notice is LICENSE.spinel beside it
+tools/contract/LICENSE.spinel	core-slice	MIT	Spinel's LICENSE at 4e0a59bd999e, byte for byte
+tools/contract/{build.sh,README.md,spinel_typedump.c}	core-slice	project-ported
+tools/contract/spinel_nt_copy.h	original	project
+tools/freestanding/spinel/**/*	core-slice	project-ported
+tools/freestanding/profiles/{cortex-m33-zephyr,riscv32-zephyr,wasm32-worker,workers-wasm32,zephyr-cortex-m33,zephyr-riscv32}.yaml	core-slice+freestanding	project-ported
+tools/freestanding/profiles/x86_64-linux-host.yaml	original	project	added here, not imported (provenance: the native core slice)
+tools/freestanding/README.md	original	project
+tools/realtime/alloc_vocabulary.tsv	core-slice	project-ported
+tools/realtime/{README.md,spinel-rtcheck,test/**/*,ab/**/*}	host-analysis	project-ported	README.md translated here from the source's Japanese one
+tools/mlir/native/{CMakeLists.txt,build.sh,cmake/**/*}	core-slice	project-ported	build.sh rewritten here (provenance: local change 5)
+tools/mlir/native/schema/**/*	original	project
+tools/mlir/native/include/spinel-mlir/{Contract,Conversion,Dialect,Scalar,Target}/**/*	core-slice+spbpf-go	project-ported
+tools/mlir/native/include/spinel-mlir/Freestanding/{Declaration,Diagnostics,Emit,PlatformLedger,Profile,UndefGate}.h	core-slice	project-ported
+tools/mlir/native/include/spinel-mlir/Freestanding/{GradDeclaration,GradPipeline,GradShim}.h	grad	project-ported
+tools/mlir/native/include/spinel-mlir/Support/Diagnostics.h	core-slice	project-ported
+tools/mlir/native/include/spinel-mlir/{Freestanding/Codegen.h,Support/Int64Allow.h,Support/IntegerWidth.h}	original	project
+tools/mlir/native/include/spinel-mlir/{Passes.h,Realtime/**/*}	core-slice+host-analysis	project-ported
+tools/mlir/native/include/spinel-mlir/Core/**/*	original	project
+tools/mlir/native/include/spinel-mlir-c/**/*	spbpf-go	project-ported
+tools/mlir/native/lib/{CMakeLists.txt,Contract/**/*,Conversion/**/*,Dialect/**/*,Frontend/**/*}	core-slice+spbpf-go	project-ported
+tools/mlir/native/lib/Freestanding/{CMakeLists.txt,Declaration.cpp,Diagnostics.cpp,Emit.cpp,PlatformLedger.cpp,ProfileReader.cpp,ProfileYaml.h,UndefGate.cpp}	core-slice	project-ported
+tools/mlir/native/lib/Freestanding/{GradDeclaration,GradPipeline,GradShim}.cpp	grad	project-ported
+tools/mlir/native/lib/Freestanding/Codegen.cpp	original	project
+tools/mlir/native/lib/Realtime/**/*	host-analysis	project-ported
+tools/mlir/native/lib/Tensor/**/*	tensor	project-ported
+tools/mlir/native/lib/{Target,CAPI}/**/*	spbpf-go	project-ported
+tools/mlir/native/lib/Core/{CMakeLists.txt,{Adapter,BlockLoops,BorrowFacts,Boundary,BufferSpelling,Effects,Eligibility,Emit,Input,Kernel,LoopBounds,Prelude,Report,StackBudget}.cpp}	original	project
+tools/mlir/native/lib/Core/SubsetRefusals.cpp	core-slice	project-ported	the imported subset table's entries, moved here from lib/Frontend/Scalar/SubsetTables.cpp by decision 0026 step 5 and rewritten into this form
+tools/mlir/native/tools/{CMakeLists.txt,spinel-fs-emit/**/*,spinel-fs-check/**/*}	core-slice	project-ported
+tools/mlir/native/tools/spinel-fs-codegen/**/*	original	project
+tools/mlir/native/tools/spinel-fs-grad/**/*	grad	project-ported
+tools/mlir/native/tools/spinel-rtcheck/**/*	host-analysis	project-ported
+tools/mlir/native/tools/spinel-tensor-import/**/*	tensor	project-ported
+tools/mlir/native/tools/{spbpf-compile,spbpf-opt,spinel-mlir-capi-smoke}/**/*	spbpf-go	project-ported
+tools/mlir/native/tools/spinel-core-*/**/*	original	project
+tools/mlir/native/{test,unittests}/**/*	spbpf-go	project-ported
+#
+# --- the other spinel-llvm batches
+tools/platform/{arena.yaml,menus.yaml,profiles/**/*,spinel-capcheck,spinel_platform.rb,ab/**/*}	wasm-edge	project-ported
+tools/platform/README.md	wasm-edge	project-ported	translated here from the source's Japanese README
+tools/wasm/{.gitignore,README.md,fix_bigint.h,raise_stubs.c,reactor.c,shim_flockfile.h,spinel_host.mjs,spinel-wasm,sp_wasm_host.c,stubs.c,wasi_shim.mjs,worker.mjs,fastly/**/*,legacy/**/*,lib/**/*,shim/**/*,worker-template/**/*}	wasm-edge	project-ported	the READMEs translated here from the source's Japanese ones
+tools/wasm/{arena_env.c,compute_host.mjs,snapshot.c,wasi_posix.c}	original	project
+tools/fiber/*	original	project
+examples/{hello-http,fetch-kv,r2-d1,hello-fastly,gatekeeper,edge-twin,tools}/**/*	wasm-edge	project-ported	the READMEs translated here from the source's Japanese ones
+tests/edge/**/*	original	project
+tests/fiber/**/*	original	project
+tests/scratch/**/*	original	project
+tools/tensor/{sp_tensor_shim.c,spinel/**/*}	tensor	project-ported
+tools/tensor/README.md	tensor	project-ported	translated here from the source's Japanese README
+tools/tensor/spinel-tensor	original	project	new here (provenance: the tensor lane)
+examples/{tensor,image}/**/*	tensor	project-ported	the READMEs translated here from the source's Japanese ones
+tests/tensor/**/*	original	project
+tools/census/**/*	host-analysis	project-ported	README.md translated here from the source's Japanese one
+tools/grad/**/*	grad	project-ported	README.md translated here from the source's Japanese one
+tools/llvm/passes/**/*	grad	project-ported	README.md translated here from the source's Japanese one
+tests/grad/{e076,e082}/**/*	grad	project-ported
+tests/grad/{README.md,env.sh,run.sh,gates/**/*}	original	project
+tests/freestanding/e040/{build_all.sh,e040_kern.rb,mkcases.rb,oracle/**/*,run_gates.sh,run_reject.sh,zephyr/**/*}	freestanding	project-ported
+tests/freestanding/e040/{e040_wide.rb,run_frdm.sh,run_wide.sh}	original	project
+tests/freestanding/{e063,e077,e081,profiles}/**/*	freestanding	project-ported
+tests/freestanding/e083/**/*	freestanding+grad	project-ported
+tests/freestanding/{e079,e084}/**/*	grad	project-ported
+tests/freestanding/{bm040,bm040-frdm,int-width}/**/*	original	project
+tests/freestanding/*	original	project
+tools/raster/{*.c,*.h,*.rb,spinel-*,ab/**/*}	raster	project-ported
+tools/raster/README.md	original	project	the source's README was not imported
+tests/raster/**/*	original	project
+tools/gcmon/{gcmon_contract.h,gcmon_probe.c,gcmon_stub.rb,malloc_count.c,spinel-gcmon,run_gcmon_gate.sh}	gcmon	project-ported
+tools/gcmon/README.md	gcmon	project-ported	README.md rewritten here
+tests/gcmon/{probe_noninvasive,probe_properties}.rb	gcmon	project-ported
+tests/gcmon/run.sh	original	project
+tools/shader/{draw.c,draw_metal.m,run_shader_gate.sh,spinel-rb2spv,spinel-shader-attrib,spinel-shader-cmp,spinel-shader-vcmp,golden/**/*,test/**/*}	shader	project-ported
+tools/npu/{README.md,build-iree-m33.sh,m33.cmake,spinel-npu,tflite.rb,tflite_write.rb}	original	project	new here
+tools/npu/stm32mp2/{build-iree.sh,lane.rb,npu_tflite.cc,toolchain.cmake}	original	project	new here
+tools/npu/host/{CMakeLists.txt,force.h,prj.conf,tiny.h,src/host.c}	original	project	tiny.h and force.h written here for IREE's and Spinel's runtime headers
+tools/npu/host/shim/**/*	original	MIT+project	headers from vendor/spinel lib/wasi (the pinned upstream, MIT), with additions written here; LICENSE.spinel is Spinel's LICENSE at 4e0a59bd999e, byte for byte
+tools/shader/README.md	original	project	new here, in English
+tools/shader/{sp_cuda_compute.c,sp_metal_compute.m,spinel-rb2comp}	original	project
+examples/ghostty-terminal/keys.rb	original	MIT	generated here from Ghostty's key header (docs/provenance.md); its notice is LICENSE.ghostty
+examples/ghostty-terminal/LICENSE.ghostty	original	MIT	Ghostty's LICENSE at 711702d572cf, byte for byte
+examples/ghostty-terminal/{README.md,build.sh,host.c,display.rb,ghostty.rb,life.rb,shell.rb,remote.rb,bridge.rb,shader/*,web/*}	original	project
+tests/ghostty-terminal/**/*	original	project
+tests/shader/**/*	original	project
+tests/compute/**/*	original	project
+tests/npu/**/*	original	project
+tools/llvm/{spinel-llvm,cc-lto-shim,build_rt_bc.sh}	host-analysis+llvm-vi-blog	project-ported
+tools/llvm/README.md	original	project
+examples/spinel-vi/vendor/termbox2/**/*	llvm-vi-blog	MIT	termbox developers
+examples/spinel-vi/vendor/libgrapheme/data/**/*	llvm-vi-blog	Unicode-3.0
+examples/spinel-vi/vendor/libgrapheme/{*,gen/**/*,src/**/*}	llvm-vi-blog	ISC	SNAPSHOT.md translated to English here (D1)
+examples/spinel-vi/{app.rb,build-editor.sh,build-probe.sh,build.sh,editor.rb,.gitignore,run-editor.sh,run-probe.sh,run.sh,lib/**/*,probes/**/*,shim/**/*,test/**/*}	llvm-vi-blog	project-ported
+examples/{spinel-vi,mvc-blog}/README.md	original	project	new here, in English
+examples/mvc-blog/{app.rb,build.sh,.gitignore,VALIDATION.md,wrangler.toml,app/**/*,framework/**/*,native/**/*}	llvm-vi-blog	project-ported	VALIDATION.md translated to English here, except its measured data lines (D1)
+tests/{llvm,spinel-vi,mvc-blog,spbpf,ebpf-go,ebpf,spinel-bpf-mlir,bcc-facts,spinel-mlir}/**/*	original	project
+examples/ebpf-go/**/*	spbpf-go	project-ported	the READMEs rewritten here, replacing the source's; user-facing messages in main.go translated to English here (D2)
+tools/ebpf/go/**/*	spbpf-go	project-ported	user-facing messages translated to English here (D2)
+examples/README.md	original	project
+#
+# --- spinel-ebpf: the source states none, so project-ported; files with their
+# own SPDX line (GPL-2.0 or Apache-2.0) keep it and are counted by the check
+tools/ebpf/{*,{benchmarks,bin,examples,include,profiles,scripts,src,tools}/**/*,tests/{codegen_c,fixtures,golden,spinel_ebpf}/**/*,tests/runtime/{[!m]*,mock_cuda.c}}	ebpf	project-ported	README.md rewritten here (it lists the local changes); the 19 Japanese Markdown documents translated to English here (D1); user-facing messages translated to English here (D2)
+tools/ebpf/LICENSES/{GPL-2.0,Apache-2.0}	original	GPL-2.0+Apache-2.0	the texts of the SPDX ids tools/ebpf's own files already declare (no licence file came with spinel-ebpf): GPL-2.0 is the FSF text formerly in examples/doom/LICENSE, Apache-2.0 is Zephyr's LICENSE at dccb09599635 (plain Apache-2.0, no LLVM exception)
+tools/metal/{examples/**/*,tests/*}	ebpf	project-ported	moved from tools/ebpf/{examples/gpu,tests/runtime}, with paths and command names updated; user-facing messages translated to English here (D2)
+tools/metal/{README.md,spinel-metal}	original	project	written here
+tools/ebpf/tests/runtime/{mock_hpack,mock_otlp_grpc,mock_otlp_receiver,mock_support,mock_tls_server}.rb	original	project	written here in Ruby for spinel-ebpf's Python mocks, which were not imported (provenance: spinel-ebpf)
+#
+# --- spinel-bpf-mlir v0.7.0 (now v0.9.0) and bml 295df2a (now bpf-mlir-loader v0.1.0): Apache-2.0 WITH
+# LLVM-exception since the public releases (their LICENSE and NOTICE, imported); before them neither
+# stated a licence
+tools/spinel-bpf-mlir/{.gitignore,go.mod,go.sum,LICENSE,NOTICE,{examples,internal,packaging,ruby,scripts}/**/*,cmd/spinelbpf/*,cmd/spinelbpf/testdata/*,cmd/spinelbpf/testdata/[!b]*/**/*,cmd/spinelbpf/testdata/bpfmlir/PROVENANCE}	spinel-bpf-mlir	Apache-2.0	Apache-2.0 WITH LLVM-exception (LICENSE, NOTICE from the public v0.9.0, unchanged in v0.9.1); spinel-bpf-mlir v0.7.0 (04eee01), updated to main 4b936d5 (E152), to v0.8.0 (1ffc979), to main 9b914a8 (E160, E161 and its addendum), to main cf77cec (E161's addendum 2), to main 8b20ffa (its addendum 3), to main 7af1fd4 (E162, E163: English documents and messages) to main e14acc0 (E164: bml d879745) to c56a4915, the source_commit of the public v0.9.0 (GitHub yuskesh/spinel-bpf-mlir, commit 698e6319), and to 0e83966a, that of v0.9.1 (commit 511781de); generated example outputs not imported; examples/bcc/PROVENANCE.md has a one-line note added here
+tools/spinel-bpf-mlir/cmd/spinelbpf/testdata/bpfmlir/{m1fit_c5_end,nonroot_idx}/*	spinel-bpf-mlir	Apache-2.0	bpf-mlir's test inputs, copied unchanged by spinel-bpf-mlir (E161's addendum 2); bpf-mlir is Apache-2.0 WITH LLVM-exception (its LICENSE and NOTICE), and the copy's PROVENANCE names the source paths and blobs
+tools/spinel-bpf-mlir/third_party/bpf-mlir-loader/{.gitignore,LICENSE,NOTICE,{cmd,include,scripts,shim,src,test}/**/*}	spinel-bpf-mlir	Apache-2.0	Apache-2.0 WITH LLVM-exception (LICENSE, NOTICE from the public bpf-mlir-loader v0.1.0); bml 295df2a, updated to a6da571, to fae2194, to d879745 (E059: English user-facing texts) and to 41ec56f1, the source_commit of the public v0.1.0 (https://github.com/yuskesh/bpf-mlir-loader, commit 0e72c24f), as source; its submodules are user-local
+tools/spinel-bpf-mlir/third_party/bpf-mlir-loader/LICENSES/libbpf.{BSD-2-Clause,LGPL-2.1,LICENSE}	spinel-bpf-mlir	BSD-2-Clause+LGPL-2.1	the licence texts of libbpf (LGPL-2.1 OR BSD-2-Clause), from the public bpf-mlir-loader v0.1.0; libbpf is linked, not vendored
+tools/spinel-bpf-mlir/third_party/bpf-mlir-loader/LICENSES/elfutils-libelf.*	spinel-bpf-mlir	GPL-2.0+GPL-3.0+LGPL-3.0	the licence texts of elfutils libelf (GPL-2.0-or-later OR LGPL-3.0-or-later; GPL-3.0 accompanies LGPL-3.0), from the public bpf-mlir-loader v0.1.0; libelf is linked, not vendored
+tools/spinel-bpf-mlir/third_party/bpf-mlir-loader/LICENSES/zlib.LICENSE	spinel-bpf-mlir	zlib	the licence text of zlib, from the public bpf-mlir-loader v0.1.0; zlib is linked, not vendored
+tools/spinel-bpf-mlir/{README.md,third_party/PINS}	original	project	written here: the README lists the local changes; PINS records both sources' bpf-mlir gitlinks and the public shape's commit
+tools/bcc-facts/**/*	original	project	written here: the bcc tools' facts modules from this pin
+tools/spinel-mlir/{.gitignore,CMakeLists.txt,{cmake,include,lib,tools,tests,test,scripts}/**/*}	spinel-mlir-consumer	project-ported	spinel-mlir 7db284d, updated to f96ac6d, to c86ce1ae (E082: neutral fixture source paths) and to a8abbdc3 (E084: bpf-mlir v1.21.0): the consumer, its tests and scripts; the lit configuration and 10 experiment scripts not imported
+tools/spinel-mlir/{README.md,bpf-mlir-commit.cmake}	original	project	written here: the build, the tests and the local changes; bpf-mlir-commit.cmake is decision 0047's reader
+#
+# --- DOOM: GPL-2.0. examples/doom/NOTICE.md covers all of examples/doom/;
+# the files written there with that code are GPL-2.0 too, and the notices
+# are project. tests/doom/NOTICE.md covers tests/doom/cases/ only
+examples/doom/{lib/**/*,bin/{bench_tic,doom,dump_jobs,dump_ppm,gpu_demo,gpu_reject,record_demo,sim_demo}.rb}	doom-hosted+raster+gcmon+doom-ppm	GPL-2.0
+examples/doom/LICENSE	doom-hosted	GPL-2.0	doomgeneric's LICENSE at dcb7a8dbc7a1, byte for byte: spinel-llvm's Ruby DOOM followed doomgeneric at that commit (its R007 survey: the port's baseline is doomgeneric, not linuxdoom) and carried no licence file of its own; replaced the FSF text on 2026-11-16
+examples/doom/{README.md,build.sh,bin/frame_ppm.rb,native/**/*}	original	GPL-2.0	written here inside the GPL-2.0 scope of examples/doom/NOTICE.md, with the code they derive from or drive; GPL-2.0 at publication (2026-11-20)
+examples/doom/{NOTICE.md,core/NOTICE.md}	original	project	notice written here
+examples/doom/core/src/**/*	original	GPL-2.0	written here, derived from examples/doom (examples/doom/core/NOTICE.md)
+examples/doom/core/{README.md,sources.tsv,*.tsv,board/**/*,entries/**/*,full/**/*,knot/**/*}	original	GPL-2.0	written here inside the GPL-2.0 scope of examples/doom/NOTICE.md, with the code they derive from or drive; GPL-2.0 at publication (2026-11-20)
+examples/doom/net_view/**/*	original	project
+tests/doom/NOTICE.md	original	project	notice written here; it covers tests/doom/cases/
+tests/doom/cases/**/*	doom-hosted	GPL-2.0	LICENSE is doomgeneric's LICENSE at dcb7a8dbc7a1, byte for byte, the same bytes as examples/doom/LICENSE
+tests/doom/fixtures/reference/**/*	doom-reference	GPL-2.0	the reference build's golden hashes: FNV-1a and SHA-256 of frames doomgeneric rendered from the shareware doom1.wad; hashes only, no WAD-derived content is shipped (owner, 2026-11-16); LICENSE is doomgeneric's LICENSE at dcb7a8dbc7a1, byte for byte
+tests/doom/reference/patches/**/*	doom-reference	GPL-2.0
+tests/doom/reference/LICENSE	doom-reference	GPL-2.0	doomgeneric's LICENSE at dcb7a8dbc7a1, byte for byte, the tree the patches apply to; replaced the FSF text on 2026-11-16
+tests/doom/reference/NOTICE.md	original	project	notice written here
+tests/doom/reference/manifest.tsv	original	project
+tests/doom/{*.sh,*.rb,manifest.tsv,cases-aux/**/*,fixtures/allowances/**/*,fixtures/scripts/**/*,native/**/*,oracle/**/*}	original	project
+tests/core-boundary/fixtures/{capabilities,framebuffer,slots}/src/**/*	doom-extractions	GPL-2.0
+tests/core-boundary/fixtures/LICENSE	doom-extractions	GPL-2.0	doomgeneric's LICENSE at dcb7a8dbc7a1, byte for byte, the same bytes as examples/doom/LICENSE, whose files the extractions copy
+tests/core-boundary/fixtures/NOTICE.md	original	project	notice written here
+tests/doom-core/fixtures/source/src/**/*	original	GPL-2.0	a copy of examples/doom/core/src/source.rb's dc_draw_column; LICENSE is doomgeneric's LICENSE at dcb7a8dbc7a1, byte for byte, the same bytes as examples/doom/LICENSE
+tests/doom-core/fork/fixtures/{*.rb,*.expected}	spinel-fork-fixtures	MIT
+tests/doom-core/fork/fixtures/LICENSE.spinel	spinel-fork-fixtures	MIT	the fork's LICENSE at ecbd0f2a7cd1, byte for byte (the full text NOTICE.md quotes)
+tests/doom-core/fork/fixtures/NOTICE.md	original	project	notice written here
+tests/doom-core/fork/ledger.tsv	original	project
+#
+# --- Zephyr's devicetree output
+tests/app/fixtures/dts/{mps2_an521,frdm_mcxn947,frdm_imxrt1186,frdm_imxrt1186_cm7}/*	zephyr-dts	Apache-2.0	generated from Zephyr's devicetree sources; their licence text is LICENSE.zephyr
+tests/app/fixtures/dts/LICENSE.zephyr	zephyr-dts	Apache-2.0	Zephyr's LICENSE at dccb09599635, byte for byte
+tests/app/fixtures/dts/{README.md,digests.txt,synthetic/**/*}	original	project
+#
+# --- written here
+tools/{app,doom,core,test,oracle,worklog,provenance,gcviz}/**/*	original	project
+tools/zephyr-full/{README.md,spinel-zephyr-full,host/{CMakeLists.txt,prj.conf,userspace.conf,force.h,shim/sys/un.h,src/host.c}}	original	project	host.c restates the field order of picolibc 1.8.10's private struct __file_bufio (no code copied); the build extracts picolibc's fdopen and fileno objects from the SDK's libc.a, untracked (provenance: The Zephyr full host's picolibc pieces)
+tests/app/{*,stress/**/*}	original	project
+tests/app/fixtures/{apps,boards,build,channel,contract,cross,effects,int-width,lowering,platform,play,session,stimulus,synthetic-board,trace,udp}/**/*	original	project
+tests/core-blocks/**/*	original	project
+tests/core-bitwise/**/*	original	project
+tests/fs-helper-buffers/**/*	original	project
+tests/core-boundary/*	original	project
+tests/core-boundary/fixtures/{adapter,arithmetic,buffers,closure,failure-sites,intrinsics,schema}/**/*	original	project
+tests/core-boundary/fixtures/{capabilities,framebuffer,slots}/*	original	project	harnesses and tables beside the extractions
+tests/doom-core/{*,cases/**/*,expect/**/*,harness/**/*,native/**/*}	original	project
+tests/doom-core/fixtures/{audit,borrowed-calls,control-flow,random,screens,source-pack,state}/**/*	original	project
+tests/doom-core/fixtures/source/*	original	project
+tests/{core,core-eligibility,core-report,core-stack,native-core,gc-arena,gcviz,spinel-fork,bare-full,zephyr-full,contract,oracle,source-stamp,affected,imports,subset,subset-tables,lowering,compare-lowering}/**/*	original	project
+tests/ORACLES.tsv	original	project

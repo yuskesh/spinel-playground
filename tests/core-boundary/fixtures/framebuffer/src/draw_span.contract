@@ -1,0 +1,20 @@
+core-contract 1
+root src/draw_span.rb
+entry draw_span
+result i64
+param scr buffer u8 inout count n_scr
+param n_scr scalar u64
+param flat buffer u8 in count n_flat
+param n_flat scalar u64
+param cmap buffer u8 in count n_cmap
+param n_cmap scalar u64
+param x1 scalar i64
+param x2 scalar i64
+param y scalar i64
+param srcofs scalar i64
+param cmapidx scalar i64
+param position scalar i64
+param step scalar i64
+param width scalar i64
+param viewwindowx scalar i64
+param viewwindowy scalar i64

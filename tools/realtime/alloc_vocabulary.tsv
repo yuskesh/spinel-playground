@@ -1,0 +1,190 @@
+# tools/realtime/alloc_vocabulary.tsv -- the canonical allocation vocabulary (E169 D-2).
+#
+# The frozen `spinel_alloc_free.py`'s 5 sets + allow list are kept in **one file**, and both the native
+# `spinel-rtcheck` and the native undef gate (`UndefGate.cpp`) take them from here.
+# It is embedded into C++ as `AllocVocabulary.inc` at configure time — the binaries do not read
+# this file at run time (the undef gate runs on a user's machine with build/bin alone).
+#
+# Columns: set<TAB>name<TAB>reason
+#   alloc        allocates (SEEDS_ALLOC)
+#   pause        stops the world (SEEDS_PAUSE). Not an allocation — do not mix them
+#   abort_hint   does not return to the caller (ABORT_HINTS). Information only (the decision is per block)
+#   setjmp       may re-enter the frame (SETJMP). --allow-abort refuses when one is present
+#   constructor  not a seed, but means the same thing (the rest of the undef gate's 31 words)
+#   allow        libc / libm words that do not allocate even without a body
+#   allow_prefix prefixes that do not allocate even without a body
+#   allow_regex  the same as a regex. **`[a-z]+f` also lets the printf family through** — a soundness hole
+#                in the frozen Python, copied for byte equality in E169 (D-6; the fix belongs to a separate experiment)
+set	name	reason
+alloc	aligned_alloc	allocator
+alloc	calloc	C heap (zeroed)
+alloc	mach_vm_allocate	allocator
+alloc	malloc	C heap (Array/Hash element storage, bigint limbs -- invisible to SPINEL_ALLOC_REPORT, R007 s2)
+alloc	mmap	OS pages (GC heap growth)
+alloc	posix_memalign	allocator
+alloc	realloc	C heap (grow -- an Array or Hash outgrew its capacity)
+alloc	reallocf	C heap (grow)
+alloc	sp_gc_alloc	Spinel GC heap (object)
+alloc	sp_gc_alloc_atomic	Spinel GC heap (pointer-free object)
+alloc	sp_gc_alloc_nogc	Spinel GC heap (object, collection suppressed -- still an allocation)
+alloc	sp_str_alloc	Spinel GC heap (String)
+alloc	sp_str_alloc_raw	Spinel GC heap (String, uninitialised)
+alloc	sp_str_dup_external	allocator
+alloc	sp_str_new	allocator
+alloc	strdup	allocator
+alloc	strndup	allocator
+alloc	valloc	allocator
+alloc	vm_allocate	allocator
+pause	sp_gc_collect	-
+pause	sp_gc_collect_full	-
+pause	sp_gc_collect_request	-
+pause	sp_gc_collect_retune	-
+pause	sp_gc_collect_retune_all	-
+pause	sp_safepoint	-
+pause	sp_str_collect_retune	-
+pause	sp_stw_collect	-
+abort_hint	__stack_chk_fail	-
+abort_hint	_exit	-
+abort_hint	_longjmp	-
+abort_hint	abort	-
+abort_hint	exit	-
+abort_hint	longjmp	-
+abort_hint	siglongjmp	-
+abort_hint	sp_die	-
+abort_hint	sp_raise	-
+abort_hint	sp_raise_cls	-
+abort_hint	sp_raise_nil_int_op	-
+setjmp	__sigsetjmp	-
+setjmp	_setjmp	-
+setjmp	llvm.eh.sjlj.setjmp	-
+setjmp	setjmp	-
+setjmp	sigsetjmp	-
+setjmp	sigsetjmp_internal	-
+constructor	free	-
+constructor	sp_ary_new	-
+constructor	sp_hash_new	-
+constructor	sp_bigint_new	-
+allow_prefix	llvm.	-
+allow_prefix	__llvm_	-
+allow	free	-
+allow	memcpy	-
+allow	memmove	-
+allow	memset	-
+allow	memcmp	-
+allow	bcmp	-
+allow	bzero	-
+allow	strlen	-
+allow	strnlen	-
+allow	strcmp	-
+allow	strncmp	-
+allow	strcpy	-
+allow	strncpy	-
+allow	strcat	-
+allow	strncat	-
+allow	strstr	-
+allow	strchr	-
+allow	strrchr	-
+allow	strspn	-
+allow	strcspn	-
+allow	strpbrk	-
+allow	memchr	-
+allow	memrchr	-
+allow	strtol	-
+allow	strtoll	-
+allow	strtoul	-
+allow	strtoull	-
+allow	strtod	-
+allow	strtof	-
+allow	atoi	-
+allow	atol	-
+allow	atoll	-
+allow	atof	-
+allow	abs	-
+allow	labs	-
+allow	llabs	-
+allow	div	-
+allow	ldiv	-
+allow	lldiv	-
+allow	qsort	-
+allow	bsearch	-
+allow	sin	-
+allow	cos	-
+allow	tan	-
+allow	asin	-
+allow	acos	-
+allow	atan	-
+allow	atan2	-
+allow	sinh	-
+allow	cosh	-
+allow	tanh	-
+allow	asinh	-
+allow	acosh	-
+allow	atanh	-
+allow	exp	-
+allow	exp2	-
+allow	expm1	-
+allow	log	-
+allow	log1p	-
+allow	log2	-
+allow	log10	-
+allow	pow	-
+allow	sqrt	-
+allow	cbrt	-
+allow	hypot	-
+allow	floor	-
+allow	ceil	-
+allow	round	-
+allow	lround	-
+allow	llround	-
+allow	rint	-
+allow	nearbyint	-
+allow	trunc	-
+allow	fmod	-
+allow	remainder	-
+allow	fabs	-
+allow	fmin	-
+allow	fmax	-
+allow	fdim	-
+allow	fma	-
+allow	frexp	-
+allow	ldexp	-
+allow	modf	-
+allow	scalbn	-
+allow	copysign	-
+allow	nan	-
+allow	isnan	-
+allow	isinf	-
+allow	isfinite	-
+allow	signbit	-
+allow	erf	-
+allow	erfc	-
+allow	lgamma	-
+allow	tgamma	-
+allow	__memcpy_chk	-
+allow	__memmove_chk	-
+allow	__memset_chk	-
+allow	__strlcpy_chk	-
+allow	__strcat_chk	-
+allow	__strcpy_chk	-
+allow	__strncpy_chk	-
+allow	__snprintf_chk	-
+allow	__error	-
+allow	__errno_location	-
+allow	__maskrune	-
+allow	__tolower	-
+allow	__toupper	-
+allow	isalnum	-
+allow	isalpha	-
+allow	isdigit	-
+allow	isspace	-
+allow	isupper	-
+allow	islower	-
+allow	isxdigit	-
+allow	ispunct	-
+allow	iscntrl	-
+allow	isprint	-
+allow	isgraph	-
+allow	isblank	-
+allow	tolower	-
+allow	toupper	-
+allow_regex	[a-z]+f	the float variants of the above (D-6: also matches printf/snprintf/fprintf/sprintf)

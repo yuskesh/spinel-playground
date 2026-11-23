@@ -1,0 +1,9 @@
+key	value
+profile	cortex-m33-zephyr.yaml
+triple	thumbv8m.main-none-eabi
+adjoints	diffesp_sq_hinge_loss,diffespinel_sq_hinge_loss
+alloca_in_module	0
+fastmath_sites	0
+undefined	__aeabi_dadd,__aeabi_dcmpgt,__aeabi_dcmple,__aeabi_ddiv,__aeabi_dmul,__aeabi_dsub,__aeabi_l2d,__aeabi_ui2d,spinel_trap
+exports	spinel_gen_row,spinel_grad_sq_hinge_loss,spinel_kern_version,spinel_outcome,spinel_score_row,spinel_sgd_step,spinel_sq_hinge_loss
+object_bytes	8196

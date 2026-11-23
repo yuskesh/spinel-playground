@@ -1,0 +1,11 @@
+RX	1	255	channel=0	stimulus_id=1	length=1
+DROP	1	255	channel=0	stimulus_id=2	reason=2
+DEQ	0	0	channel=0	msg_id=1	result=0	length=1	payload=01
+ENQ	0	0	channel=1	msg_id=1	result=0	length=1	payload=01
+TX	1	255	channel=1	msg_id=1
+DROP	1	255	channel=0	stimulus_id=3	reason=1
+RX	1	255	channel=0	stimulus_id=4	length=1
+TX	1	255	channel=1	msg_id=2
+ENDMARK	1	255	quiescent=1	drained=1
+summary drop commands oversize 1
+summary drop commands channel_full 1

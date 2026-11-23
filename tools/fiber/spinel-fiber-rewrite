@@ -1,0 +1,1826 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+#
+# spinel-fiber-rewrite -- stackless Fiber for targets that cannot switch a
+# stack (decision 0035, stages 1 and 3).
+#
+#   spinel-fiber-rewrite IN.rb -o OUT.rb [-I DIR]...
+#
+# Exit 0: OUT.rb written. Exit 3: IN.rb uses neither Fiber nor
+# Enumerator.new, nothing written.
+# Exit 1: a construct this stage cannot rewrite; each one is reported as
+# `FILE:LINE:COL: spinel-fiber: MESSAGE` on stderr and nothing is written.
+#
+# WHAT IT DOES. Every `Fiber.new do ... end` becomes a SpinelFiber whose step
+# is a lambda: the block's own locals are hoisted into an enclosing lambda, so
+# they survive between steps as closure cells, and the body is cut at every
+# suspension into numbered states that a `case` dispatches on. A top-level
+# method that can reach `Fiber.yield` (a YIELDING METHOD) gets a second
+# definition, `__sf_mk_NAME`, that builds the same kind of step lambda for one
+# activation; a call to it from a rewritten body steps the callee's lambda
+# until it finishes, passing every yield of the callee out unchanged. The
+# original definition stays for calls from outside any fiber, where
+# `Fiber.yield` raises FiberError as it does in Ruby.
+#
+# Every `Enumerator.new { |y| ... }` becomes a SpinelEnum (stage 3): the same
+# lowering, with `y << v` and `y.yield v` as the suspensions. Its frame is
+# built again for rewind and for every internal iteration (each, to_a, first,
+# take, include?), so the external position and an internal pass are
+# independent, as in Ruby. A lowered `loop` ends at StopIteration as
+# Kernel#loop does.
+#
+# FRESH FRAMES. Spinel gives a lambda's captured locals one cell per
+# activation of the method around it, so frames made by an inline lambda at
+# one site would be shared. A Fiber.new site that one activation can run
+# more than once (inside a loop, a block or a lambda) and every
+# Enumerator.new site therefore build their frame in a method of their own,
+# `__sf_fr_N`, placed beside the def around the site. The locals of the
+# scope around that the block uses are passed in, copied when the frame is
+# made; a block that assigns one, or a scope that assigns one after the site
+# or in a loop or block around it, is refused.
+#
+# The step protocol is one global: a step sets $__sf_status to 1 when it
+# yields and to 2 when it finishes, and returns the yielded or final value.
+#
+# STAGE 1 LIMITS (each refused with a message):
+#   - a suspension inside an expression is moved ahead of its statement into
+#     a temporary; whatever Ruby evaluates before it there must have no
+#     effect (literals, locals, constants, self), and it may not be evaluated
+#     only under a condition (&&, ||, ternary, a block);
+#   - a suspension may sit inside if / unless / elsif / else, case / when,
+#     case / in, while / until, loop, begin (without rescue/ensure),
+#     Integer#times, Integer#upto, and #each on an Array or Range literal or
+#     on a receiver spinel-typedump types as one --
+#     not inside any other block, or rescue/ensure;
+#   - yielding methods are top-level `def`s and instance methods of top-level
+#     classes; a call through a receiver other than self needs a local that
+#     spinel-typedump types as one class, and overrides must agree;
+#   - a block local may not share a name with a local of the enclosing body,
+#     which hoisting would merge it with;
+#   - Fiber#transfer, #kill, #raise, Fiber.current and the other Fiber class
+#     methods are refused, as are multi-value resume/yield and block params.
+
+require "prism"
+require "json"
+require "open3"
+
+PRELUDE = <<~RUBY
+  # ---- spinel-fiber-rewrite prelude (decision 0035) ----
+  $__sf_status = 0
+
+  class SpinelFiber
+    def initialize(step)
+      @step = step
+      @done = false
+    end
+
+    def __sf_resume(v = nil)
+      raise FiberError, "attempt to resume a terminated fiber" if @done
+      ok = false
+      begin
+        r = @step.call(v)
+        ok = true
+      ensure
+        @done = true unless ok   # an exception ends the fiber, as in Ruby
+      end
+      @done = true if $__sf_status == 2
+      r
+    end
+
+    def __sf_alive?
+      !@done
+    end
+  end
+
+  def __sf_root_yield(v = nil)
+    raise FiberError, "attempt to yield on a not resumed fiber"   # lib/sp_fiber.c's text
+  end
+  # ---- end of prelude ----
+RUBY
+
+# Added after PRELUDE when the program has an Enumerator.new site (stage 3).
+# A SpinelEnum holds a factory: each call of @mk builds a fresh step lambda,
+# so #rewind and every internal iteration start from the beginning, as an
+# Enumerator re-runs its block. Methods that Spinel would route through its
+# runtime Enumerator (first, take, include?) are defined here.
+ENUM_PRELUDE = <<~RUBY
+  # ---- spinel-fiber-rewrite Enumerator prelude (decision 0035 stage 3) ----
+  class SpinelEnum
+    def initialize(mk)
+      @mk = mk
+      @step = mk.call
+      @done = false
+      @has = false
+      @buf = nil
+    end
+
+    def rewind
+      @step = @mk.call
+      @done = false
+      @has = false
+      @buf = nil
+      self
+    end
+
+    def __se_fill
+      return if @has || @done
+      ok = false
+      begin
+        v = @step.call(nil)
+        ok = true
+      ensure
+        @done = true unless ok   # an exception ends the iteration
+      end
+      if $__sf_status == 1
+        @buf = v
+        @has = true
+      else
+        @done = true
+      end
+    end
+
+    def next
+      __se_fill
+      raise StopIteration, "iteration reached an end" unless @has
+      @has = false
+      @buf
+    end
+
+    def peek
+      __se_fill
+      raise StopIteration, "iteration reached an end" unless @has
+      @buf
+    end
+
+    def size
+      nil
+    end
+
+    def each
+      s = @mk.call
+      while true
+        v = s.call(nil)
+        break unless $__sf_status == 1
+        yield v
+      end
+      self
+    end
+
+    def each_with_index
+      i = 0
+      each do |x|
+        yield x, i
+        i += 1
+      end
+      self
+    end
+
+    def to_a
+      a = []
+      each { |x| a << x }
+      a
+    end
+
+    def first(n = nil)
+      s = @mk.call
+      if n.nil?
+        v = s.call(nil)
+        return $__sf_status == 1 ? v : nil
+      end
+      a = []
+      while a.length < n
+        v = s.call(nil)
+        break unless $__sf_status == 1
+        a << v
+      end
+      a
+    end
+
+    def take(n)
+      first(n)
+    end
+
+    def take_while
+      s = @mk.call
+      a = []
+      while true
+        v = s.call(nil)
+        break unless $__sf_status == 1
+        break unless yield(v)
+        a << v
+      end
+      a
+    end
+
+    def find
+      s = @mk.call
+      while true
+        v = s.call(nil)
+        return nil unless $__sf_status == 1
+        return v if yield(v)
+      end
+    end
+
+    def detect
+      s = @mk.call
+      while true
+        v = s.call(nil)
+        return nil unless $__sf_status == 1
+        return v if yield(v)
+      end
+    end
+
+    def with_index(offset = 0)
+      i = offset
+      each do |x|
+        yield x, i
+        i += 1
+      end
+      self
+    end
+
+    def with_object(memo)
+      each { |x| yield x, memo }
+      memo
+    end
+
+    # Spinel's own versions of these collect the whole sequence first, which
+    # never ends for an endless enumerator whose block breaks.
+    def map
+      a = []
+      each { |x| a << yield(x) }
+      a
+    end
+
+    def collect
+      a = []
+      each { |x| a << yield(x) }
+      a
+    end
+
+    def select
+      a = []
+      each { |x| a << x if yield(x) }
+      a
+    end
+
+    def filter
+      a = []
+      each { |x| a << x if yield(x) }
+      a
+    end
+
+    def reject
+      a = []
+      each { |x| a << x unless yield(x) }
+      a
+    end
+
+    def filter_map
+      a = []
+      each do |x|
+        v = yield(x)
+        a << v if v
+      end
+      a
+    end
+
+    def each_with_object(memo)
+      each { |x| yield x, memo }
+      memo
+    end
+
+    def include?(x)
+      s = @mk.call
+      while true
+        v = s.call(nil)
+        return false unless $__sf_status == 1
+        return true if v == x
+      end
+    end
+  end
+  # ---- end of Enumerator prelude ----
+RUBY
+
+class Refusal < StandardError
+  attr_reader :node
+
+  def initialize(node, msg)
+    super(msg)
+    @node = node
+  end
+end
+
+module FiberSyntax
+  module_function
+
+  def fiber_const?(n)
+    return true if n.is_a?(Prism::ConstantReadNode) && n.name == :Fiber
+    return false unless n.is_a?(Prism::ConstantPathNode) && n.parent.nil? # ::Fiber
+    name = n.respond_to?(:name) ? n.name : n.child.name                    # prism >= 0.20 / 0.19
+    name == :Fiber
+  end
+
+  def fiber_yield?(n)
+    n.is_a?(Prism::CallNode) && fiber_const?(n.receiver) && n.name == :yield
+  end
+
+  def fiber_new?(n)
+    n.is_a?(Prism::CallNode) && fiber_const?(n.receiver) && n.name == :new
+  end
+
+  def enum_new?(n)
+    return false unless n.is_a?(Prism::CallNode) && n.name == :new
+    rc = n.receiver
+    return true if rc.is_a?(Prism::ConstantReadNode) && rc.name == :Enumerator
+    rc.is_a?(Prism::ConstantPathNode) && rc.parent.nil? && (rc.respond_to?(:name) ? rc.name : rc.child.name) == :Enumerator
+  end
+
+  def args_of(call)
+    call.arguments ? call.arguments.arguments : []
+  end
+end
+
+# The rewrite of one body (a fiber block or a yielding method) into a step
+# lambda's state machine. Every internal name carries this body's own suffix,
+# so a fiber created inside another body's step lambda cannot assign the
+# outer body's variables.
+class Lowerer
+  include FiberSyntax
+
+  attr_reader :hoisted, :lowered_blocks
+
+  # Nodes whose evaluation has no effect another party could observe, so a
+  # suspension after them may be moved before them.
+  PURE = [Prism::IntegerNode, Prism::FloatNode, Prism::RationalNode, Prism::ImaginaryNode,
+          Prism::StringNode, Prism::SymbolNode, Prism::NilNode, Prism::TrueNode, Prism::FalseNode,
+          Prism::SelfNode, Prism::LocalVariableReadNode, Prism::ConstantReadNode, Prism::ConstantPathNode,
+          Prism::ArrayNode, Prism::HashNode, Prism::AssocNode, Prism::RangeNode,
+          Prism::ParenthesesNode, Prism::StatementsNode, Prism::ArgumentsNode].freeze
+  # Nodes that evaluate a part only under a condition, or later.
+  CONDITIONAL = [Prism::AndNode, Prism::OrNode, Prism::IfNode, Prism::UnlessNode, Prism::CaseNode,
+                 Prism::CaseMatchNode, Prism::WhileNode, Prism::UntilNode, Prism::BlockNode,
+                 Prism::BeginNode, Prism::RescueModifierNode, Prism::LocalVariableOrWriteNode,
+                 Prism::LocalVariableAndWriteNode, Prism::InstanceVariableOrWriteNode,
+                 Prism::InstanceVariableAndWriteNode, Prism::GlobalVariableOrWriteNode,
+                 Prism::GlobalVariableAndWriteNode, Prism::ReturnNode, Prism::BreakNode, Prism::NextNode,
+                 Prism::ForNode, Prism::DefinedNode].freeze
+
+  def initialize(rw, kind, outer_names)
+    @rw = rw
+    @kind = kind            # :fiber, :enum or :method
+    @sx = "_#{rw.next_id}"  # this body's suffix
+    @blocks = []
+    @temps = []
+    @hoisted = []
+    @loops = []
+    @outer_names = outer_names.map(&:to_s)
+    @loop_names = []        # locals of the enclosing lowered loops
+    @lowered_blocks = []
+    @loop_exit = {}         # state => the state after the innermost `loop` around it
+    @cur = new_block
+  end
+
+  def st = "__sf_st#{@sx}"
+  def r = "__sf_r#{@sx}"
+  def v = "__sf_v#{@sx}"
+  def val = "__sf_val#{@sx}"
+  def go = "__sf_go#{@sx}"
+  def arg = "__sf_arg#{@sx}"
+  # Hooks for the CORE form (spinel-fiber-core): how a body local is spelled,
+  # and what an unassigned local holds.
+  def lv(name) = name.to_s
+  def nil_value = "nil"
+  # A suspension: Fiber.yield, or `y << v` / `y.yield v` in an Enumerator.new block.
+  def fiber_yield?(n) = @rw.fiber_yield?(n)
+
+  def lower_body(body_node, prologue_lines = [])
+    prologue_lines.each { |l| emit(l) }
+    stmts = statements_of(body_node)
+    lower_stmts(stmts, value: true)
+    finish(val)
+    self
+  end
+
+  def step_lambda
+    out = []
+    out << "lambda do |#{arg}|"
+    out << "  #{r} = nil"
+    out << "  #{v} = nil"
+    out << "  #{val} = nil"
+    out << "  #{go} = true"
+    out << "  while #{go}"
+    out << "    case #{st}"
+    @blocks.each_with_index do |lines, i|
+      next if lines.empty?
+      out << "    when #{i}"
+      if (ex = @loop_exit[i])
+        # Kernel#loop ends at StopIteration; so does the lowered one
+        out << "      begin"
+        lines.each { |l| l.each_line(chomp: true) { |s| out << "        #{s}" } }
+        out << "      rescue StopIteration"
+        out << "        #{st} = #{ex}"
+        out << "      end"
+      else
+        lines.each { |l| l.each_line(chomp: true) { |s| out << "      #{s}" } }
+      end
+    end
+    out << "    else"
+    out << "      raise FiberError, \"attempt to resume a terminated fiber\""
+    out << "    end"
+    out << "  end"
+    out << "  #{r}"
+    out << "end"
+    out.join("\n")
+  end
+
+  def state_decls
+    (["#{st} = 0"] + @temps.map { |t| "#{t} = nil" })
+  end
+
+  private
+
+  def new_block
+    @blocks << []
+    @blocks.size - 1
+  end
+
+  def emit(line)
+    @blocks[@cur] << line
+  end
+
+  def goto(b)
+    emit("#{st} = #{b}")
+    @cur = new_block          # whatever follows a transfer is unreachable
+  end
+
+  def temp(stem)
+    t = "__sf_#{stem}#{@rw.next_id}"
+    @temps << t
+    t
+  end
+
+  def hoist(name)
+    @hoisted << name.to_s unless @hoisted.include?(name.to_s)
+  end
+
+  def yield_out(value_text, next_b)
+    emit("#{r} = (#{value_text})")
+    emit("#{st} = #{next_b}")
+    emit("$__sf_status = 1")
+    emit("#{go} = false")
+    @cur = new_block
+  end
+
+  def finish(value_text)
+    emit("#{r} = (#{value_text})")
+    emit("#{st} = -1")
+    emit("$__sf_status = 2")
+    emit("#{go} = false")
+    @cur = new_block
+  end
+
+  def statements_of(node)
+    case node
+    when nil then []
+    when Prism::StatementsNode then node.body
+    when Prism::BeginNode
+      if node.rescue_clause || node.ensure_clause || node.else_clause
+        raise Refusal.new(node, "a suspension inside begin/rescue/ensure is not supported (decision 0035 stage 1)")
+      end
+      statements_of(node.statements)
+    else [node]
+    end
+  end
+
+  def text(n, extra = [])
+    @rw.render(n, extra)
+  end
+
+  def lower_stmts(stmts, value:)
+    stmts.each_with_index do |s, i|
+      lower_stmt(s, value: value && i == stmts.size - 1)
+    end
+    emit("#{val} = #{nil_value}") if value && stmts.empty?
+  end
+
+  def lower_stmt(s, value:)
+    @rw.check_plain_or_lowerable(s, @kind)
+    unless @rw.needs_lowering?(s, @kind)
+      emit(value ? "#{val} = (#{text(s)})" : text(s))
+      return
+    end
+    case s
+    when Prism::CallNode
+      if fiber_yield?(s)
+        lower_yield(s, nil, value)
+      elsif @rw.yielding_call?(s)
+        lower_call(s, nil, value)
+      elsif (lp = loop_form(s))
+        lower_loop(s, lp)
+        emit("#{val} = #{nil_value}") if value
+      else
+        lower_flat(s, value)
+      end
+    when Prism::LocalVariableWriteNode, Prism::InstanceVariableWriteNode, Prism::GlobalVariableWriteNode
+      vn = s.value
+      target = s.is_a?(Prism::LocalVariableWriteNode) ? lv(s.name) : s.name.to_s
+      if fiber_yield?(vn)
+        lower_yield(vn, target, value)
+      elsif @rw.yielding_call?(vn)
+        lower_call(vn, target, value)
+      else
+        lower_flat(s, value)
+      end
+    when Prism::WhileNode, Prism::UntilNode
+      lower_while(s)
+      emit("#{val} = #{nil_value}") if value
+    when Prism::IfNode, Prism::UnlessNode
+      lower_if(s, value)
+    when Prism::CaseNode, Prism::CaseMatchNode
+      lower_case(s, value)
+    when Prism::BeginNode
+      lower_stmts(statements_of(s), value: value)
+    when Prism::ParenthesesNode
+      lower_stmts(statements_of(s.body), value: value)
+    when Prism::ReturnNode
+      raise Refusal.new(s, "return inside a fiber body is not supported") unless @kind == :method
+      args = s.arguments ? s.arguments.arguments : []
+      raise Refusal.new(s, "return with several values is not supported in a yielding method") if args.size > 1
+      finish(args.empty? ? nil_value : flat(args)[0])
+    when Prism::BreakNode, Prism::NextNode
+      lp = @loops.last
+      if lp.nil? && s.is_a?(Prism::NextNode) && @kind != :method
+        # `next` leaves the fiber block with its value, as a block return does
+        args = s.arguments ? s.arguments.arguments : []
+        raise Refusal.new(s, "next with several values is not supported") if args.size > 1
+        finish(args.empty? ? nil_value : flat(args)[0])
+        return
+      end
+      raise Refusal.new(s, "#{s.is_a?(Prism::BreakNode) ? 'break' : 'next'} outside a loop in a fiber body is not supported") unless lp
+      raise Refusal.new(s, "break or next with a value is not supported here") if s.arguments
+      goto(s.is_a?(Prism::BreakNode) ? lp[:brk] : lp[:nxt])
+    else
+      lower_flat(s, value)
+    end
+  end
+
+  # A statement with suspensions inside an expression: each suspension is
+  # lowered first into a temporary, and the statement is kept with the
+  # temporaries in their place. A statement that also leaves a loop or the
+  # method cannot be kept as text, so it is refused.
+  def lower_flat(s, value)
+    raise Refusal.new(s, "a statement that suspends and also leaves its loop or method is not supported here") if @rw.escapes?(s, @kind)
+    t = flat([s])[0]
+    emit(value ? "#{val} = (#{t})" : t)
+  end
+
+  def refuse_inner(s)
+    what = s.is_a?(Prism::CallNode) && s.block ? "a block passed to `#{s.name}`" : s.class.name.split("::").last.sub(/Node\z/, "")
+    hint = s.is_a?(Prism::CallNode) && s.name == :each && s.receiver ? @rw.each_hint(s.receiver) : nil
+    raise Refusal.new(s, "a suspension (Fiber.yield, a yielder's << or yield, or a call to a yielding method) inside #{what} is not supported (decision 0035 stage 1)#{hint ? "; #{hint}" : ""}")
+  end
+
+  # Lower every suspension in `nodes`, in Ruby's evaluation order, and return
+  # each node's text with the suspensions replaced by their temporaries.
+  # Moving a suspension before the parts Ruby evaluates ahead of it is only
+  # sound when those parts have no observable effect, so anything else ahead
+  # of a suspension is refused, and so is a suspension that Ruby evaluates
+  # only under a condition.
+  def flat(nodes)
+    subst = []
+    impure = nil
+    visit = lambda do |n|
+      return if n.nil? || n.is_a?(Prism::DefNode) || n.is_a?(Prism::LambdaNode)
+      if fiber_new?(n) || enum_new?(n)
+        impure ||= n
+        return
+      end
+      if fiber_yield?(n) || @rw.yielding_call?(n)
+        if impure
+          raise Refusal.new(n, "this suspension would move ahead of `#{impure.location.slice.lines.first.strip[0, 40]}`, which Ruby evaluates first; " \
+                               "assign the suspension to a variable in a statement of its own")
+        end
+        raise Refusal.new(n, "Fiber.yield with a block is not supported") if n.block && fiber_yield?(n)
+        raise Refusal.new(n, "a block passed to the yielding method `#{n.name}` is not supported") if n.block
+        args = args_of(n)
+        raise Refusal.new(n, "Fiber.yield with several values is not supported") if fiber_yield?(n) && args.size > 1
+        mark = subst.size
+        args.each { |a| visit.call(a) }
+        inner = subst[mark..]
+        argtexts = args.map { |a| text(a, inner) }
+        t = temp("t")
+        if fiber_yield?(n)
+          emit_yield(argtexts[0] || nil_value, t, false)
+        else
+          emit_call(n.name, argtexts, t, false, recv: call_recv(n))
+        end
+        subst << [n.location.start_offset, n.location.end_offset, t]
+        impure = nil # what the moved arguments did now happens before, in order
+        return
+      end
+      refuse_inner(n) if n.is_a?(Prism::CallNode) && n.block.is_a?(Prism::BlockNode) && @rw.suspends?(n.block)
+      if CONDITIONAL.any? { |k| n.is_a?(k) } && @rw.suspends?(n)
+        if n.is_a?(Prism::BlockNode)
+          raise Refusal.new(n, "a suspension (Fiber.yield, a yielder's << or yield, or a call to a yielding method) inside a block is not supported (decision 0035 stage 1)")
+        end
+        refuse_inner(n)
+      end
+      n.compact_child_nodes.each { |c| visit.call(c) }
+      impure ||= n unless PURE.any? { |k| n.is_a?(k) }
+    end
+    nodes.each { |n| visit.call(n) }
+    nodes.map { |n| text(n, subst) }
+  end
+
+  def lower_yield(call, target, value)
+    args = args_of(call)
+    raise Refusal.new(call, "Fiber.yield with several values is not supported") if args.size > 1
+    raise Refusal.new(call, "Fiber.yield with a block is not supported") if call.block
+    emit_yield(args.empty? ? nil_value : flat(args)[0], target, value)
+  end
+
+  def emit_yield(value_text, target, value)
+    nb = new_block
+    yield_out(value_text, nb)
+    @cur = nb
+    emit("#{target} = #{arg}") if target
+    emit("#{val} = #{arg}") if value
+  end
+
+  def lower_call(call, target, value)
+    raise Refusal.new(call, "a block passed to the yielding method `#{call.name}` is not supported") if call.block
+    emit_call(call.name, flat(args_of(call)), target, value, recv: call_recv(call))
+  end
+
+  # The receiver text of a call to a yielding instance method, or nil for an
+  # implicit or self receiver. check_instance_calls keeps it a local.
+  def call_recv(call)
+    r = call.receiver
+    r.nil? || r.is_a?(Prism::SelfNode) ? nil : text(r)
+  end
+
+  def emit_call(name, argtexts, target, value, recv: nil)
+    c = temp("c")
+    f = temp("f")
+    emit("#{c} = #{recv ? "#{recv}." : ''}__sf_mk_#{name}(#{argtexts.join(', ')})")
+    emit("#{f} = false")
+    cb = new_block
+    goto(cb)
+    @cur = cb
+    after = new_block
+    emit("#{v} = #{c}.call(#{f} ? #{arg} : nil)")
+    emit("if $__sf_status == 1")
+    emit("  #{f} = true")
+    emit("  #{r} = #{v}")
+    emit("  #{go} = false")
+    emit("else")
+    emit("  #{target} = #{v}") if target
+    emit("  #{val} = #{v}") if value
+    emit("  #{st} = #{after}")
+    emit("end")
+    @cur = after
+  end
+
+  def lower_while(s)
+    raise Refusal.new(s, "begin ... end while with a suspension is not supported") if s.respond_to?(:begin_modifier?) && s.begin_modifier?
+    head = new_block
+    goto(head)
+    @cur = head
+    cond = flat([s.predicate])[0]       # evaluated again at every iteration
+    body = new_block
+    after = new_block
+    cond = "!(#{cond})" if s.is_a?(Prism::UntilNode)
+    emit("if #{cond}")
+    emit("  #{st} = #{body}")
+    emit("else")
+    emit("  #{st} = #{after}")
+    emit("end")
+    @cur = body
+    @loops.push(brk: after, nxt: head)
+    lower_stmts(statements_of(s.statements), value: false)
+    @loops.pop
+    goto(head)
+    @cur = after
+  end
+
+  def lower_if(s, value)
+    cond = flat([s.predicate])[0]
+    then_b = new_block
+    else_b = new_block
+    join = new_block
+    cond = "!(#{cond})" if s.is_a?(Prism::UnlessNode)
+    emit("if #{cond}")
+    emit("  #{st} = #{then_b}")
+    emit("else")
+    emit("  #{st} = #{else_b}")
+    emit("end")
+    @cur = then_b
+    lower_stmts(statements_of(s.statements), value: value)
+    goto(join)
+    @cur = else_b
+    alt = s.respond_to?(:subsequent) ? s.subsequent : s.consequent
+    case alt
+    when nil then emit("#{val} = #{nil_value}") if value
+    when Prism::ElseNode then lower_stmts(statements_of(alt.statements), value: value)
+    else lower_stmt(alt, value: value) # elsif
+    end
+    goto(join)
+    @cur = join
+  end
+
+  # case/when and case/in keep Ruby's own matching: the dispatch is the same
+  # case with each branch body replaced by a jump to that branch's state.
+  # Pattern variables are locals of the body, hoisted like the others.
+  def lower_case(s, value)
+    subject = s.predicate ? flat([s.predicate])[0] : nil
+    branches = s.conditions
+    else_node = s.respond_to?(:else_clause) ? s.else_clause : s.consequent
+    blocks = branches.map { new_block }
+    else_b = new_block
+    join = new_block
+    emit(subject ? "case (#{subject})" : "case")
+    branches.each_with_index do |br, i|
+      if br.is_a?(Prism::WhenNode)
+        br.conditions.each { |c| @rw.check_no_suspension(c) }
+        emit("when #{br.conditions.map { |c| text(c) }.join(', ')}")
+      else # InNode
+        @rw.check_no_suspension(br.pattern)
+        # Spinel's C for a pattern variable that a lambda captures names an
+        # undeclared local (seen at the pin), so the pattern binds names
+        # that only the step lambda has, and the branch copies them into
+        # the hoisted locals.
+        names = []
+        @rw.each_node(br.pattern) { |x| names << x.name if x.is_a?(Prism::LocalVariableTargetNode) }
+        fresh = names.uniq.to_h { |nm| [nm, "__sf_pm#{@rw.next_id}"] }
+        subst = []
+        @rw.each_node(br.pattern) do |x|
+          next unless (x.is_a?(Prism::LocalVariableTargetNode) || x.is_a?(Prism::LocalVariableReadNode)) && fresh.key?(x.name)
+          next if x.is_a?(Prism::LocalVariableReadNode) && x.depth != 0
+          subst << [x.location.start_offset, x.location.end_offset, fresh[x.name]]
+        end
+        emit("in #{text(br.pattern, subst)}")
+        fresh.each { |nm, f| emit("  #{lv(nm)} = #{f}") }
+      end
+      emit("  #{st} = #{blocks[i]}")
+    end
+    # case/in without else raises NoMatchingPatternError, as Ruby does.
+    if else_node || s.is_a?(Prism::CaseNode)
+      emit("else")
+      emit("  #{st} = #{else_b}")
+    end
+    emit("end")
+    @cur = new_block
+    branches.each_with_index do |br, i|
+      @cur = blocks[i]
+      lower_stmts(statements_of(br.statements), value: value)
+      goto(join)
+    end
+    @cur = else_b
+    if else_node
+      lower_stmts(statements_of(else_node.statements), value: value)
+    elsif value
+      emit("#{val} = #{nil_value}")
+    end
+    goto(join)
+    @cur = join
+  end
+
+  # Iterator calls rewritten into counted loops. Returns a description or nil.
+  def loop_form(call)
+    blk = call.block
+    return nil unless blk.is_a?(Prism::BlockNode)
+    params = block_param_names(blk)
+    case call.name
+    when :loop
+      return { kind: :loop, params: params } if call.receiver.nil? && args_of(call).empty?
+    when :times
+      return { kind: :times, params: params } if call.receiver && args_of(call).empty?
+    when :upto
+      return { kind: :upto, params: params } if call.receiver && args_of(call).size == 1
+    when :each
+      rc = call.receiver
+      rc = rc.body.body.first if rc.is_a?(Prism::ParenthesesNode) && rc.body.is_a?(Prism::StatementsNode) && rc.body.body.size == 1
+      return { kind: :range, params: params, range: rc } if rc.is_a?(Prism::RangeNode) && rc.left && rc.right && args_of(call).empty?
+      return { kind: :array, params: params } if rc.is_a?(Prism::ArrayNode) && args_of(call).empty?
+      # a receiver that the analysis types as an Array or a Range
+      t = args_of(call).empty? && @rw.node_type(rc)
+      return { kind: :array, params: params } if t && t.end_with?("array")
+      return { kind: :range_var, params: params } if t == "range"   # an Integer range
+    end
+    nil
+  end
+
+  def block_param_names(blk)
+    bp = blk.parameters
+    return [] if bp.nil?
+    ps = bp.parameters
+    return [] if ps.nil?
+    unless ps.optionals.empty? && ps.rest.nil? && ps.posts.empty? && ps.keywords.empty? && ps.keyword_rest.nil? && ps.block.nil? &&
+           ps.requireds.all? { |rq| rq.is_a?(Prism::RequiredParameterNode) }
+      raise Refusal.new(blk, "only plain block parameters are supported in a loop that suspends")
+    end
+    ps.requireds.map(&:name)
+  end
+
+  def lower_loop(call, lp)
+    blk = call.block
+    own = blk.locals.map(&:to_s)
+    clash = own & (@outer_names + @loop_names)
+    unless clash.empty?
+      raise Refusal.new(blk, "the block local `#{clash.first}` of a loop that suspends has the name of a local around it; " \
+                             "the rewrite would merge them, so rename one")
+    end
+    own.each { |l| hoist(l) }
+    @lowered_blocks << blk
+    p = lp[:params]
+    raise Refusal.new(blk, "#{call.name} with more than one block parameter is not supported here") if p.size > 1
+    head = new_block
+    cont = new_block
+    body = new_block
+    after = new_block
+    case lp[:kind]
+    when :loop
+      goto(head)
+      @cur = head
+      emit("#{st} = #{body}")
+      @cur = cont
+      emit("#{st} = #{head}")
+    else
+      i = temp("i")
+      lim = temp("n")
+      case lp[:kind]
+      when :times
+        @rw.check_no_suspension(call.receiver)
+        emit("#{lim} = (#{text(call.receiver)})")
+        emit("#{i} = 0")
+        cond = "#{i} < #{lim}"
+        elem = i
+      when :upto
+        @rw.check_no_suspension(call.receiver)
+        @rw.check_no_suspension(args_of(call)[0])
+        emit("#{i} = (#{text(call.receiver)})")
+        emit("#{lim} = (#{text(args_of(call)[0])})")
+        cond = "#{i} <= #{lim}"
+        elem = i
+      when :range
+        rg = lp[:range]
+        @rw.check_no_suspension(rg)
+        emit("#{i} = (#{text(rg.left)})")
+        emit("#{lim} = (#{text(rg.right)})")
+        cond = rg.exclude_end? ? "#{i} < #{lim}" : "#{i} <= #{lim}"
+        elem = i
+      when :array
+        @rw.check_no_suspension(call.receiver)
+        a = temp("a")
+        emit("#{a} = (#{text(call.receiver)})")
+        emit("#{i} = 0")
+        cond = "#{i} < #{a}.length"   # Array#each reads the length at every step
+        elem = "#{a}[#{i}]"
+      when :range_var
+        # Walked from its bounds, read once, as Range#each does: an endless
+        # range runs until the block leaves it, and nothing is materialized.
+        @rw.check_no_suspension(call.receiver)
+        g = temp("g")
+        x = temp("x")
+        emit("#{g} = (#{text(call.receiver)})")
+        emit("#{i} = #{g}.begin")
+        emit("raise TypeError, \"can't iterate from NilClass\" if #{i}.nil?")
+        emit("#{lim} = #{g}.end")
+        emit("#{x} = #{g}.exclude_end?")
+        cond = "#{lim}.nil? || (#{x} ? #{i} < #{lim} : #{i} <= #{lim})"
+        elem = i
+      end
+      goto(head)
+      @cur = head
+      emit("if #{cond}")
+      emit("  #{lv(p[0])} = #{elem}") unless p.empty?
+      emit("  #{st} = #{body}")
+      emit("else")
+      emit("  #{st} = #{after}")
+      emit("end")
+      @cur = cont
+      emit("#{i} += 1")
+      emit("#{st} = #{head}")
+    end
+    @cur = body
+    # A block's own locals start as nil at every call, so at every iteration.
+    (own - p.map(&:to_s)).each { |l| emit("#{lv(l)} = #{nil_value}") }
+    @loops.push(brk: after, nxt: cont)
+    @loop_names.concat(own)
+    lower_stmts(statements_of(blk.body), value: false)
+    own.size.times { @loop_names.pop }
+    @loops.pop
+    goto(cont)
+    if lp[:kind] == :loop
+      # inner loops have claimed their own states already
+      ([body] + ((after + 1)...@blocks.size).to_a).each { |b| @loop_exit[b] ||= after }
+    end
+    @cur = after
+  end
+end
+
+class Rewriter
+  include FiberSyntax
+
+  def initialize(path, src, roots = [])
+    @path = path
+    @roots = roots
+    @src = src
+    @result = Prism.parse(src)
+    @errors = []
+    @id = 0
+    @yielders = []   # the block parameter of the Enumerator.new block being lowered
+  end
+
+  def next_id
+    @id += 1
+  end
+
+  def run
+    unless @result.errors.empty?
+      e = @result.errors.first
+      warn "#{@path}:#{e.location.start_line}:#{e.location.start_column + 1}: spinel-fiber: parse error: #{e.message}"
+      return 1
+    end
+    prog = @result.value
+    uses = false
+    each_node(prog) { |n| uses = true if fiber_const?(n) || enum_new?(n) }
+    return 3 unless uses # a mention in a comment or a string is not a use
+    @top_defs = {}
+    prog.statements.body.each { |s| @top_defs[s.name] = s if s.is_a?(Prism::DefNode) && s.receiver.nil? }
+    build_parents(prog)
+    collect_classes(prog)
+    @inserts = []
+    check_global(prog)
+    compute_yielding
+    check_instance_calls(prog)
+    @edits = []
+    begin
+      plan(prog)
+    rescue Refusal => e
+      report(e.node, e.message)
+    end
+    return 1 unless @errors.empty?
+    @out = rename_selectors(apply_edits)
+    0
+  end
+
+  attr_reader :out
+
+  # ---- analysis --------------------------------------------------------
+
+  # The type the pinned compiler's analysis gives a node (spinel-typedump's
+  # json face), or nil: when no reader is configured, when the analysis
+  # fails, or when two nodes of the node's kind start at its position with
+  # different types. The reader is SPINEL_TYPEDUMP or --typedump.
+  attr_writer :typedump
+
+  def node_type(n)
+    load_types unless @types
+    @types[[n.class.name.split("::").last, n.location.start_line, n.location.start_column]]
+  end
+
+  # Why an `each` that suspends was not lowered, for the refusal.
+  def each_hint(recv)
+    t = node_type(recv)
+    base = "`each` is lowered on an Array or Range literal, or on a receiver that the analysis types as an Array or a Range"
+    return "#{base}; no type reader (spinel-typedump) was available" if @types.empty?
+    "#{base}, and it types this one as #{t || 'ambiguous'}"
+  end
+
+  def load_types
+    @types = {}
+    td = @typedump || ENV["SPINEL_TYPEDUMP"]
+    return unless td && File.file?(td) && File.executable?(td)
+    out, st = Open3.capture2(td, @path, "json", *@roots.flat_map { |r| ["-I", r] }, err: File::NULL)
+    return unless st.success?
+    seen = {}
+    JSON.parse(out)["nodes"].each do |h|
+      k = [h["kind"], h["line"], h["col"]]
+      if seen.key?(k) && seen[k] != h["type"] then @types[k] = nil
+      elsif !seen.key?(k) then @types[k] = h["type"]
+      end
+      seen[k] = h["type"]
+    end
+  rescue JSON::ParserError, SystemCallError
+    @types = {}
+  end
+
+  # A suspension: Fiber.yield, or, while an Enumerator.new block is lowered,
+  # `y << v` or `y.yield v` on that block's parameter.
+  def fiber_yield?(n)
+    FiberSyntax.fiber_yield?(n) || enum_yield?(n)
+  end
+
+  def enum_yield?(n)
+    n.is_a?(Prism::CallNode) && %i[<< yield].include?(n.name) &&
+      n.receiver.is_a?(Prism::LocalVariableReadNode) && @yielders.include?(n.receiver.name)
+  end
+
+  def each_node(n, &blk)
+    return if n.nil?
+    yield n
+    n.compact_child_nodes.each { |c| each_node(c, &blk) }
+  end
+
+  def check_global(prog)
+    each_node(prog) do |n|
+      if n.is_a?(Prism::CallNode) && fiber_const?(n.receiver) && !%i[new yield].include?(n.name)
+        report(n, "Fiber.#{n.name} is not supported by the stackless Fiber (decision 0035)")
+      elsif n.is_a?(Prism::CallNode) && n.receiver && %i[transfer kill].include?(n.name)
+        report(n, "Fiber##{n.name} is not supported by the stackless Fiber (decision 0035)")
+      elsif n.is_a?(Prism::CallNode) && n.receiver && n.name == :raise && !n.receiver.is_a?(Prism::ConstantReadNode)
+        report(n, "Fiber#raise is not supported by the stackless Fiber (decision 0035)")
+      elsif enum_new?(n)
+        report(n, "Enumerator.new needs a block") unless n.block.is_a?(Prism::BlockNode)
+        report(n, "Enumerator.new with a size argument is not supported") unless args_of(n).empty?
+      elsif fiber_new?(n)
+        report(n, "Fiber.new needs a block") unless n.block.is_a?(Prism::BlockNode)
+        report(n, "Fiber.new with arguments is not supported") unless args_of(n).empty?
+      elsif fiber_yield?(n) && args_of(n).size > 1
+        report(n, "Fiber.yield with several values is not supported")
+      elsif n.is_a?(Prism::DefNode) && n.name.to_s.start_with?("__sf_")
+        report(n, "names starting with __sf_ are reserved by spinel-fiber-rewrite")
+      elsif (n.is_a?(Prism::LocalVariableWriteNode) || n.is_a?(Prism::LocalVariableReadNode)) && n.name.to_s.start_with?("__sf_")
+        report(n, "names starting with __sf_ are reserved by spinel-fiber-rewrite")
+      elsif n.is_a?(Prism::CallNode) && %i[send __send__ public_send method].include?(n.name)
+        sym = args_of(n).first
+        if sym.is_a?(Prism::SymbolNode) && @top_defs.key?(sym.unescaped.to_sym) && method_has_yield?(@top_defs[sym.unescaped.to_sym])
+          report(n, "a yielding method reached through #{n.name} cannot be resolved (decision 0035)")
+        end
+      elsif n.is_a?(Prism::DefNode) && n.receiver.nil? && !@top_defs.value?(n) && !@def_class.key?(n.object_id) && method_has_yield?(n)
+        report(n, "Fiber.yield in a method that is neither a top-level def nor an instance method of a top-level class is not supported (decision 0035)")
+      end
+    end
+  end
+
+  # Fiber.yield directly in this def, not inside a nested Fiber.new block.
+  def method_has_yield?(d)
+    found = false
+    walk_own(d.body) { |n| found = true if fiber_yield?(n) }
+    found
+  end
+
+  # Walk a body without entering nested defs, lambdas or Fiber.new blocks.
+  def walk_own(n, &blk)
+    return if n.nil?
+    return if n.is_a?(Prism::DefNode) || n.is_a?(Prism::LambdaNode)
+    yield n
+    n.compact_child_nodes.each do |c|
+      next if (fiber_new?(n) || enum_new?(n)) && c.equal?(n.block)
+      walk_own(c, &blk)
+    end
+  end
+
+  # Every def a call can reach: [nil, name] for a top-level def, [class,
+  # name] for an instance method of a top-level class.
+  def all_defs
+    @top_defs.map { |name, d| [[nil, name], d] } +
+      @cdefs.flat_map { |c, h| h.map { |name, d| [[c, name], d] } }
+  end
+
+  def def_of(key) = key[0] ? @cdefs[key[0]][key[1]] : @top_defs[key[1]]
+
+  # A def yields when it contains Fiber.yield or a call that reaches a
+  # yielding def, to a fixed point.
+  def compute_yielding
+    @yielding = {}
+    @yielding_names = {}
+    defs = all_defs
+    defs.each { |k, d| @yielding[k] = true if method_has_yield?(d) }
+    loop do
+      @yielding.each_key { |k| @yielding_names[k[1]] = true }
+      changed = false
+      defs.each do |k, d|
+        next if @yielding[k]
+        walk_own(d.body) do |n|
+          next if @yielding[k]
+          if yielding_call?(n)
+            @yielding[k] = true
+            changed = true
+          end
+        end
+      end
+      break unless changed
+    end
+  end
+
+  # Instance methods of the top-level classes (lift B). A later definition
+  # of a name replaces an earlier one, as in Ruby.
+  def collect_classes(prog)
+    @cdefs = {}
+    @csuper = {}
+    @def_class = {}
+    prog.statements.body.each do |c|
+      next unless c.is_a?(Prism::ClassNode) && c.constant_path.is_a?(Prism::ConstantReadNode)
+      cls = c.constant_path.name.to_s
+      @cdefs[cls] ||= {}
+      @csuper[cls] = c.superclass.name.to_s if c.superclass.is_a?(Prism::ConstantReadNode)
+      next unless c.body.is_a?(Prism::StatementsNode)
+      c.body.body.each do |d|
+        next unless d.is_a?(Prism::DefNode) && d.receiver.nil?
+        if (prev = @cdefs[cls][d.name]) && (method_has_yield?(prev) || method_has_yield?(d))
+          report(d, "`#{cls}##{d.name}` is defined twice and one definition yields; the rewrite keeps one form per method")
+        end
+        @cdefs[cls][d.name] = d
+        @def_class[d.object_id] = cls
+      end
+    end
+  end
+
+  # The class whose instance method contains `n`, or nil.
+  def ctx_class(n)
+    ancestors(n).each { |a| return @def_class[a.object_id] if a.is_a?(Prism::DefNode) }
+    nil
+  end
+
+  def lookup(cls, name)
+    seen = {}
+    while cls && @cdefs.key?(cls) && !seen[cls]
+      seen[cls] = true
+      return [cls, name] if @cdefs[cls].key?(name)
+      cls = @csuper[cls]
+    end
+    nil
+  end
+
+  # The def a call reaches, as a key of all_defs; nil when it reaches no def
+  # of this file, :unknown when the receiver's class is not known. An
+  # implicit or self receiver looks in the class around the call first, then
+  # at the top-level defs; any other receiver needs the analysis to type it
+  # as an instance of a top-level class.
+  def target_key(n)
+    r = n.receiver
+    if r.nil? || r.is_a?(Prism::SelfNode)
+      cls = ctx_class(n)
+      k = cls && lookup(cls, n.name)
+      return k if k
+      return @top_defs.key?(n.name) ? [nil, n.name] : nil
+    end
+    t = node_type(r)
+    return lookup($1, n.name) if t =~ /\Aobj_(\w+)\z/ && @cdefs.key?($1)
+    :unknown
+  end
+
+  # The override check above sees only the defs of top-level classes. A
+  # call to a yielding method dispatches at run time, so anything else that
+  # can put a method of that name in front of it on a receiver is refused:
+  # a def of the name outside a top-level class, define_method, attr_*,
+  # alias and alias_method making it, include or prepend in a class of the
+  # yielding hierarchy or in a nested class that inherits from one, extend
+  # anywhere, and Class.new on a class of the hierarchy.
+  def check_hidden_overrides(prog, inst)
+    hier = {}
+    @cdefs.each_key do |c|
+      k = c
+      seen = {}
+      while k && !seen[k]
+        seen[k] = true
+        hier[c] = true if inst.values.any? { |cs| cs.include?(k) }
+        k = @csuper[k]
+      end
+    end
+    names = ->(list) { list.map { |a| a.respond_to?(:unescaped) ? a.unescaped.to_s.chomp("=").to_sym : nil } }
+    in_hier = ->(n) { n.is_a?(Prism::ConstantReadNode) && hier[n.name.to_s] || n.is_a?(Prism::ConstantPathNode) && hier[n.name.to_s] }
+    which = ->(nm) { inst[nm].join(", ") }
+    each_node(prog) do |n|
+      case n
+      when Prism::DefNode
+        next unless inst.key?(n.name) && !@def_class.key?(n.object_id) && !@top_defs.value?(n)
+        report(n, "this `#{n.name}` is outside a top-level class and may override the yielding method `#{n.name}` of #{which.(n.name)} " \
+                  "at run time, which the rewrite cannot follow; rename it (decision 0035)")
+      when Prism::AliasMethodNode
+        nm = n.new_name.respond_to?(:unescaped) ? n.new_name.unescaped.to_sym : nil
+        report(n, "alias makes `#{nm}`, the name of a yielding method of #{which.(nm)}; the rewrite cannot follow it (decision 0035)") if inst.key?(nm)
+      when Prism::CallNode
+        a = args_of(n)
+        case n.name
+        when :define_method, :alias_method, :attr_reader, :attr_writer, :attr_accessor, :attr
+          made = %i[define_method alias_method].include?(n.name) ? names.(a.first(1)) : names.(a)
+          computed = %i[define_method alias_method].include?(n.name) && made.include?(nil)
+          bad = made.compact.find { |nm| inst.key?(nm) }
+          next unless computed || bad
+          report(n, "#{n.name} #{bad ? "makes `#{bad}`, the name of a yielding method of #{which.(bad)}" : 'with a computed name may make the name of a yielding method'}; " \
+                    "the rewrite cannot follow it (decision 0035)")
+        when :include, :prepend
+          next unless n.receiver.nil?
+          cls = ancestors(n).find { |x| x.is_a?(Prism::ClassNode) || x.is_a?(Prism::ModuleNode) || x.is_a?(Prism::SingletonClassNode) }
+          next unless cls.is_a?(Prism::ClassNode)
+          top = cls.constant_path.is_a?(Prism::ConstantReadNode) && @cdefs.key?(cls.constant_path.name.to_s) && @parent[cls.object_id].equal?(prog.statements)
+          hit = top ? hier[cls.constant_path.name.to_s] : cls.superclass && in_hier.(cls.superclass)
+          next unless hit
+          report(n, "#{n.name} in a class that inherits or defines a yielding method may put a module's method in front of it; " \
+                    "the rewrite cannot follow that (decision 0035)")
+        when :extend
+          report(n, "extend may put a module's method in front of a yielding method (#{inst.keys.map { |k| "`#{k}`" }.join(', ')}) on one object; " \
+                    "the rewrite cannot follow that (decision 0035)")
+        when :new
+          next unless n.receiver.is_a?(Prism::ConstantReadNode) && n.receiver.name == :Class && a.first && in_hier.(a.first)
+          report(n, "Class.new on a class with a yielding method makes a subclass the rewrite cannot see (decision 0035)")
+        end
+      end
+    end
+  end
+
+  def yielding_call?(n)
+    return false unless n.is_a?(Prism::CallNode) && @yielding_names[n.name]
+    k = target_key(n)
+    k.is_a?(Array) && @yielding[k] ? true : false
+  end
+
+  # Calls by the name of a yielding instance method must resolve, through a
+  # local or self; an override must yield exactly when the method it
+  # overrides does, since the call is dispatched at run time.
+  def check_instance_calls(prog)
+    inst = {}
+    @yielding.each_key { |c, nm| (inst[nm] ||= []) << c if c }
+    return if inst.empty?
+    each_node(prog) do |n|
+      next unless n.is_a?(Prism::CallNode)
+      if %i[send __send__ public_send method].include?(n.name)
+        sym = args_of(n).first
+        if sym.is_a?(Prism::SymbolNode) && inst.key?(sym.unescaped.to_sym)
+          report(n, "a yielding method reached through #{n.name} cannot be resolved (decision 0035)")
+        end
+        next
+      end
+      next unless inst.key?(n.name) && n.receiver && !n.receiver.is_a?(Prism::SelfNode)
+      k = target_key(n)
+      if k == :unknown
+        t = node_type(n.receiver)
+        why = @types.empty? ? "no type reader (spinel-typedump) was available" : "the analysis types the receiver as #{t || 'ambiguous'}"
+        cs = inst[n.name]
+        list = cs.size > 1 ? "#{cs[0..-2].join(', ')} and #{cs[-1]}" : cs[0]
+        report(n, "`#{n.name}` is a yielding method of #{list}, and #{why}, so the call cannot be resolved (decision 0035)")
+      elsif k && @yielding[k] && !n.receiver.is_a?(Prism::LocalVariableReadNode)
+        report(n, "the receiver of a call to the yielding method `#{n.name}` must be a local variable or self; assign it to a local first")
+      end
+    end
+    check_hidden_overrides(prog, inst)
+    @cdefs.each do |cls, h|
+      h.each do |name, d|
+        sup = @csuper[cls] && lookup(@csuper[cls], name)
+        next unless sup && !@yielding[sup] != !@yielding[[cls, name]]
+        y, ny = @yielding[sup] ? [sup[0], cls] : [cls, sup[0]]
+        report(d, "`#{name}` yields in #{y} but not in #{ny}; a call through a #{sup[0]} receiver may reach either, so the rewrite cannot pick the form (decision 0035)")
+      end
+    end
+  end
+
+  def suspends?(n)
+    found = false
+    walk_own(n) { |x| found = true if fiber_yield?(x) || yielding_call?(x) }
+    found
+  end
+
+  # A return (in a method), or a break/next that leaves `n` for the lowered
+  # loop around it, makes `n` part of the state machine.
+  def escapes?(n, kind)
+    found = false
+    scan = lambda do |x, in_loop|
+      return if x.nil? || x.is_a?(Prism::DefNode) || x.is_a?(Prism::LambdaNode)
+      found = true if x.is_a?(Prism::ReturnNode) && kind == :method
+      found = true if (x.is_a?(Prism::BreakNode) || x.is_a?(Prism::NextNode)) && !in_loop
+      loopish = x.is_a?(Prism::WhileNode) || x.is_a?(Prism::UntilNode) || x.is_a?(Prism::ForNode) || x.is_a?(Prism::BlockNode)
+      x.compact_child_nodes.each { |c| scan.call(c, in_loop || loopish) }
+    end
+    scan.call(n, false)
+    found
+  end
+
+  def needs_lowering?(n, kind)
+    suspends?(n) || escapes?(n, kind)
+  end
+
+  def check_no_suspension(n)
+    walk_own(n) do |x|
+      if fiber_yield?(x) || yielding_call?(x)
+        raise Refusal.new(x, "Fiber.yield and calls to yielding methods must be a statement or the whole right side of an assignment")
+      end
+    end
+  end
+
+  # A statement kept verbatim may not hide a return inside a block.
+  def check_plain_or_lowerable(s, kind)
+    return unless kind == :method
+    scan = lambda do |x, in_block|
+      return if x.nil? || x.is_a?(Prism::DefNode) || x.is_a?(Prism::LambdaNode)
+      if x.is_a?(Prism::ReturnNode) && in_block
+        raise Refusal.new(x, "return inside a block in a yielding method is not supported")
+      end
+      x.compact_child_nodes.each { |c| scan.call(c, in_block || x.is_a?(Prism::BlockNode)) }
+    end
+    scan.call(s, false)
+  end
+
+  # ---- planning the edits ----------------------------------------------
+
+  def plan(prog)
+    @inner_edits = []
+    # The rewritten file is written elsewhere, and require_relative answers
+    # from the file the code is in, so literal paths are made absolute.
+    base_dir = File.dirname(File.expand_path(@path))
+    each_node(prog) do |n|
+      next unless n.is_a?(Prism::CallNode) && n.receiver.nil? && n.name == :require_relative
+      a = args_of(n)
+      unless a.size == 1 && a[0].is_a?(Prism::StringNode)
+        report(n, "require_relative needs a string literal in a file that uses Fiber")
+        next
+      end
+      ed = [a[0].location.start_offset, a[0].location.end_offset, File.expand_path(a[0].unescaped, base_dir).dump]
+      @edits << ed
+      @inner_edits << ed
+    end
+    sites = []
+    each_node(prog) { |n| sites << n if fiber_new?(n) || enum_new?(n) }
+    # Innermost first: an outer body's text is rendered with the inner
+    # fibers already rewritten.
+    sites.sort_by { |n| n.location.end_offset - n.location.start_offset }.each do |site|
+      next unless site.block.is_a?(Prism::BlockNode) && args_of(site).empty? # reported above
+      begin
+        ed = [site.location.start_offset, site.location.end_offset, enum_new?(site) ? enum_site(site) : fiber_site(site)]
+        @edits << ed
+        @inner_edits << ed
+      rescue Refusal => e
+        report(e.node, e.message)
+      end
+    end
+    @yielding.each_key do |key|
+      d = def_of(key)
+      begin
+        check_yielding_def(d)
+        factory = method_factory(d)
+        # Fiber.yield in the original definition raises as Ruby does at root.
+        walk_own(d.body) do |n|
+          next unless fiber_yield?(n)
+          a = args_of(n)
+          repl = "__sf_root_yield(#{a.empty? ? '' : render(a[0])})"
+          @edits << [n.location.start_offset, n.location.end_offset, repl]
+        end
+        @edits << [d.location.end_offset, d.location.end_offset, "\n\n#{factory}"]
+      rescue Refusal => e
+        report(e.node, e.message)
+      end
+    end
+    # Fiber.yield at the top level, outside any fiber or method.
+    walk_own(prog) do |n|
+      next unless fiber_yield?(n)
+      next if inside_any?(n)
+      a = args_of(n)
+      @edits << [n.location.start_offset, n.location.end_offset, "__sf_root_yield(#{a.empty? ? '' : render(a[0])})"]
+    end
+  end
+
+  def inside_any?(n)
+    s, e = n.location.start_offset, n.location.end_offset
+    @edits.any? { |es, ee, _| es <= s && e <= ee && es != ee }
+  end
+
+  def check_yielding_def(d)
+    ps = d.parameters
+    return if ps.nil?
+    ok = ps.rest.nil? && ps.posts.empty? && ps.keywords.empty? && ps.keyword_rest.nil? && ps.block.nil? &&
+         ps.requireds.all? { |r| r.is_a?(Prism::RequiredParameterNode) }
+    raise Refusal.new(d, "yielding method `#{d.name}` may take only plain and optional positional parameters") unless ok
+    walk_own(d.body) do |n|
+      raise Refusal.new(n, "yielding method `#{d.name}` may not use the block keyword yield") if n.is_a?(Prism::YieldNode)
+    end
+  end
+
+  def fiber_site(site)
+    blk = site.block
+    params = []
+    if blk.parameters
+      ps = blk.parameters.parameters
+      if ps
+        unless ps.optionals.empty? && ps.rest.nil? && ps.posts.empty? && ps.keywords.empty? && ps.keyword_rest.nil? && ps.block.nil? &&
+               ps.requireds.size <= 1 && ps.requireds.all? { |r| r.is_a?(Prism::RequiredParameterNode) }
+          raise Refusal.new(blk, "a Fiber.new block may take at most one plain parameter")
+        end
+        params = ps.requireds.map(&:name)
+      end
+    end
+    lw = Lowerer.new(self, :fiber, blk.locals)
+    lw.lower_body(blk.body, params.map { |p| "#{p} = #{lw.arg}" })
+    hoisted = (blk.locals.map(&:to_s) + lw.hoisted).uniq
+    check_merged_locals(blk.body, hoisted, lw.lowered_blocks)
+    if repeated?(site)
+      caps = checked_captures(site, "Fiber.new")
+      fname = factory_def(site, caps, hoisted, lw)
+      return "SpinelFiber.new(#{fname}(#{caps.join(', ')}))"
+    end
+    lines = []
+    lines << "SpinelFiber.new((lambda do"
+    hoisted.each { |h| lines << "  #{h} = nil" }
+    lw.state_decls.each { |d| lines << "  #{d}" }
+    lw.step_lambda.each_line(chomp: true) { |l| lines << "  #{l}" }
+    lines << "end).call)"
+    lines.join("\n")
+  end
+
+  # An Enumerator.new block becomes a SpinelEnum whose factory builds the
+  # block's step lambda; `y << v` and `y.yield v` are its suspensions.
+  def enum_site(site)
+    blk = site.block
+    ps = blk.parameters&.parameters
+    unless ps && ps.optionals.empty? && ps.rest.nil? && ps.posts.empty? && ps.keywords.empty? && ps.keyword_rest.nil? &&
+           ps.block.nil? && ps.requireds.size == 1 && ps.requireds[0].is_a?(Prism::RequiredParameterNode)
+      raise Refusal.new(blk, "an Enumerator.new block takes exactly one plain parameter, the yielder")
+    end
+    y = ps.requireds[0].name
+    @yielders = [y]
+    begin
+      receivers = []
+      walk_own(blk.body) do |n|
+        next unless n.is_a?(Prism::CallNode)
+        if FiberSyntax.fiber_yield?(n) || yielding_call?(n)
+          raise Refusal.new(n, "Fiber.yield and calls to yielding methods are not supported inside an Enumerator.new block")
+        end
+        if n.name == :<< && enum_yield?(n.receiver)
+          raise Refusal.new(n, "chained `#{y} << a << b` is not supported; write one `#{y} << v` per statement")
+        end
+        if enum_yield?(n)
+          raise Refusal.new(n, "#{y}.yield with several values is not supported") if args_of(n).size > 1
+          raise Refusal.new(n, "#{y} << takes one value") if n.name == :<< && args_of(n).size != 1
+          receivers << n.receiver
+        end
+      end
+      # every other read, including one inside a lambda or a kept block, is
+      # an escape; a nested Fiber.new or Enumerator.new block is its own body
+      scan = lambda do |n|
+        return if n.nil? || n.is_a?(Prism::DefNode)
+        if n.is_a?(Prism::LocalVariableReadNode) && n.name == y && receivers.none? { |r| r.equal?(n) }
+          raise Refusal.new(n, "the yielder `#{y}` may only receive `<<` or `yield` (decision 0035 stage 3)")
+        end
+        n.compact_child_nodes.each { |c| scan.call(c) unless (fiber_new?(n) || enum_new?(n)) && c.equal?(n.block) }
+      end
+      scan.call(blk.body)
+      lw = Lowerer.new(self, :enum, blk.locals)
+      lw.lower_body(blk.body)
+      hoisted = (blk.locals.map(&:to_s) - [y.to_s] + lw.hoisted).uniq
+      check_merged_locals(blk.body, hoisted, lw.lowered_blocks)
+    ensure
+      @yielders = []
+    end
+    @enum_sites = true
+    caps = checked_captures(site, "Enumerator.new")
+    fname = factory_def(site, caps, hoisted, lw)
+    mk = fname.sub("__sf_fr_", "__sf_en_")
+    insert_def(site, "def #{mk}(#{caps.join(', ')})\n  lambda { #{fname}(#{caps.join(', ')}) }\nend")
+    "SpinelEnum.new(#{mk}(#{caps.join(', ')}))"
+  end
+
+  # ---- factories for frames that must be fresh --------------------------
+  #
+  # Spinel gives the locals that a lambda captures one cell per activation
+  # of the method around it, not one per evaluation of the lambda. A frame
+  # built by an inline lambda is therefore shared by every fiber that one
+  # activation creates from the same site. A site that can run more than
+  # once per activation, and every Enumerator.new site (whose frame is built
+  # again by rewind and each), builds its frame in a method of its own, so
+  # each frame is a fresh activation. The locals of the scope around that
+  # the body uses become the method's parameters: copied at creation, which
+  # is Ruby's meaning only while nothing assigns them afterwards, so such an
+  # assignment is refused.
+
+  LOOPISH = [Prism::WhileNode, Prism::UntilNode, Prism::ForNode, Prism::LambdaNode].freeze
+
+  def build_parents(prog)
+    @parent = {}
+    stack = [[prog, nil]]
+    until stack.empty?
+      n, par = stack.pop
+      @parent[n.object_id] = par
+      n.compact_child_nodes.each { |c| stack << [c, n] }
+    end
+  end
+
+  def ancestors(n)
+    out = []
+    a = @parent[n.object_id]
+    while a
+      out << a
+      a = @parent[a.object_id]
+    end
+    out
+  end
+
+  def site_block?(n)
+    par = @parent[n.object_id]
+    n.is_a?(Prism::BlockNode) && par && (fiber_new?(par) || enum_new?(par)) && par.block.equal?(n)
+  end
+
+  def contains?(outer, n)
+    outer.location.start_offset <= n.location.start_offset && n.location.end_offset <= outer.location.end_offset
+  end
+
+  # Whether one activation of the method around `site` can evaluate it twice.
+  def repeated?(site)
+    ancestors(site).each do |a|
+      return false if a.is_a?(Prism::DefNode)
+      return true if again?(a)
+    end
+    false
+  end
+
+  # A node whose part can run again within one activation: a loop, a lambda,
+  # a block (other than a fiber's or enumerator's own), or a begin whose
+  # rescue retries.
+  def again?(a)
+    LOOPISH.any? { |k| a.is_a?(k) } || (a.is_a?(Prism::BlockNode) && !site_block?(a)) || retrying?(a)
+  end
+
+  def retrying?(a)
+    return false unless a.is_a?(Prism::BeginNode)
+    found = false
+    rc = a.rescue_clause
+    while rc
+      walk = lambda do |n|
+        return if n.nil? || found
+        return if n.is_a?(Prism::DefNode)
+        found = true if n.is_a?(Prism::RetryNode)
+        # A retry in a nested begin's own rescue clauses retries that begin;
+        # one in its body, else or ensure retries this one. Blocks and lambdas
+        # are entered: counting too many only adds fresh frames and refusals.
+        kids = n.is_a?(Prism::BeginNode) ? [n.statements, n.else_clause, n.ensure_clause] : n.compact_child_nodes
+        kids.each { |c| walk.call(c) }
+      end
+      walk.call(rc.statements)
+      rc = rc.respond_to?(:subsequent) ? rc.subsequent : rc.consequent   # prism >= 1.3 / older
+    end
+    found
+  end
+
+  LV_WRITES = [Prism::LocalVariableWriteNode, Prism::LocalVariableOperatorWriteNode, Prism::LocalVariableOrWriteNode,
+               Prism::LocalVariableAndWriteNode, Prism::LocalVariableTargetNode].freeze
+
+  # The locals of the scopes around the site's block that the block uses, in
+  # order of first use; refused when the block assigns one, or when the scope
+  # that owns it assigns it after the site, in a loop or block around the
+  # site, or inside a lambda.
+  def checked_captures(site, what)
+    blk = site.block
+    caps = []
+    scan = lambda do |n, level|
+      return if n.nil? || n.is_a?(Prism::DefNode)
+      if (n.is_a?(Prism::LocalVariableReadNode) || LV_WRITES.any? { |k| n.is_a?(k) }) && n.depth > level
+        raise Refusal.new(n, "the #{what} block assigns `#{n.name}`, a local of the scope around it, which its frame cannot share here") unless n.is_a?(Prism::LocalVariableReadNode)
+        caps << n.name unless caps.include?(n.name)
+      end
+      inner = n.is_a?(Prism::BlockNode) || n.is_a?(Prism::LambdaNode)
+      n.compact_child_nodes.each { |c| scan.call(c, inner ? level + 1 : level) }
+    end
+    scan.call(blk.body, 0)
+    anc = ancestors(site)
+    caps.each do |name|
+      scope = anc.find { |a| a.respond_to?(:locals) && a.locals.include?(name) }
+      next unless scope
+      writes_in(scope, name) do |w|
+        wanc = ancestors(w).take_while { |a| !a.equal?(scope) }
+        why = if w.location.end_offset > site.location.start_offset then "after"
+              elsif wanc.any? { |a| again?(a) && contains?(a, site) } then "in a loop, block or retried begin around"
+              # a block or lambda may be stored and called after the site
+              elsif wanc.any? { |a| a.is_a?(Prism::LambdaNode) || a.is_a?(Prism::BlockNode) } then "inside a block or lambda before"
+              end
+        next unless why
+        raise Refusal.new(w, "`#{name}` is used by the #{what} block at line #{site.location.start_line} and assigned #{why} it; " \
+                             "the rewrite copies it when the frame is made, so assign it before, or use another local")
+      end
+    end
+    caps
+  end
+
+  def writes_in(scope, name, &blk)
+    walk = lambda do |n, top|
+      return if n.nil?
+      return if !top && n.is_a?(Prism::DefNode)
+      return if !top && (n.is_a?(Prism::BlockNode) || n.is_a?(Prism::LambdaNode)) && n.locals.include?(name) # shadowed
+      yield n if LV_WRITES.any? { |k| n.is_a?(k) } && n.name == name
+      n.compact_child_nodes.each { |c| walk.call(c, false) }
+    end
+    walk.call(scope, true)
+  end
+
+  def factory_def(site, caps, hoisted, lw)
+    fname = "__sf_fr_#{next_id}"
+    lines = ["def #{fname}(#{caps.join(', ')})"]
+    (hoisted - caps.map(&:to_s)).each { |h| lines << "  #{h} = nil" }
+    lw.state_decls.each { |d| lines << "  #{d}" }
+    lw.step_lambda.each_line(chomp: true) { |l| lines << "  #{l}" }
+    lines << "end"
+    insert_def(site, lines.join("\n"))
+    fname
+  end
+
+  # The factory sits beside the def around the site, so self, instance
+  # variables and methods are those of the site; with no def around, it is
+  # defined before the statement that holds the site.
+  def insert_def(site, text)
+    anc = ancestors(site)
+    first = anc.find { |a| [Prism::DefNode, Prism::ClassNode, Prism::ModuleNode, Prism::SingletonClassNode].any? { |k| a.is_a?(k) } }
+    if first.is_a?(Prism::DefNode)
+      unless first.receiver.nil? || first.receiver.is_a?(Prism::SelfNode)
+        raise Refusal.new(site, "a fiber or enumerator here needs its frame in a method beside `def #{first.receiver.location.slice}.#{first.name}`, which is not supported")
+      end
+      text = text.sub(/\Adef /, "def self.") if first.receiver
+      @inserts << [first.location.end_offset, "\n\n#{text}"]
+      return
+    end
+    body = first ? first.body : @result.value.statements
+    stmt = body.is_a?(Prism::StatementsNode) ? body.body.find { |x| contains?(x, site) } : nil
+    raise Refusal.new(site, "cannot place the frame method for this site") unless stmt
+    text = text.sub(/\Adef /, "def self.") if first
+    @inserts << [stmt.location.start_offset, "#{text}\n#{' ' * stmt.location.start_column}"]
+  end
+
+  def method_factory(d)
+    lw = Lowerer.new(self, :method, d.locals)
+    lw.lower_body(d.body)
+    params = d.parameters ? d.parameters.location.slice : ""
+    param_names = d.parameters ? (d.parameters.requireds + d.parameters.optionals).map { |p| p.name.to_s } : []
+    hoisted = (d.locals.map(&:to_s) - param_names + lw.hoisted).uniq
+    check_merged_locals(d.body, hoisted + param_names, lw.lowered_blocks)
+    lines = []
+    lines << "def __sf_mk_#{d.name}(#{params})"
+    hoisted.each { |h| lines << "  #{h} = nil" }
+    lw.state_decls.each { |x| lines << "  #{x}" }
+    lw.step_lambda.each_line(chomp: true) { |l| lines << "  #{l}" }
+    lines << "end"
+    lines.join("\n")
+  end
+
+  # A block's own locals are declared by Ruby inside the block. Hoisting puts
+  # the body's locals at its top, so a block local that shares a name with a
+  # body local declared after the block would become that local. Blocks kept
+  # as text keep their parameters, which shadow; a nested fiber's parameters
+  # and everything inside it are assigned, so they count too.
+  def check_merged_locals(body, hoisted, lowered)
+    scan = lambda do |n, in_fiber|
+      return if n.nil? || n.is_a?(Prism::DefNode)
+      inner_fiber = fiber_new?(n)
+      if (n.is_a?(Prism::BlockNode) || n.is_a?(Prism::LambdaNode)) && !lowered.any? { |b| b.equal?(n) }
+        names = n.locals.map(&:to_s)
+        unless in_fiber
+          pnames = []
+          each_node(n.parameters) { |x| pnames << x.name.to_s if x.respond_to?(:name) && x.name }
+          names -= pnames
+        end
+        clash = names & hoisted
+        unless clash.empty?
+          raise Refusal.new(n, "the block local `#{clash.first}` has the name of a local of the enclosing fiber body or yielding method; " \
+                               "the rewrite would merge them, so rename one")
+        end
+      end
+      n.compact_child_nodes.each { |c| scan.call(c, in_fiber || (inner_fiber && c.equal?(n.block))) }
+    end
+    scan.call(body, false)
+  end
+
+  # The source text of `node`, with the inner edits (rewritten fibers,
+  # absolute require_relative paths) and `extra` spliced in; an edit inside
+  # another one is already part of it.
+  def render(node, extra = [])
+    s0 = node.location.start_offset
+    e0 = node.location.end_offset
+    eds = (@inner_edits + extra).select { |a, b, _| s0 <= a && b <= e0 }.sort_by { |a, b, _| [a, -b] }
+    kept = []
+    eds.each { |a, b, t| kept << [a, b, t] unless kept.any? { |ka, kb, _| ka <= a && b <= kb } }
+    bytes = @src.b
+    out = +""
+    pos = s0
+    kept.each do |a, b, t|
+      out << bytes[pos...a]
+      out << t.b
+      pos = b
+    end
+    out << bytes[pos...e0]
+    out.force_encoding(Encoding::UTF_8)
+  end
+
+  def apply_edits
+    edits = @edits.sort_by { |s, e, _| [s, -e] }
+    # drop edits nested inside an earlier replacement; an insertion at a
+    # replacement's end (a factory after an endless def that ends in the
+    # replaced Fiber.yield) is not inside it
+    kept = []
+    edits.each do |s, e, r|
+      next if kept.any? { |ks, ke, _| ks < ke && (s == e ? ks < s && s < ke : ks <= s && e <= ke) }
+      kept << [s, e, r]
+    end
+    # frame methods go in at their positions, before a replacement that
+    # starts at the same place; one inside a replacement has no place
+    (@inserts || []).each do |at, _|
+      next unless kept.any? { |ks, ke, _| ks < at && at < ke }
+      raise "spinel-fiber-rewrite: a frame method falls inside a rewritten region (offset #{at})"
+    end
+    all = kept.map { |s, e, r| [s, 1, e, r] } + (@inserts || []).each_with_index.map { |(at, t), i| [at, 0, at, t, i] }
+    out = +""
+    pos = 0
+    bytes = @src.b
+    all.sort_by { |s, k, e, _, i| [s, k, i || 0, e] }.each do |s, _, e, r|
+      out << bytes[pos...s].force_encoding(Encoding::UTF_8)
+      out << r
+      pos = e
+    end
+    out << bytes[pos..].force_encoding(Encoding::UTF_8)
+    insert_prelude(out)
+  end
+
+  # The names among `names` that some file of the program defines, and whether
+  # every file was found: the entry, and what it reaches by require_relative
+  # or by a require that one of the -I roots resolves. A require that cannot
+  # be resolved here (a computed path, a library of the runtime) makes the set
+  # incomplete, and then nothing is renamed.
+  def program_defs(names)
+    found = []
+    seen = {}
+    queue = [[File.expand_path(@path), @result]]
+    complete = true
+    until queue.empty?
+      file, res = queue.shift
+      next if seen[file]
+      seen[file] = true
+      res ||= Prism.parse(File.read(file))
+      dir = File.dirname(file)
+      each_node(res.value) do |n|
+        found << n.name if n.is_a?(Prism::DefNode) && names.include?(n.name)
+        next unless n.is_a?(Prism::CallNode) && n.receiver.nil? && %i[require require_relative].include?(n.name)
+        a = args_of(n)
+        unless a.size == 1 && a[0].is_a?(Prism::StringNode)
+          complete = false
+          next
+        end
+        rel = a[0].unescaped
+        rel += ".rb" unless rel.end_with?(".rb")
+        cands = n.name == :require_relative ? [File.expand_path(rel, dir)] : @roots.map { |r| File.expand_path(rel, r) }
+        hit = cands.find { |c| File.file?(c) }
+        if hit then queue << [hit, nil] else complete = false end
+      end
+    end
+    [found.uniq, complete]
+  end
+
+  # Spinel dispatches a call on a boxed value by its method name, and for a
+  # name the runtime Fiber also answers (resume, alive?) it adds an arm that
+  # reaches sp_Fiber_resume_n, which wasm cannot link. SpinelFiber's methods
+  # therefore carry reserved names and every `.resume` / `.alive?` call is
+  # renamed -- unless the program defines its own method of that name, in
+  # which case SpinelFiber and the calls keep the public name.
+  def rename_selectors(text)
+    keep, complete = program_defs(%i[resume alive?])
+    keep = %i[resume alive?] unless complete
+    keep.uniq.each { |m| text = text.sub("def __sf_#{m}", "def #{m}") }
+    ren = %i[resume alive?] - keep
+    return text if ren.empty?
+    edits = []
+    each_node(Prism.parse(text).value) do |n|
+      next unless n.is_a?(Prism::CallNode) && n.receiver && ren.include?(n.name) && n.message_loc
+      edits << [n.message_loc.start_offset, n.message_loc.end_offset, "__sf_#{n.name}"]
+    end
+    out = text.b
+    edits.sort_by { |st, _, _| -st }.each { |st, en, rp| out[st...en] = rp.b }
+    out.force_encoding(Encoding::UTF_8)
+  end
+
+  # The prelude goes after the leading comment lines, so a magic comment or
+  # tier comment in the first two lines stays where spinel looks for it.
+  def insert_prelude(text)
+    lines = text.lines
+    head = 0
+    head += 1 while head < lines.size && lines[head].start_with?("#")
+    (lines[0...head] + [PRELUDE, "\n"] + (@enum_sites ? [ENUM_PRELUDE, "\n"] : []) + lines[head..]).join
+  end
+
+  def report(node, msg)
+    loc = node.location
+    key = [loc.start_offset, msg]
+    return if @errors.include?(key)
+    @errors << key
+    warn "#{@path}:#{loc.start_line}:#{loc.start_column + 1}: spinel-fiber: #{msg}"
+  end
+end
+
+if $PROGRAM_NAME == __FILE__
+  usage = "usage: spinel-fiber-rewrite IN.rb -o OUT.rb [-I DIR]... [--typedump PATH]"
+  inp = nil
+  outp = nil
+  roots = []
+  typedump = nil
+  args = ARGV.dup
+  until args.empty?
+    a = args.shift
+    if a == "-o" then outp = args.shift
+    elsif a == "-I" then roots << args.shift
+    elsif a == "--typedump" then typedump = args.shift
+    elsif inp.nil? then inp = a
+    else abort usage
+    end
+  end
+  abort usage unless inp && outp
+  rw = Rewriter.new(inp, File.read(inp), roots)
+  rw.typedump = typedump
+  rc = rw.run
+  File.write(outp, rw.out) if rc.zero?
+  exit rc
+end

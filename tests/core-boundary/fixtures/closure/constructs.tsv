@@ -1,0 +1,53 @@
+# What the checked subset admits and what it refuses, one construct per row.
+#
+# This table is the evidence behind docs/core/doom-closure-gaps.md. Each row is
+# a probe the lane BUILDS: a tiny entry using one construct and nothing else,
+# over a contract with two scalars and one buffer. `verdict` is what the
+# checker must answer -- `admitted`, or the diagnostic category it must be
+# refused with.
+#
+# `shape` is `narrow` for a body written out in src/probes.rb, which is all but
+# one of them; `generated` is the row whose point IS its width, where writing
+# sixty parameters by hand would tell a reader nothing the lane's loop does not.
+#
+# EACH BODY USES ITS CONSTRUCT AND AS LITTLE ELSE AS POSSIBLE, because a
+# verdict is matched on the diagnostic CATEGORY and two different mistakes can
+# share one. Two rows here exist because that went wrong: `break_in_while` was
+# written with a modifier `if`, so it was refused for the modifier and not for
+# the `break`, and `float_lit` was written as `(a * 2.0).to_i`, which is
+# refused for `to_i` with or without the float. `to_i_call` is the pair that
+# keeps the second honest.
+#
+# Rows exist for what is ADMITTED as well as for what is not. A table of
+# refusals alone would say nothing about whether the checker still accepts the
+# things it is supposed to, and the two lists are the same question.
+#
+#id	shape	verdict	what it is
+and_op	narrow	admitted	`&&` between two comparisons -- refused when 0007 recorded this row, admitted since 0008 task 4 (boolean operands, real short circuiting)
+or_op	narrow	admitted	`||` between two comparisons -- refused when 0007 recorded this row, admitted since 0008 task 4
+not_op	narrow	admitted	`!` applied to a comparison -- refused when 0007 recorded this row, admitted since 0008 task 4 (boolean operand only)
+modifier_if	narrow	admitted	an `if` modifier, so one path has no value -- refused when 0007 recorded this row, admitted in STATEMENT position since 0008 task 4
+unless_no_else	narrow	admitted	`unless` without an else -- refused when decision 0007 recorded this row, admitted in STATEMENT position since decision 0008 task 4
+early_return	narrow	admitted	`return` as a modifier, leaving the other path valueless -- refused when 0007 recorded this row, admitted since 0008 task 4
+case_when	narrow	type-evidence	`case`/`when`
+until_loop	narrow	unsupported-node	`until`
+break_in_while	narrow	admitted	`break` out of a while -- refused when 0007 recorded this row, admitted since 0008 task 4 (without a value, nearest loop)
+next_in_while	narrow	admitted	`next` in a while -- refused when 0007 recorded this row, admitted since 0008 task 4 (without a value, nearest loop)
+helper_buffer	narrow	admitted	a call to a helper taking a declared buffer -- refused when decision 0007 recorded this row, admitted since decision 0008 task 3 derived the borrow
+dispatch_var	narrow	type-evidence	a call whose target is a value, not a name
+ivar	narrow	type-evidence	an instance variable
+elem_opassign	narrow	admitted	`buf[i] += 1` -- refused when 0007 recorded this row, admitted since 0008 task 4 (index evaluated once, no store if any check fails)
+multiple_assign	narrow	type-evidence	`x, y = a, b`
+each_block	narrow	admitted	`4.times { |i| ... }` -- refused when 0007 recorded this row, admitted since decision 0041 stage 1 (a literal block on `times`, `upto`, `downto`, or on `each`/`each_with_index` over a declared buffer)
+map_block	narrow	unsupported-block	`buf.map { |x| ... }` -- a block on any other call stays refused after decision 0041 stage 1
+array_literal	narrow	type-evidence	an array literal, bound and not read
+raise_error	narrow	unresolved-call	`raise`
+float_lit	narrow	type-evidence	a float literal, bound and not read
+to_i_call	narrow	type-evidence	`Integer#to_i`, which float_lit would otherwise be blamed for
+zero_pred	narrow	type-evidence	`Integer#zero?`
+ternary	narrow	admitted	a ternary, which has both arms
+plain_return	narrow	admitted	`return` on both arms of an if/else
+helper_scalar	narrow	admitted	a call to a helper taking scalars
+nested_index	narrow	admitted	a buffer read used as another buffer's index
+two_stores	narrow	admitted	two stores into one buffer and a status result
+thirty_buffers	generated	admitted	an entry taking thirty declared buffers

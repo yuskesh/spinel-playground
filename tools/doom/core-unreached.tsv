@@ -1,0 +1,132 @@
+# tools/doom/core-unreached.tsv — fields no shipped configuration writes, and why.
+#
+# A field listed here is declared by the schema and written by the original
+# only under a gate that no shipped program opens: its configuration. The
+# owner approved this table on 2026-09-17 (the trace configuration). On
+# 2026-10-21 the owner chose job mode 0 for the native program (decision
+# 0008), which makes the job list and its executor -- job modes 1 and 2,
+# `jobs` -- a configuration too.
+#
+# tools/doom/emit-schema.rb carries each row into state.tsv as an `#unreached`
+# line. tools/doom/audit-core.rb requires every output or persistent field that
+# step or render code writes to have a CORE writer -- a migrated definition
+# writing it outside the gates listed here -- unless this table names it.
+# tools/doom/migration-ledger.rb reads the configuration names from here.
+#
+# `gates` names the definitions whose gated code writes the field (or calls
+# the definition that does).
+#
+# WHAT A ROW CLAIMS: no shipped program produces the field's data. Four rows
+# claim it in a narrower form, and their reason begins RESET ONLY: the frame's
+# counter is set to 0 on a shipped path (render_player_view) and every read of
+# it is gated, so nothing shipped ever sees a value other than the reset.
+# tools/doom/audit-core.rb checks both halves of that for any listed field it
+# finds written on a shipped path.
+#
+#field	config	reason	gates
+job_executor_checked	jobs	written only by JobExecutor#run, which only a job mode other than 0 reaches	Renderer#render_player_view
+jobs_cover_bad	jobs	written only by Jobs#reset, which only a job mode other than 0 reaches	Renderer#render_player_view
+jobs_cover_dbl	jobs	written only by Jobs#reset, which only a job mode other than 0 reaches	Renderer#render_player_view
+jobs_cover_oob	jobs	written only by Jobs#reset, which only a job mode other than 0 reaches	Renderer#render_player_view
+jobs_cover_px	jobs	written only by Jobs#reset, which only a job mode other than 0 reaches	Renderer#render_player_view
+jobs_fuzz_badrange	jobs	written only by Jobs#reset, which only a job mode other than 0 reaches	Renderer#render_player_view
+jobs_fuzz_chain_max	jobs	written only by Jobs#reset, which only a job mode other than 0 reaches	Renderer#render_player_view
+jobs_fuzz_conflicts	jobs	written only by Jobs#reset, which only a job mode other than 0 reaches	Renderer#render_player_view
+jobs_fuzz_max_kx	jobs	written only by Jobs#check_masked_k, Jobs#reset, which only a job mode other than 0 reaches	Renderer#render_player_view
+jobs_fuzz_n	jobs	written only by Jobs#check_masked_k, Jobs#reset, which only a job mode other than 0 reaches	Renderer#render_player_view
+jobs_fuzz_raw	jobs	written only by Jobs#reset, which only a job mode other than 0 reaches	Renderer#render_player_view
+jobs_fuzz_run_raw	jobs	written only by Jobs#reset, which only a job mode other than 0 reaches	Renderer#render_player_view
+jobs_fuzz_suffix	jobs	written only by Jobs#reset, which only a job mode other than 0 reaches	Renderer#render_player_view
+jobs_hi_masked	jobs	written only by Jobs#check, which only a job mode other than 0 reaches	Renderer#render_player_view
+jobs_hi_sched	jobs	written only by Jobs#check, which only a job mode other than 0 reaches	Renderer#render_player_view
+jobs_hi_span	jobs	written only by Jobs#check, which only a job mode other than 0 reaches	Renderer#render_player_view
+jobs_hi_wall	jobs	written only by Jobs#check, which only a job mode other than 0 reaches	Renderer#render_player_view
+jobs_hi_zone	jobs	written only by Jobs#check, which only a job mode other than 0 reaches	Renderer#render_player_view
+jobs_masked	jobs	written only by Jobs#push_masked, which only a job mode other than 0 reaches	Renderer#draw_column
+jobs_masked_cover_px	jobs	written only by Jobs#reset, which only a job mode other than 0 reaches	Renderer#render_player_view
+jobs_masked_dispatches	jobs	written only by Jobs#reset, which only a job mode other than 0 reaches	Renderer#render_player_view
+jobs_masked_max_kx	jobs	written only by Jobs#check_masked_k, Jobs#reset, which only a job mode other than 0 reaches	Renderer#render_player_view
+jobs_masked_ovpairs	jobs	written only by Jobs#reset, which only a job mode other than 0 reaches	Renderer#render_player_view
+jobs_masked_ovpx	jobs	written only by Jobs#reset, which only a job mode other than 0 reaches	Renderer#render_player_view
+jobs_masked_phase2_n	jobs	written only by Jobs#mark_phase3, Jobs#reset, which only a job mode other than 0 reaches	Renderer#draw_masked,Renderer#render_player_view
+jobs_masked_run_maxk	jobs	written only by Jobs#reset, which only a job mode other than 0 reaches	Renderer#render_player_view
+jobs_masked_runs	jobs	written only by Jobs#reset, which only a job mode other than 0 reaches	Renderer#render_player_view
+jobs_max_k	jobs	written only by Jobs#check_disjoint, Jobs#reset, which only a job mode other than 0 reaches	Renderer#render_player_view
+jobs_mcount	jobs	written only by Jobs#check_masked_k, which only a job mode other than 0 reaches	Renderer#render_player_view
+jobs_mfz	jobs	written only by Jobs#check_masked_k, which only a job mode other than 0 reaches	Renderer#render_player_view
+jobs_mhi	jobs	written only by Jobs#check_masked_k, which only a job mode other than 0 reaches	Renderer#render_player_view
+jobs_mlo	jobs	written only by Jobs#check_masked_k, which only a job mode other than 0 reaches	Renderer#render_player_view
+jobs_mseq	jobs	written only by Jobs#check_masked_k, which only a job mode other than 0 reaches	Renderer#render_player_view
+jobs_nmasked	jobs	written only by Jobs#push_masked, Jobs#reset, which only a job mode other than 0 reaches	Renderer#draw_column,Renderer#render_player_view
+jobs_nsched	jobs	written only by Jobs#push_masked, Jobs#push_span, Jobs#push_wall, Jobs#reset, which only a job mode other than 0 reaches	Renderer#draw_column,Renderer#draw_span,Renderer#render_player_view
+jobs_nspan	jobs	written only by Jobs#push_span, Jobs#reset, which only a job mode other than 0 reaches	Renderer#draw_span,Renderer#render_player_view
+jobs_nwall	jobs	written only by Jobs#push_wall, Jobs#reset, which only a job mode other than 0 reaches	Renderer#draw_column,Renderer#render_player_view
+jobs_nzone	jobs	written only by Jobs#alloc_zone_window, Jobs#reset, which only a job mode other than 0 reaches	Renderer#draw_masked_column,Renderer#render_player_view
+jobs_overlaps	jobs	written only by Jobs#check_disjoint, Jobs#reset, which only a job mode other than 0 reaches	Renderer#render_player_view
+jobs_sc_idx	jobs	written only by Jobs#push_masked, Jobs#push_span, Jobs#push_wall, which only a job mode other than 0 reaches	Renderer#draw_column,Renderer#draw_span
+jobs_sc_kind	jobs	written only by Jobs#push_masked, Jobs#push_span, Jobs#push_wall, which only a job mode other than 0 reaches	Renderer#draw_column,Renderer#draw_span
+jobs_span	jobs	written only by Jobs#push_span, which only a job mode other than 0 reaches	Renderer#draw_span
+jobs_span_max_kx	jobs	written only by Jobs#check_span_disjoint, Jobs#reset, which only a job mode other than 0 reaches	Renderer#render_player_view
+jobs_span_overlaps	jobs	written only by Jobs#check_span_disjoint, Jobs#reset, which only a job mode other than 0 reaches	Renderer#render_player_view
+jobs_wall	jobs	written only by Jobs#push_wall, which only a job mode other than 0 reaches	Renderer#draw_column
+jobs_wall_all_max_k	jobs	written only by Jobs#check_wall_all, Jobs#reset, which only a job mode other than 0 reaches	Renderer#render_player_view
+jobs_wall_all_overlaps	jobs	written only by Jobs#check_wall_all, Jobs#reset, which only a job mode other than 0 reaches	Renderer#render_player_view
+jobs_wall_phase0_n	jobs	written only by Jobs#mark_phase1, Jobs#reset, which only a job mode other than 0 reaches	Renderer#render_player_view
+jobs_xcount	jobs	written only by Jobs#check_disjoint, Jobs#check_wall_all, which only a job mode other than 0 reaches	Renderer#render_player_view
+jobs_xyh	jobs	written only by Jobs#check_disjoint, Jobs#check_wall_all, which only a job mode other than 0 reaches	Renderer#render_player_view
+jobs_xyl	jobs	written only by Jobs#check_disjoint, Jobs#check_wall_all, which only a job mode other than 0 reaches	Renderer#render_player_view
+jobs_ycount	jobs	written only by Jobs#check_span_disjoint, which only a job mode other than 0 reaches	Renderer#render_player_view
+jobs_yx1	jobs	written only by Jobs#check_span_disjoint, which only a job mode other than 0 reaches	Renderer#render_player_view
+jobs_yx2	jobs	written only by Jobs#check_span_disjoint, which only a job mode other than 0 reaches	Renderer#render_player_view
+jobs_zonebuf	jobs	the job ring draw_masked_column copies a masked post into only when the job mode is not 0	Renderer#draw_masked_column
+renderer_column_cmap	trace	the per-column record trace_column writes; trace_column is called only under `if @trace`	Renderer#draw_sky_plane,Renderer#render_seg_loop,Renderer#draw_masked_column
+renderer_column_iscale	trace	the per-column record trace_column writes; trace_column is called only under `if @trace`	Renderer#draw_sky_plane,Renderer#render_seg_loop,Renderer#draw_masked_column
+renderer_column_n	trace	RESET ONLY: render_player_view sets it to 0 every frame; only trace_column, called under `if @trace`, counts or reads it	Renderer#draw_sky_plane,Renderer#render_seg_loop,Renderer#draw_masked_column
+renderer_column_phase	trace	the per-column record trace_column writes; trace_column is called only under `if @trace`	Renderer#draw_sky_plane,Renderer#render_seg_loop,Renderer#draw_masked_column
+renderer_column_texcol	trace	the per-column record trace_column writes; trace_column is called only under `if @trace`	Renderer#draw_sky_plane,Renderer#render_seg_loop,Renderer#draw_masked_column
+renderer_column_texmid	trace	the per-column record trace_column writes; trace_column is called only under `if @trace`	Renderer#draw_sky_plane,Renderer#render_seg_loop,Renderer#draw_masked_column
+renderer_column_texnum	trace	the per-column record trace_column writes; trace_column is called only under `if @trace`	Renderer#draw_sky_plane,Renderer#render_seg_loop,Renderer#draw_masked_column
+renderer_column_tier	trace	the per-column record trace_column writes; trace_column is called only under `if @trace`	Renderer#draw_sky_plane,Renderer#render_seg_loop,Renderer#draw_masked_column
+renderer_column_x	trace	the per-column record trace_column writes; trace_column is called only under `if @trace`	Renderer#draw_sky_plane,Renderer#render_seg_loop,Renderer#draw_masked_column
+renderer_column_yh	trace	the per-column record trace_column writes; trace_column is called only under `if @trace`	Renderer#draw_sky_plane,Renderer#render_seg_loop,Renderer#draw_masked_column
+renderer_column_yl	trace	the per-column record trace_column writes; trace_column is called only under `if @trace`	Renderer#draw_sky_plane,Renderer#render_seg_loop,Renderer#draw_masked_column
+renderer_span_cmap	trace	the per-span record map_plane writes inside its own `if @trace` block	Renderer#map_plane
+renderer_span_n	trace	RESET ONLY: render_player_view sets it to 0 every frame; only map_plane's own `if @trace` block counts or reads it	Renderer#map_plane
+renderer_span_picnum	trace	the per-span record map_plane writes inside its own `if @trace` block	Renderer#map_plane
+renderer_span_x1	trace	the per-span record map_plane writes inside its own `if @trace` block	Renderer#map_plane
+renderer_span_x2	trace	the per-span record map_plane writes inside its own `if @trace` block	Renderer#map_plane
+renderer_span_xfrac	trace	the per-span record map_plane writes inside its own `if @trace` block	Renderer#map_plane
+renderer_span_xstep	trace	the per-span record map_plane writes inside its own `if @trace` block	Renderer#map_plane
+renderer_span_y	trace	the per-span record map_plane writes inside its own `if @trace` block	Renderer#map_plane
+renderer_span_yfrac	trace	the per-span record map_plane writes inside its own `if @trace` block	Renderer#map_plane
+renderer_span_ystep	trace	the per-span record map_plane writes inside its own `if @trace` block	Renderer#map_plane
+renderer_visit_n	trace	RESET ONLY: render_player_view sets it to 0 every frame; only subsector's own `if @trace` block counts or reads it	Renderer#subsector
+renderer_visit_ss	trace	the subsector visit record subsector writes inside its own `if @trace` block	Renderer#subsector
+renderer_wall_botmid	trace	the per-wall record trace_wall writes; trace_wall is called only under `if @trace`	Renderer#store_wall_range
+renderer_wall_bottom	trace	the per-wall record trace_wall writes; trace_wall is called only under `if @trace`	Renderer#store_wall_range
+renderer_wall_bottomfrac	trace	the per-wall record trace_wall writes; trace_wall is called only under `if @trace`	Renderer#store_wall_range
+renderer_wall_bottomstep	trace	the per-wall record trace_wall writes; trace_wall is called only under `if @trace`	Renderer#store_wall_range
+renderer_wall_bsil	trace	the per-wall record trace_wall writes; trace_wall is called only under `if @trace`	Renderer#store_wall_range
+renderer_wall_centerangle	trace	the per-wall record trace_wall writes; trace_wall is called only under `if @trace`	Renderer#store_wall_range
+renderer_wall_distance	trace	the per-wall record trace_wall writes; trace_wall is called only under `if @trace`	Renderer#store_wall_range
+renderer_wall_markceiling	trace	the per-wall record trace_wall writes; trace_wall is called only under `if @trace`	Renderer#store_wall_range
+renderer_wall_markfloor	trace	the per-wall record trace_wall writes; trace_wall is called only under `if @trace`	Renderer#store_wall_range
+renderer_wall_masked	trace	the per-wall record trace_wall writes; trace_wall is called only under `if @trace`	Renderer#store_wall_range
+renderer_wall_mid	trace	the per-wall record trace_wall writes; trace_wall is called only under `if @trace`	Renderer#store_wall_range
+renderer_wall_midmid	trace	the per-wall record trace_wall writes; trace_wall is called only under `if @trace`	Renderer#store_wall_range
+renderer_wall_n	trace	RESET ONLY: render_player_view sets it to 0 every frame; only trace_wall, called under `if @trace`, counts or reads it	Renderer#store_wall_range
+renderer_wall_offset	trace	the per-wall record trace_wall writes; trace_wall is called only under `if @trace`	Renderer#store_wall_range
+renderer_wall_scale	trace	the per-wall record trace_wall writes; trace_wall is called only under `if @trace`	Renderer#store_wall_range
+renderer_wall_scalestep	trace	the per-wall record trace_wall writes; trace_wall is called only under `if @trace`	Renderer#store_wall_range
+renderer_wall_seg	trace	the per-wall record trace_wall writes; trace_wall is called only under `if @trace`	Renderer#store_wall_range
+renderer_wall_segtextured	trace	the per-wall record trace_wall writes; trace_wall is called only under `if @trace`	Renderer#store_wall_range
+renderer_wall_sil	trace	the per-wall record trace_wall writes; trace_wall is called only under `if @trace`	Renderer#store_wall_range
+renderer_wall_top	trace	the per-wall record trace_wall writes; trace_wall is called only under `if @trace`	Renderer#store_wall_range
+renderer_wall_topfrac	trace	the per-wall record trace_wall writes; trace_wall is called only under `if @trace`	Renderer#store_wall_range
+renderer_wall_topmid	trace	the per-wall record trace_wall writes; trace_wall is called only under `if @trace`	Renderer#store_wall_range
+renderer_wall_topstep	trace	the per-wall record trace_wall writes; trace_wall is called only under `if @trace`	Renderer#store_wall_range
+renderer_wall_tsil	trace	the per-wall record trace_wall writes; trace_wall is called only under `if @trace`	Renderer#store_wall_range
+renderer_wall_worldbottom	trace	the per-wall record trace_wall writes; trace_wall is called only under `if @trace`	Renderer#store_wall_range
+renderer_wall_worldtop	trace	the per-wall record trace_wall writes; trace_wall is called only under `if @trace`	Renderer#store_wall_range
+renderer_wall_x1	trace	the per-wall record trace_wall writes; trace_wall is called only under `if @trace`	Renderer#store_wall_range
+renderer_wall_x2	trace	the per-wall record trace_wall writes; trace_wall is called only under `if @trace`	Renderer#store_wall_range

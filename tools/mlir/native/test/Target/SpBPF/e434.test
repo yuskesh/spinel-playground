@@ -1,0 +1,8 @@
+# The converted predecessor contract must parse as schema and serialize/parse idempotently.
+# Historical converter was docs/experiments/results/E149/convert_e434.rb, with e434_layers.tsv
+# requiring UNASSIGNED zero.
+#
+# Real contract, not synthetic: seven channels, eight records, seven maps, six signals.
+# RUN: spinel-mlir-capi-smoke %S/e434-converted.json | FileCheck %s
+# CHECK: capi-schema-ok version=1
+# CHECK-SAME: idempotent=1

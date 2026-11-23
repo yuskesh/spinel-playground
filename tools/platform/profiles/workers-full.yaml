@@ -1,0 +1,8 @@
+# The full-tier Workers profile (T-5's "profile extends to every tier").
+# platform selection has exactly one address: this file (R016 T-5 -- readable,
+# diffable, committed; porting = swap the profile, never the source).
+#   spinel-wasm app.rb --profile tools/platform/profiles/workers-full.yaml
+# supplies: full = the hosted runtime plus the platform's require-able menu
+# (tools/platform/menus.yaml, platforms.workers.menu).
+platform: workers
+supplies: full

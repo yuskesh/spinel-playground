@@ -1,0 +1,8 @@
+# scripts/abi-mojo.tsv — mojo の面の群ごとの試験 (E012〜): 名前・契約の道具・fixture (test/abi/fixture/<名>.mlir)・契約の ok の数 (ASan + sanitizer 無し)・
+# 変異と意図した FAIL の組 (変異:id id;…)・Go の loader との差動の名指しの差 (段の頭の正規表現 — 無ければ -)
+trace	abi_trace	tr	20	trace.run_on_caller:F2 F6;trace.no_sigmask:F6;trace.kprobe_info_other:K1	^07-run-fe-0 kind=
+tcx	abi_tcx	tc	16	tcx.info_other_direction:X1 X2 X3 X7	-
+dead	abi_dead	dead	4	load.ext_info_exact:D1;load.linfo_kernel_zero:D1 D2;load.linfo_kernel_bad:D1 D2	-
+up	abi_up	up,argsum	14	uprobe.offset_no_p_offset:U2 U3;uprobe.symbol_other:U2 U3	-	@REPO@/third_party/bpf-mlir/kernel/uprobe/fixture/bin/fixture @REPO@/third_party/bpf-mlir/kernel/uprobe/fixture/bin/fixture_other @ELFDIR@/argsum.bpf.o @SHA@@REPO@/test/abi/fixture/argsum.schema.json
+lpm	abi_lpm	lpm	18	lpm.no_host_bits_check:P1 P4	-
+testonly	abi_testonly	to,up	14	testonly.freeze_noop:T4	^(17-fault-child|09-set-raw-nope|16a-after-set-raw) 	@ELFDIR@/up.bpf.o @SHA@@REPO@/test/abi/fixture/up.schema.json @REPO@/third_party/bpf-mlir/kernel/uprobe/fixture/bin/fixture @REPO@/third_party/bpf-mlir/kernel/uprobe/fixture/bin/fixture_other

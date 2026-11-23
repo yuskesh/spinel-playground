@@ -1,0 +1,134 @@
+# The framebuffer scene for decision 0007 task 5, bullet 2.
+#
+# Tab-separated. The first column is the record kind.
+#
+#   frame   width height viewwindowx viewwindowy centery
+#           The geometry every job is drawn into. `centery` is passed rather
+#           than derived: the original derives it once, in `initialize`.
+#
+#           THE TWO WINDOW ORIGINS DIFFER FROM EACH OTHER on purpose. They are
+#           separate parameters reaching the kernel in separate positions, and
+#           while they held the same number a caller or a generator that
+#           swapped them drew exactly the same screen -- a whole class of
+#           defect that nothing here could see. Measured: with both at 4 the
+#           swap passed every lane in every capability; with 6 and 4 it fails
+#           them. The check rows below are placed against x + viewwindowx,
+#           so they moved with it.
+#   seed    the seed of the generator that fills the screen and the resources
+#   res     name bytes -- how big each resource is. `atlas` is a whole number
+#           of 128-byte texture columns and `flat` of 4096-byte flats, which
+#           is what the job banks' `srcofs` fields are declared to be multiples
+#           of; `cmap` is 34 rows of 256. There are TWO flats, so a span whose
+#           `srcofs` selected the wrong one draws the wrong bytes; with one
+#           flat, `srcofs` could only ever be zero and dropping it would be
+#           invisible.
+#   job     kind and seven fields, IN THE BANK'S FIELD ORDER, so a row here
+#           reads the same way as a row of Doom::Jobs:
+#             wall  x  yl yh iscale   texmid srcofs cmap
+#             span  y  x1 x2 position step   srcofs cmap
+#             fuzz  x  yl yh fz       -      -      -
+#           The rows are THE SCHEDULE: they are executed top to bottom, and
+#           that order is part of the answer.
+#   check   kind, seven fields, the status the CORE kernel must return, and
+#           why. These are NOT part of the schedule and are NOT run through
+#           CRuby, because they are where CRuby and the CORE ABI part company.
+#           See "What CRuby cannot answer for" below.
+#
+# WHY THESE JOBS. Job 4 is a fuzz column over the wall drawn by job 1 and the
+# span drawn by job 2, so it reads pixels those two wrote -- that is the
+# neighbouring access. Job 7 is a fuzz column whose starting phase is 47, so
+# its `fp` wraps through 50 back to 0 while it draws. Job 16 redraws part of
+# the column job 4 fuzzed, so running the schedule in any other order gives a
+# different screen, which is what makes the order check non-vacuous.
+#
+# The spans are chosen so that every term of `spot = (position >> 26) |
+# ((position >> 4) & 0x0fc0)` actually moves. `step` 8389632 is 0x00800400:
+# bit 10 carries into the second term every pixel and bit 23 into the first
+# every eighth, so a span that lost either term draws different bytes for
+# most of its length. Jobs 10 and 11 read the SECOND flat, so `srcofs` is a
+# choice and not a constant zero.
+#
+# Empty and single-element work is in the schedule by design rather than by
+# accident: jobs 8, 9 and 15 have yh < yl or x2 < x1 and must draw
+# nothing, and jobs 10, 12 and 14 are a one-pixel span, column and fuzz
+# column. Without those, a kernel whose emptiness guard was off by one
+# would draw the same screen as one whose guard was right.
+#
+# WHAT CRUBY CANNOT ANSWER FOR. Two things, and the `check` rows carry both.
+#
+#   Indices off the end. A Ruby Array reads nil or grows; the CORE ABI
+#   answers SPINEL_CORE_BOUNDS (3). Every declared buffer face of every
+#   kernel has a pair here -- the screen (written, and read by fuzz above and
+#   below), the atlas, the flat atlas, the colormap from both the wall and
+#   the span, and the fuzz table -- and each pair is the exact last index and
+#   the one after it, so an `index <= count` off-by-one fails one of them.
+#
+#   i64 arithmetic. CRuby integers are arbitrary precision, so the ORIGINAL
+#   draws for every `texmid`; the CORE kernel computes in i64 and answers
+#   SPINEL_CORE_ARITHMETIC (2) when `texmid + (yl - centery) * iscale`
+#   overflows. THIS IS A REAL FULL/CORE DIVERGENCE and the pair below pins
+#   exactly where it starts: with yl 0 and centery 20 the addend is -1310720,
+#   so texmid -9223372036853465088 is the last value both agree on.
+#
+# Status 1 (ARGUMENT) and 4 (CAPACITY) do not appear and cannot: ARGUMENT is
+# about the pointers and counts the harness passes, which tests/core-boundary/
+# buffers.sh covers, and none of these kernels calls core_fail(:capacity).
+#
+# The divergence does not run only one way. The ORIGINAL has no guard of its
+# own for a `fz` outside the fuzz table: `@fuzzoffset[fz]` is nil and
+# exec_masked dies with `undefined method '*' for nil`, where the kernel
+# answers SPINEL_CORE_BOUNDS. So "the original draws wherever the kernel
+# refuses" is true of the arithmetic edge and false of the table edge, and
+# neither is a claim this scene makes in general.
+#
+# WHAT THE CHECKS CANNOT SEE. The kernels address the screen as one linear
+# buffer, which is what the ABI declares, so the boundary they enforce is
+# that buffer's end and not the right-hand edge of the picture. A column at
+# x = 70 on a 64-wide screen writes into the next row and is accepted; only
+# running off the buffer is SPINEL_CORE_BOUNDS. Keeping x below the width
+# stays the caller's obligation, exactly as it is in R_DrawColumn.
+#
+frame	64	48	6	4	20
+seed	20250911
+res	atlas	512
+res	flat	8192
+res	cmap	8704
+job	wall	10	0	39	65536	0	0	0
+job	span	8	0	55	0	8389632	0	3
+job	wall	11	5	30	98304	2097152	128	5
+job	fuzz	10	2	35	0	-	-	-
+job	span	9	4	20	1073741823	67108880	0	20
+job	wall	12	0	43	4294901760	2147483647	256	12
+job	fuzz	11	6	29	47	-	-	-
+job	wall	13	20	19	65536	0	0	0
+job	span	10	20	19	0	8389632	0	7
+job	span	11	30	30	305419896	8389632	4096	9
+job	span	12	0	55	2863311530	8389632	4096	11
+job	wall	14	7	7	65536	65536	128	4
+job	fuzz	20	15	15	3	-	-	-
+job	fuzz	21	20	19	5	-	-	-
+job	wall	10	12	25	65536	131072	384	8
+check	wall	57	0	43	65536	0	0	0	0	the wall writing the last byte of the screen
+check	wall	58	0	43	65536	0	0	0	3	one byte past it
+check	wall	-6	-4	-4	65536	0	0	0	0	the wall writing the first byte of the screen
+check	wall	-7	-4	-4	65536	0	0	0	3	one byte before it
+check	wall	10	20	20	65536	8323072	384	0	0	the last byte of the texture atlas
+check	wall	10	20	20	65536	0	512	0	3	one byte past the texture atlas
+check	wall	10	20	20	65536	0	258	33	0	the last byte of the colormap, from a wall
+check	wall	10	20	20	65536	0	86	34	3	one byte past the colormap, from a wall
+check	wall	10	0	0	65536	-9223372036853465088	0	0	0	the largest texmid whose i64 arithmetic still fits
+check	wall	10	0	0	65536	-9223372036853465089	0	0	2	one less, where the original still draws and i64 cannot
+check	span	43	0	57	0	0	0	0	0	the span writing the last byte of the screen
+check	span	43	0	58	0	0	0	0	3	one byte past it
+check	span	43	0	0	0	0	8191	0	0	the last byte of the flat atlas
+check	span	43	0	0	0	0	8192	0	3	one byte past the flat atlas
+check	span	43	0	0	0	0	97	33	0	the last byte of the colormap, from a span
+check	span	43	0	0	0	0	777	34	3	one byte past the colormap, from a span
+check	fuzz	10	1	1	49	-	-	-	0	the last entry of the fuzz table
+check	fuzz	10	1	1	50	-	-	-	3	one entry past the fuzz table
+check	fuzz	57	43	43	1	-	-	-	0	the fuzz writing the last byte of the screen
+check	fuzz	58	43	43	1	-	-	-	3	one byte past it
+check	fuzz	57	42	42	0	-	-	-	0	the neighbouring read at the last byte of the screen
+check	fuzz	57	43	43	0	-	-	-	3	one byte past it
+check	fuzz	58	-4	-4	1	-	-	-	0	the neighbouring read at the first byte of the screen
+check	fuzz	57	-4	-4	1	-	-	-	3	one byte before it

@@ -1,0 +1,8 @@
+#name	role	element	count	initial	origin	writers
+colormap	resource	u8	fixed:8704	prepared:colormap	Wad@colormap	full
+sintable	resource	i64	table:sintable	prepared:sintable_values	Tables@sin	full
+sector_floorheight	persistent	i64	level:numsectors	0	Level@sector_floorheight	step
+prndindex	persistent	i64	fixed:1	0	Random@prndindex	step
+gametic	persistent	i64	fixed:1	0	Game@gametic	step
+framebuffer	output	u8	screen:framebytes	999	Renderer@screen	render
+clipbank	scratch	i32	screen:screenwidth	0	Renderer@floorclip	render

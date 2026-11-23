@@ -1,0 +1,22 @@
+# tools/app/zephyr/v4.4.2/helpers.tsv -- the compiler runtime helpers a board
+# lane admits (decision 0021; the owner's decision of 2026-10-20), with the
+# stack each one needs.
+#
+# The DOOM entries compute in signed 64 bits, and on the M33 the compiler's
+# back end lowers 64-bit division to these calls after the IR the stack tool
+# reads, so an entry's kernel_stack does not count them. A core_session build
+# adds the largest helper frame chain of the helpers an entry's object calls
+# to that entry's DoomCore stack, and refuses a helper with no row here.
+#
+# bytes is read from the archive's own instructions (llvm-objdump -dr of its
+# members at the sha256 below), the deepest chain from the helper's entry:
+# an attestation, bound to the archive the link uses -- step 10 refuses an
+# image whose map names another archive, or this one with other bytes.
+# archive is the multilib path under the SDK's gcc library directory; a build
+# takes the rows of its target's multilib (thumb/v8-m.main/ on the M33s,
+# thumb/v7e-m/ on the FRDM-IMXRT1186's Cortex-M7, decision 0023).
+# symbol	bytes	archive	sha256	evidence
+__aeabi_ldivmod	48	thumb/v8-m.main/nofp/space/libgcc.a	d71ff1180a778292f9239d62f713925fe19f9a99e6b7634214dc1e9a23fa7324	_aeabi_ldivmod.o pushes 16 (strd r12, lr, [sp, #-16]!) and calls __udivmoddi4, whose push.w {r4-r10, lr} is 32 and which calls nothing; the zero-divisor path tail-calls __aeabi_ldiv0 (_dvmd_tls.o: bx lr) before pushing
+__aeabi_uldivmod	48	thumb/v8-m.main/nofp/space/libgcc.a	d71ff1180a778292f9239d62f713925fe19f9a99e6b7634214dc1e9a23fa7324	_aeabi_uldivmod.o pushes 16 (strd r12, lr, [sp, #-16]!) and calls __udivmoddi4, whose push.w {r4-r10, lr} is 32 and which calls nothing; the zero-divisor path tail-calls __aeabi_ldiv0 (_dvmd_tls.o: bx lr) before pushing
+__aeabi_ldivmod	48	thumb/v7e-m/nofp/space/libgcc.a	8bfa0fb8b8ef820dad18796dec7be95493ff92adf7347147ef93acad78ce62d9	_aeabi_ldivmod.o pushes 16 (strd r12, lr, [sp, #-16]!) and calls __udivmoddi4, whose push.w {r4-r10, lr} is 32 and which calls nothing; the zero-divisor path tail-calls __aeabi_ldiv0 (_dvmd_tls.o: bx lr) before pushing; the Cortex-M7's multilib (decision 0023), the same members and pushes, read 2026-10-21
+__aeabi_uldivmod	48	thumb/v7e-m/nofp/space/libgcc.a	8bfa0fb8b8ef820dad18796dec7be95493ff92adf7347147ef93acad78ce62d9	_aeabi_uldivmod.o pushes 16 (strd r12, lr, [sp, #-16]!) and calls __udivmoddi4, whose push.w {r4-r10, lr} is 32 and which calls nothing; the zero-divisor path tail-calls __aeabi_ldiv0 (_dvmd_tls.o: bx lr) before pushing; the Cortex-M7's multilib (decision 0023), the same members and pushes, read 2026-10-21

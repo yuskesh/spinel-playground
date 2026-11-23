@@ -1,0 +1,24 @@
+core-contract 1
+root src/packed.rb
+entry dc_sp_hudraw
+result i64
+param screen buffer u8 inout count n_screen
+param n_screen scalar u64
+param wad buffer u8 in count n_wad
+param n_wad scalar u64
+param lump_pos buffer u32 in count n_lump_pos
+param n_lump_pos scalar u64
+param font_lump buffer u16 in count n_font_lump
+param n_font_lump scalar u64
+param text buffer u8 in count n_text
+param n_text scalar u64
+param text_ofs buffer u16 in count n_text_ofs
+param n_text_ofs scalar u64
+param sw buffer u16 in count n_sw
+param n_sw scalar u64
+param scale buffer u8 in count n_scale
+param n_scale scalar u64
+param state buffer i64 in count n_state
+param n_state scalar u64
+param i_message scalar i64
+param i_message_on scalar i64

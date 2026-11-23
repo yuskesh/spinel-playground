@@ -1,0 +1,18 @@
+ebpf-requirements 9
+schema	sha256	1d44c6da3ed50cf34a662c058db5e325557d5c77fae7deca1b60dafe951fb3aa
+program	mv	sk_msg	16
+helper	mv	map_update_elem	2
+map	seen	array	2	u32	u32	8	0
+map	socks	sockhash	18	u32	u64	2	0
+attach	mv	sk_msg_verdict	map:socks
+btf	array
+btf	datasec
+btf	func
+btf	func_global
+btf	func_proto
+btf	int
+btf	ptr
+btf	struct
+btf	var
+ctxaccess	mv	sk_msg_verdict	sk_msg_md	family	r	4
+ctxaccess	mv	sk_msg_verdict	sk_msg_md	size	r	4

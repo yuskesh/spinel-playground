@@ -1,0 +1,12 @@
+id	tool	expect	got	verdict	pattern_or_note
+n1_sqrt	mlirgen	REFUSE	REFUSE	PASS	ConstantReadNode is not in the freestanding subset
+n2_array_new	mlirgen	REFUSE	REFUSE	PASS	indexes a heap object
+n3_block	mlirgen	REFUSE	REFUSE	PASS	takes a block
+n4_loop_mul	mlirgen	REFUSE	REFUSE	PASS	assigns a Float to `x`, which whole-program inference typed as an Integer
+n5_loop_div	mlirgen	ACCEPT	ACCEPT	PASS	control
+h1_hvp_multi_wrt	gradfs	REFUSE	REFUSE	PASS	hvp: true with 2 wrt: parameters
+h2_hvp_nonbool	gradfs	REFUSE	REFUSE	PASS	hvp: takes true or false
+h3_jvp_unknown	gradfs	REFUSE	REFUSE	PASS	unknown keyword `jvp:`
+hc1_hvp_false	gradfs	ACCEPT	ACCEPT	PASS	exports=spinel_grad_one, (no hvp symbol)
+c1_kernel	mlirgen	ACCEPT	ACCEPT	PASS	control
+c1_gradfs	gradfs	ACCEPT	ACCEPT	PASS	control (grad + hvp)

@@ -1,0 +1,12 @@
+core-contract 1
+root src/packed.rb
+entry dc_sp_pangle
+result i64
+param state buffer i64 in count n_state
+param n_state scalar u64
+param tantoangle buffer u32 in count n_tantoangle
+param n_tantoangle scalar u64
+param i_viewx scalar i64
+param i_viewy scalar i64
+param px scalar i64
+param py scalar i64

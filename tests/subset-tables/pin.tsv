@@ -1,0 +1,76 @@
+# tests/subset-tables/pin.tsv -- what tests/subset-tables/check.rb holds the
+# freestanding subset refusal tables to (decision 0026 steps 1 and 5): the
+# owned table, tools/mlir/native/lib/Core/SubsetRefusals.cpp, and the
+# inherited list, tools/mlir/native/lib/Frontend/Scalar/SubsetTables.cpp,
+# taken together.
+#
+# ROWS (tab-separated)
+#   node            KEY  a node kind subsetRefusalNodes() or fsInheritedNodes()
+#                        lists
+#   call            KEY  a call name subsetRefusalCalls() lists
+#   heap            KEY  a node kind subsetRefusalNodes() marks HeapOperation:
+#                        the kinds the CORE checker refuses as heap operations
+#   reasons-sha256  HEX  sha256 of one line "TABLE<TAB>KEY<TAB>REASON<LF>" per
+#                        entry: node entries of both files, then call entries,
+#                        each table in byte order of its keys (std::map's order)
+#
+# A changed, added or removed key, a changed heap row, or a changed reason
+# fails the check until this file changes in the same commit. Which file holds
+# a key is not pinned here: tests/subset/coverage.tsv decides it
+# (tools/core/subset-coverage.rb). The node and call rows are in the order of
+# the table before step 5.
+#
+node	StringNode
+node	InterpolatedStringNode
+node	XStringNode
+node	ArrayNode
+node	HashNode
+node	KeywordHashNode
+node	SymbolNode
+node	InterpolatedSymbolNode
+node	RangeNode
+node	RegularExpressionNode
+node	BlockNode
+node	LambdaNode
+node	BlockArgumentNode
+node	ClassNode
+node	ModuleNode
+node	DefNode
+node	IndexNode
+node	InstanceVariableReadNode
+node	InstanceVariableWriteNode
+node	GlobalVariableReadNode
+node	GlobalVariableWriteNode
+node	ConstantReadNode
+node	ConstantWriteNode
+node	ConstantPathNode
+node	BeginNode
+node	RescueNode
+node	EnsureNode
+node	YieldNode
+node	ForNode
+node	CaseNode
+node	SelfNode
+node	NilNode
+node	RationalNode
+node	ImaginaryNode
+node	SplatNode
+node	MultiTargetNode
+call	**
+call	[]
+call	[]=
+call	to_s
+call	new
+call	each
+call	map
+call	times
+call	push
+call	<<
+heap	StringNode
+heap	InterpolatedStringNode
+heap	ArrayNode
+heap	HashNode
+heap	RangeNode
+heap	RegularExpressionNode
+heap	LambdaNode
+reasons-sha256	aa608fd409049fcd81aaf9e2a9552769616fd0b35e30ee27d0f7855452819850

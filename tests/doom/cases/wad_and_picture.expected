@@ -1,0 +1,18 @@
+magic=IWAD bytes=127 lumps=4
+lump 0 E1M1 pos=0 size=0 marker=true fnv=cbf29ce484222325
+lump 1 PIC pos=12 size=51 marker=false fnv=d12489f4b2531580
+lump 2 DUP pos=0 size=0 marker=true fnv=cbf29ce484222325
+lump 3 DUP pos=0 size=0 marker=true fnv=cbf29ce484222325
+index_of(DUP)=3   # a duplicate name: the later one wins
+index_of(PIC)=1
+index_of(NOPE)=-1
+map_lump(E1M1,PIC)=1
+map_lump(E1M1,NOPE)=-1
+map_lump(NOPE,PIC)=-1
+bytes(PIC).bytesize=51
+pic 4x3 left=-5 top=7 posts=4 pixels=7 opaque=7 fnv=9af5581b36bab788
+row0: 11 255 255 66 
+row1: 255 255 44 77 
+row2: 33 255 55 88 
+bg255 vs bg0: differing pixels=5 (= the transparent pixels)
+opaque(bg=0)=7

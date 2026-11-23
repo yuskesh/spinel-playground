@@ -1,0 +1,7 @@
+core-contract 1
+root app.rb
+entry sample
+result i64
+param reading buffer i32 inout count n_reading
+param n_reading scalar u64
+extern Adc.latest symbol spc_board_adc_latest arg ch u32 returns i32 isr_ok bound iterations 1 evidence e/adc.json

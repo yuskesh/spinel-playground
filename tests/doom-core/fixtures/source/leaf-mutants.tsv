@@ -1,0 +1,47 @@
+# tests/doom-core/fixtures/source/leaf-mutants.tsv — one broken copy of each leaf.
+#
+# screens.sh applies each sed expression to examples/doom/core/src/leaves.rb,
+# requires the copy to differ from it by the number of lines the third column
+# gives -- more than two where the expression also matches the renamed copies of
+# a helper, which are one definition in several closures and break together --
+# and
+# runs the port over it on DEMO1 for 120 frames: the FIRST leaf-disagree must
+# name the entry in the second column. 120 is the length of these runs only, a
+# cost decision (seconds, against about 400 s for the whole demo) and a floor:
+# DEMO1 first takes clip_value's openings branch at frame 110. The unbroken
+# leaves are checked over every frame of every demo by the route runs.
+#
+# FOUR MORE COLUMNS, optional, for a mutant that cannot show in DEMO1's first
+# 120 frames: the file the expression applies to (`leaves`, the default, or
+# `segs` for examples/doom/core/src/segs.rb), the demo and the frame count of
+# its run, and the frame its first disagreement must be at (`-` when not
+# asserted). Each demo and length is MEASURED, not chosen: the seg loop's
+# masked-texture branch is taken only by DEMO2, first at frame 53, and its
+# ceiling-mark clamp first changes a written cell at DEMO3 frame 395 (DEMO1 568,
+# DEMO2 704). Each run is the shortest that reaches its branch.
+#
+#mutant	entry	lines	sed	file	demo	frames	first
+pangle	pangle	6	s#  ans = (((num \& RL_M32) << 3) \& RL_M32) / (d >> 8)#  ans = (((num \& RL_M32) << 3) \& RL_M32) / (d >> 7)#
+pdist	pdist	2	s#  angle = ((tantoangle\[frac >> 5\] + RL_ANG90) \& RL_M32) >> RL_ANGLETOFINESHIFT#  angle = ((tantoangle[frac >> 5] + RL_ANG180) \& RL_M32) >> RL_ANGLETOFINESHIFT#
+sgscale	sgscale	2	s#  num = ((((projection\[0\] \* sineb) >> 16) \& RL_M32) ^ RL_SGN) - RL_SGN#  num = ((((projection[0] * sineb) >> 15) \& RL_M32) ^ RL_SGN) - RL_SGN#
+lindex	lindex	4	s#  index = (scale >> RL_LIGHTSCALESHIFT) / resscale\[0\]#  index = (scale >> RL_LIGHTSCALESHIFT) / (resscale[0] + 1)#
+absang	absang	2	s#  u >= 0x80000000 ? 0x100000000 - u : u#  u >= 0x80000000 ? 0xffffffff - u : u#
+clipv	clipv	2	s#  openings\[base + x\]$#  openings[base + x + 1]#
+segside	segside	2	s#  right < left ? 0 : 1#  right < left ? 1 : 0#
+fplane	fplane	2	s#  pl_minx\[n\] = sw\[0\]#  pl_minx[n] = sw[0] - 1#
+chplane	chplane	2	s#  pl_maxx\[n\] = stop$#  pl_maxx[n] = stop + 1#
+cleartop	fplane	4	s#    pl_top\[b + x\] = plempty\[0\]#    pl_top[b + x] = plempty[0] + 1#
+ssclear	ssclear	2	s#  ss_last\[0\] = -1#  ss_last[0] = -2#
+crunch	crunch	2	s#  state\[i_newend\] = s + 1#  state[i_newend] = s + 2#
+chkbbox	chkbbox	2	s#  return 0 if sx1 == sx2#  return 1 if sx1 == sx2#
+coordlo	chkbbox	2	s#^RL_CHECKCOORD_LO = 0x6200272363$#RL_CHECKCOORD_LO = 0x620027f363#
+coordhi	chkbbox	2	s#^RL_CHECKCOORD_HI = 0x3676720037$#RL_CHECKCOORD_HI = 0x367672003f#
+vssort	vssort	2	s#        if vs_scale\[i\] < bestscale#        if vs_scale[i] <= bestscale#
+projspr	addspr	2	s#    rot = ((ang - mobj_angle\[thing\] + 0x90000000) \& RL_M32) >> 29#    rot = ((ang - mobj_angle[thing] + 0x80000000) \& RL_M32) >> 29#
+addspr	addspr	2	s#  lightnum = RL_LIGHTLEVELS - 1 if lightnum >= RL_LIGHTLEVELS#  lightnum = RL_LIGHTLEVELS - 2 if lightnum >= RL_LIGHTLEVELS#
+sl-topmid	segloop	2	s#state\[i_dc_texturemid\] = state\[i_rw_toptexturemid\]#state[i_dc_texturemid] = state[i_rw_midtexturemid]#	segs	DEMO1	120	0
+sl-pixlow	segloop	2	s#(state\[i_pixlow\] + state\[i_pixlowstep\])#(state[i_pixlow] + state[i_pixhighstep])#	segs	DEMO1	120	0
+sl-iscale	segloop	2	s#SL_M32 / (state\[i_rw_scale\] \& SL_M32)#SL_M32 / ((state[i_rw_scale] + 1) \& SL_M32)#	segs	DEMO1	120	0
+sl-mode	segloop	2	s#  if jobmode != 0#  if jobmode == 1#	segs	DEMO1	120	0
+sl-openings	segloop	2	s#openings\[state\[i_maskedtexturecol\] + x\] =#openings[state[i_maskedtexturecol] + x + 1] =#	segs	DEMO2	60	53
+sl-ceilclamp	segloop	2	s#      bottom = floorclip\[x\] - 1 if bottom >= floorclip\[x\]#      bottom = floorclip[x] if bottom >= floorclip[x]#	segs	DEMO3	420	395

@@ -1,0 +1,13 @@
+# The prepared resources and configuration a schema may name. Supplied to the
+# generator rather than inferred: these are facts about what Full prepares.
+#kind	name	value
+count	numsectors	512
+count	numlines	1024
+count	screenwidth	320
+count	screenheight	200
+count	maxthinkers	4096
+count	sintable	8192
+count	framebytes	64000
+prepared	colormap	8704
+prepared	sintable_values	8192
+prepared	gametic_start	1

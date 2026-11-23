@@ -1,0 +1,35 @@
+# tools/doom/core-configurations.tsv — decision 0008 task 1's configuration table.
+#
+# One row per option `examples/doom/bin/doom.rb` accepts. The audit reads the
+# options out of the entry's own tree (StringNodes in `main` that begin with a
+# dash) and requires a bijection with this table: an option with no row, or a
+# row naming an option the source does not accept, fails the run. That is what
+# keeps the table from drifting when the CLI changes.
+#
+# `dimension` is what the option varies for the three CORE entries. `reference`
+# is a tracked command in this repository that exercises it, or NONE -- and
+# NONE is reported, not hidden: it marks a mode this repository cannot
+# currently reproduce, which is a fact Stage 2 has to carry rather than
+# discover later.
+#
+# option	dimension	reference	note
+-iwad	resource	tests/doom/interactive.sh:126	The IWAD Full opens and owns; every entry reads from it indirectly through Wad, Level, Textures and Sprites.
+-warp	resource	NONE	Selects the map, which changes every WAD-derived resource's contents and sizes. No tracked command varies it.
+-skill	step	NONE	Changes thing spawning and monster behaviour inside the tick. No tracked command varies it.
+-playdemo	input	NONE	Replaces doom_core_input entirely: the commands come from a demo lump instead of a device. bin/sim_demo.rb replays a recording but is a separate program, not this option.
+-record	input	tests/doom/interactive.sh:126	Adds the angle quantization that doom_core_input must perform when recording, because the recorded game runs on the quantized value.
+-script	input	tests/doom/interactive.sh:126	Supplies synthetic key state, which is how doom_core_input is driven without a human.
+-scale	full	NONE	Window magnification only. It never reaches a CORE entry; SDL scales the finished frame.
+-res	render	NONE	The internal drawing resolution, 320*s by 200*s for s in 1..8. It sizes every render buffer and selects the status-bar shadow path, so it is the one option that changes doom_core_render's allocation. No tracked command varies it.
+-tics	full	tests/doom/interactive.sh:126	How many times the loop runs. Full's loop bound, not a CORE input.
+-nopace	full	tests/doom/interactive.sh:126	Removes the 35 Hz sleep. Only Full reads the clock.
+-shot	full	NONE	Writes a BMP of a finished frame. Full-side output.
+-shottic	full	NONE	Selects which tics -shot writes. Full-side output.
+-stats	full	NONE	Per-tic timing TSV. It reads the clock, which happens only in Full.
+-frames	full	tests/doom/interactive.sh:127	Per-tic frame hashes. It reads the finished frame buffer after doom_core_render returns.
+-jobs	render	NONE	Selects the Job IR path inside the renderer, which is a different set of reachable definitions for the same entry.
+-core	full	tests/doom-core/native.sh:87	Selects decision 0008's route: before the first tic Full builds the original objects and prepares the session from them, and every tic then runs only through doom_core_input, doom_core_step and doom_core_render in job mode 1. It changes which program runs the tic, not what any entry receives.
+-gpu	render	NONE	Builds the job list without drawing, then draws on the GPU and falls back to the CPU executor per frame. The status bar and HUD stay CPU in both cases, so doom_core_render must cover them either way.
+-gpuvmfb	full	NONE	Path to the GPU kernel. Full opens it.
+-gpuentries	full	NONE	Path to the GPU entry table. Full reads it.
+-gpudev	full	NONE	IREE device URI. Full selects it.

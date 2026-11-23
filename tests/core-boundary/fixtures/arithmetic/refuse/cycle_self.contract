@@ -1,0 +1,6 @@
+core-contract 1
+root refuse/cycle_self.rb
+entry self_cycle
+result i64
+param a scalar i64
+param b scalar i64

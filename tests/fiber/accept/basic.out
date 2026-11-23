@@ -1,0 +1,13 @@
+start s
+0
+got a
+1
+got b
+50
+60
+100
+101
+102
+:done
+false
+FiberError: attempt to resume a terminated fiber

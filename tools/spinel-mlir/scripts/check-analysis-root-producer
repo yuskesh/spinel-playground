@@ -1,0 +1,57 @@
+#!/usr/bin/env ruby
+require 'fileutils'
+require 'digest'
+require 'json'
+old_tree,new_tree,common,oracle,tool,output=ARGV
+abort 'usage: check-analysis-root-producer old-M1 new-M2 common-source oracle tool new-output' unless output
+abort 'output exists' if File.exist?(output)
+FileUtils.mkdir_p(File.join(output,'invocation/bin'))
+%w[src lib packages builtins].each {|d|File.symlink(File.join(common,d),File.join(output,'invocation',d))}
+exe=File.join(output,'invocation/bin/spinel')
+source=File.join(oracle,'examples/xdpcount/xdpcount.rb')
+log=File.open(File.join(output,'observations.jsonl'),'w')
+run=lambda do |name,tree,request|
+  FileUtils.copy_file(File.join(tree,'bin/spinel'),exe);File.chmod(0755,exe)
+  path=File.join(output,"#{name}.mlir")
+  args=['-I',File.join(oracle,'ruby/lib'),"--emit-mlir=#{path}"]
+  args << '--analysis-root=count_pkts:obj_BPF::XdpMd' if request
+  system(exe,*args,source,chdir:oracle,out:File.join(output,"#{name}.stdout"),err:File.join(output,"#{name}.stderr"))
+  status=$?
+  row={name:name,rc:status.exitstatus,stdout_bytes:File.size(File.join(output,"#{name}.stdout")),
+    artifact:File.file?(path),request:request}
+  log.puts(JSON.generate(row));log.flush
+  abort "STOP #{name} producer status" unless row[:rc]==0 && row[:stdout_bytes]==0 && row[:artifact]
+  File.binread(path)
+end
+old=run.call('old-v1',old_tree,false)
+none=run.call('new-v1',new_tree,false)
+abort 'STOP v1 facts changed without request' unless old==none
+log.puts(JSON.generate({name:'v1-unchanged',raw_equal:true,sha256:Digest::SHA256.hexdigest(none)}));log.flush
+one=run.call('root-a',new_tree,true)
+two=run.call('root-b',new_tree,true)
+abort 'STOP requested facts not reproducible' unless one==two
+abort 'STOP missing v2 provenance' unless one.include?('spinel_facts.version = 2 : i64') &&
+  one.include?('spinel_facts.profile = "spinel-codegen-v2"') &&
+  one.include?('requested_arg_types = ["obj_BPF::XdpMd"]') && one.include?('resolved_arg_types = ["obj_XdpMd"]')
+pristine=lambda do |text|
+  start=text.index('  "spinel_facts.table"() ({') or abort 'missing pristine table'
+  finish=text.index('}) {phase = "pristine"',start) or abort 'missing pristine end'
+  text.byteslice(start,finish-start)
+end
+abort 'STOP pristine AST changed' unless pristine.call(none)==pristine.call(one)
+sources=lambda {|text|text.lines.select{|line|line.start_with?('  "spinel_facts.source"')}}
+abort 'STOP source changed' unless sources.call(none)==sources.call(one)
+[2144,2150,2157,2161].each do |id|
+  evidence=lambda {|text|text.lines.select{|line|line.include?('"spinel_facts.evidence"')&&line.include?("node_id = #{id} : i64,")}}
+  before=evidence.call(none);after=evidence.call(one)
+  row={name:'body-evidence',node_id:id,before:before.length,after:after.length,evidence:after.map(&:strip)}
+  log.puts(JSON.generate(row));log.flush
+  abort "STOP body evidence #{id}" unless before.empty? && after.length==1
+end
+%w[new-v1 root-a].each do |name|
+  system(tool,'--verify-only',File.join(output,"#{name}.mlir"),out:File.join(output,"#{name}.verify.stdout"),err:File.join(output,"#{name}.verify.stderr"))
+  status=$?;log.puts(JSON.generate({name:"#{name}-verify",rc:status.exitstatus}));log.flush
+  abort "STOP #{name} facts verifier" unless status.success?
+end
+log.puts(JSON.generate({name:'reproduction',raw_equal:true,sha256:Digest::SHA256.hexdigest(one)}));log.close
+puts 'GREEN: v1 unchanged; v2 reproducible; pristine/source unchanged; four real body evidence records; v1/v2 verified'

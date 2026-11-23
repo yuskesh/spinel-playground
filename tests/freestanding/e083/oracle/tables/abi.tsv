@@ -1,0 +1,5 @@
+target	match	total	verdict
+arm64-host	9	9	MATCH
+cortex-m33-zephyr	9	9	MATCH
+riscv32-zephyr	9	9	MATCH
+wasm32-worker	9	9	MATCH

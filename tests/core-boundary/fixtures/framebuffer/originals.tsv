@@ -1,0 +1,15 @@
+# The Full originals this directory's extractions were taken from, and their
+# SHA-256 at the revision they were taken at.
+#
+# provenance.tsv says WHERE each extraction came from; this says WHAT it came
+# from. Without it the record is a path, and an original that changed under a
+# still-passing extraction would be noticed whenever somebody next looked. The
+# lane checks both directions: every original named here is digested, and every
+# original named in provenance.tsv is named here.
+#
+# When an original is deliberately changed, re-run the extraction's own lane,
+# confirm the adaptation still agrees, and record the new digest here in the
+# same commit. A digest updated on its own is the check being switched off.
+#
+#original	sha256
+examples/doom/lib/doom/executor.rb	30dffde16795aba5c5be7e3b50ffff4b407232296a456a30b00e1f60ea359612

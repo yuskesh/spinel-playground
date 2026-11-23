@@ -1,0 +1,13 @@
+load ok unmet=0
+attach_cgroup xp err=SpinelBPF::State
+attach_cgroup nope err=SpinelBPF::State
+attach_cgroup stdin err=SpinelBPF::Other
+attach_socket small_in err=SpinelBPF::State
+attach_tcx small_out err=SpinelBPF::State
+attach_xdp small_in err=SpinelBPF::State
+in78 ret=1 Out0=64 Out1=17
+in79 ret=0 Out0=65 Out1=6
+out33 ret=1 Out0=19 Out1=0
+out34 ret=1 Out0=20 Out1=255
+run13 err=SpinelBPF::Other
+xdp run small_in err=SpinelBPF::State

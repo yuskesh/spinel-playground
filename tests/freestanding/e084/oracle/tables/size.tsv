@@ -1,0 +1,12 @@
+what	bytes
+kernel.arm64-host	4877
+adjoint_plus_hvp.arm64-host	2005
+kernel.cortex-m33-zephyr	7477
+adjoint_plus_hvp.cortex-m33-zephyr	4345
+kernel.riscv32-zephyr	4569
+adjoint_plus_hvp.riscv32-zephyr	5507
+kernel.wasm32-worker	4228
+adjoint_plus_hvp.wasm32-worker	2540
+wasm.raw	8292
+wasm.gzip	3190
+alloca_in_grad_module	1

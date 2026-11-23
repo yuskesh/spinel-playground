@@ -1,0 +1,258 @@
+/* generated from tools/app/templates/channel_core.c.erb: the <%= role == "producer" ? "put" : "get" %> of channel
+ * `<%= c.name %>` (decision 0027 stage 2), from <%= k.from %> to <%= k.to %>, declared by
+ * <%= k.path_shown %> (sha256 <%= k.digest %>). It is descriptor <%= idx %> of the
+ * region's channel table (tools/app/ring/ring_abi.h, version 5): depth
+ * <%= k.depth %>, slots of <%= k.stride %> bytes at <%= offset %>, each the length word (always
+ * <%= k.msg_bytes %>), the stamp word and the message:
+<% k.fields.each do |f| %> *   <%= f.name %>: <%= f.type %><%= f.array ? " x #{f.count}" : "" %> at <%= f.offset %>
+<% end %> * every field little-endian, stored and loaded a byte at a time by shifts, so
+ * that both cores and a host harness agree without casts.
+ *
+ * The M33 writes the table before it releases the M7, and
+ * spc_channel_<%= c.name %>_check() reads this channel's descriptor back at boot
+ * (main.c): when a word differs, or the pair was refused before it, the
+ * channel stays not ready and every <%= role == "producer" ? "put" : "get" %> answers 0.
+<% if role == "producer" %> *
+ * The put: 1 when queued, 0 when the ring is full or the channel is not
+ * ready, writing nothing then. Every call is counted (attempted, and
+ * accepted or refused, on this core's own line P): a caller that retries
+ * a refused line is counted on each try. It reads tail, a barrier, refuses
+ * when full, writes the fields, the length and the stamp, a barrier, then
+ * stores head + 1; it is this core's only writer of the channel's line P.
+ * The stamp is this core's cycle counter (DWT CYCCNT, ring/cycles.h) when
+ * the message is written, just before its publication. The scalars'
+ * domains are the guards the kernel emits before the call; the arrays'
+ * lengths are the statics the build proved.
+<% if bell %> *
+ * The doorbell (decision 0028): notify 0x<%= format('%02x', bell[:notify]) %>, MU<%= bell[:notify] & 3 %>'s GIR<%= bell[:gi] %>. After
+ * storing head, a barrier and a read of the consumer's waiting; when it
+ * is 1 the put reads this core's side's GCR and, when GIR<%= bell[:gi] %> is 0, writes
+ * that bit alone and counts rung. A load and a store at a fixed address,
+ * like the stamp's: the put still calls nothing.<% if bell[:unrung] %> THIS BUILD'S PUT NEVER
+ * RINGS: the control --mutate-doorbell-unrung.<% end %>
+<% end %><% else %> *
+ * The get: 1 with a message copied into the caller's buffers, 0 when the
+ * ring is empty or the channel is not ready. It reads head, a barrier, and
+ * checks what crosses the cores: head - tail above depth is fault 1, a
+ * length that is not <%= k.msg_bytes %> fault 2; either leaves the channel in FAULT,
+ * not ready, and copies nothing. Otherwise it copies each field out, and
+ * only then a barrier and tail + 1, and counts taken; it is this core's only
+ * writer of the channel's lines C and M. The buffers' lengths are the
+ * statics the build proved. Each call that finds the channel ready is a
+ * poll, its gap from the last one kept as poll_max; each message taken is
+ * a wait, from its stamp to the copy's end in this core's cycles
+ * (ring/wait_map.h), counted in line M and spc_channel_<%= c.name %>_wait_hist
+ * once the glue has aligned the two counters.
+<% if bell %> *
+ * The doorbell (decision 0028): notify 0x<%= format('%02x', bell[:notify]) %>. Finding the ring empty, the
+ * get stores waiting = 1, a barrier, and reads head again, so that a put
+ * that missed the 1 is seen here; taking a message it stores waiting = 0.
+<% end %><% end %> *
+ * The labels around the copy and the publication are every channel's
+ * (the plan's "Channels"), so `spinel-core-app labels` finds them. */
+#include <stdint.h>
+#include "ring/ring_abi.h"
+#include "ring/cycles.h"
+<% if role != "producer" %>#include "ring/wait_map.h"
+<% end %>#include "channel_<%= c.name %>.h"
+
+#if defined(__APPLE__)
+#define SPC_SYM(name) "_" name
+#else
+#define SPC_SYM(name) name
+#endif
+#define SPC_LABEL(name) __asm__ volatile(".globl " SPC_SYM(name) "\n" SPC_SYM(name) ":" ::: "memory")
+#define SPC_W ((volatile uint32_t *)<%= base %>)
+#define SPC_I <%= idx %>u
+#define SPC_DEPTH <%= k.depth %>u
+#define SPC_STRIDE <%= k.stride %>u
+#define SPC_MSG_BYTES <%= k.msg_bytes %>u
+#define SPC_OFFSET <%= offset %>u
+<% if bell && role == "producer" %>/* the producer's own side's GCR (decision 0028 Q2), unless a host harness
+ * gives its own */
+#ifndef SPC_DOORBELL_GCR
+#define SPC_DOORBELL_GCR ((volatile uint32_t *)<%= format('0x%08x', bell[:gcr]) %>u)
+#endif
+#define SPC_DOORBELL_BIT <%= 1 << bell[:gi] %>u /* GIR<%= bell[:gi] %> */
+<% end %>
+<% if role == "producer" %>static uint32_t spc_head, spc_attempted, spc_accepted, spc_refused<%= bell ? ", spc_rung" : "" %>; /* this core's copies: the only writer */
+<% else %>static uint32_t spc_tail, spc_taken<%= bell ? ", spc_waiting" : "" %>; /* this core's copies: the only writer */
+static uint32_t spc_last_poll, spc_polled, spc_poll_max, spc_lat_n, spc_lat_min, spc_lat_max;
+static uint64_t spc_lat_sum;
+/* the waits' binary orders, in this core's cycles (ring/wait_map.h), for the debugger */
+uint32_t spc_channel_<%= c.name %>_wait_hist[32];
+<% end %>static uint8_t spc_ready; /* 1 once the check found the descriptor this channel's */
+
+/* the descriptor this channel was generated for, as ring_abi.h's line D */
+static const uint32_t spc_want[8] = {
+	<%= digest_hi %>u, <%= digest_lo %>u, SPC_CH_FLAGS(<%= from_id %>u, <%= to_id %>u)<%= bell ? " | (#{format('0x%02x', bell[:want])}u << 24)" : "" %>, SPC_DEPTH,
+	SPC_STRIDE, SPC_MSG_BYTES, SPC_OFFSET, <%= init_index %>u,
+};
+
+/* 0 when the descriptor is this channel's and the doorbell words are 0;
+ * otherwise the first word that differs, as a word offset of ring_abi.h,
+ * plus 1 */
+int32_t spc_channel_<%= c.name %>_check(void)
+{
+	for (uint32_t i = 0; i < 8u; i++) {
+		if (spc_ring_load(SPC_W, SPC_CH_D(SPC_I) + i) != spc_want[i]) {
+<% if role == "producer" %>			spc_ring_store(SPC_W, SPC_CH_P(SPC_I) + SPC_CH_P_STATE, SPC_RING_PRODUCER_REFUSED);
+<% else %>			spc_ring_store(SPC_W, SPC_CH_C(SPC_I) + SPC_CH_C_STATE, SPC_RING_CONSUMER_REFUSED);
+<% end %>			return (int32_t)(SPC_CH_D(SPC_I) + i) + 1;
+		}
+	}
+	if (spc_ring_load(SPC_W, SPC_CH_P(SPC_I) + SPC_CH_P_RUNG) != 0u) {
+		return (int32_t)(SPC_CH_P(SPC_I) + SPC_CH_P_RUNG) + 1;
+	}
+	if (spc_ring_load(SPC_W, SPC_CH_C(SPC_I) + SPC_CH_C_WAITING) != 0u) {
+		return (int32_t)(SPC_CH_C(SPC_I) + SPC_CH_C_WAITING) + 1;
+	}
+	spc_ring_dmb();
+<% if role == "producer" %>	spc_head = spc_ring_load(SPC_W, SPC_CH_P(SPC_I) + SPC_CH_P_HEAD);
+	spc_ring_store(SPC_W, SPC_CH_P(SPC_I) + SPC_CH_P_STATE, SPC_RING_PRODUCER_PUTTING);
+<% else %>	spc_tail = spc_ring_load(SPC_W, SPC_CH_C(SPC_I) + SPC_CH_C_TAIL);
+	spc_ring_store(SPC_W, SPC_CH_C(SPC_I) + SPC_CH_C_STATE, SPC_RING_CONSUMER_TAKING);
+<% end %>	spc_ready = 1u;
+	return 0;
+}
+<% if role == "producer" %>
+__attribute__((noinline))
+int32_t spc_channel_<%= c.name %>_put(<%= put_params %>)
+{
+	uint32_t tail;
+	volatile uint8_t *slot;
+
+<% k.fields.select(&:array).each do |f| %>	(void)<%= f.name %>_len; /* the static len(<%= f.name %>) >= <%= f.count %>, proved by the build */
+<% end %>	spc_attempted++;
+	spc_ring_store(SPC_W, SPC_CH_P(SPC_I) + SPC_CH_P_ATTEMPTED, spc_attempted);
+	if (!spc_ready) {
+		spc_refused++;
+		spc_ring_store(SPC_W, SPC_CH_P(SPC_I) + SPC_CH_P_REFUSED, spc_refused);
+		return 0;
+	}
+	tail = spc_ring_load(SPC_W, SPC_CH_C(SPC_I) + SPC_CH_C_TAIL);
+	spc_ring_dmb();
+	if (spc_head - tail >= SPC_DEPTH) {
+		spc_refused++;
+		spc_ring_store(SPC_W, SPC_CH_P(SPC_I) + SPC_CH_P_REFUSED, spc_refused);
+		return 0;
+	}
+	slot = spc_ring_slot(SPC_W, SPC_OFFSET, SPC_STRIDE, SPC_DEPTH, spc_head);
+	SPC_LABEL("spc_ring_<%= c.name %>_put_copy_begin");
+<% k.fields.each do |f| %><% if f.array %>	for (uint32_t i = 0; i < <%= f.count %>u; i++) {
+<% f.width.times do |b| %>		slot[8u + <%= f.offset %>u + i * <%= f.width %>u + <%= b %>u] = (uint8_t)((uint32_t)<%= f.name %>[i] >> <%= 8 * b %>);
+<% end %>	}
+<% else %><% f.width.times do |b| %>	slot[8u + <%= f.offset + b %>u] = (uint8_t)((uint32_t)<%= f.name %> >> <%= 8 * b %>);
+<% end %><% end %><% end %>	((volatile uint32_t *)slot)[0] = SPC_MSG_BYTES;
+	((volatile uint32_t *)slot)[1] = spc_cycles(); /* the stamp: this core's cycle counter */
+	SPC_LABEL("spc_ring_<%= c.name %>_put_copy_end");
+	spc_ring_dmb();
+	SPC_LABEL("spc_ring_<%= c.name %>_put_pub_begin");
+	spc_head++;
+	spc_ring_store(SPC_W, SPC_CH_P(SPC_I) + SPC_CH_P_HEAD, spc_head);
+	SPC_LABEL("spc_ring_<%= c.name %>_put_pub_end");
+<% if bell && !bell[:unrung] %>	spc_ring_dmb();
+	if (spc_ring_load(SPC_W, SPC_CH_C(SPC_I) + SPC_CH_C_WAITING) == 1u && (*SPC_DOORBELL_GCR & SPC_DOORBELL_BIT) == 0u) {
+		*SPC_DOORBELL_GCR = SPC_DOORBELL_BIT; /* GIR<%= bell[:gi] %> alone, after reading it 0 (RM §37.7) */
+		spc_rung++;
+		spc_ring_store(SPC_W, SPC_CH_P(SPC_I) + SPC_CH_P_RUNG, spc_rung);
+	}
+<% end %>	spc_accepted++;
+	spc_ring_store(SPC_W, SPC_CH_P(SPC_I) + SPC_CH_P_ACCEPTED, spc_accepted);
+	return 1;
+}
+<% else %>
+static void spc_fault(uint32_t kind)
+{
+	spc_ready = 0u;
+	spc_ring_store(SPC_W, SPC_CH_C(SPC_I) + SPC_CH_C_FAULT, kind);
+	spc_ring_store(SPC_W, SPC_CH_C(SPC_I) + SPC_CH_C_STATE, SPC_RING_CONSUMER_FAULT);
+}
+
+__attribute__((noinline))
+int32_t spc_channel_<%= c.name %>_get(<%= get_params %>)
+{
+	uint32_t head;
+	volatile uint8_t *slot;
+
+<% k.fields.each do |f| %>	(void)<%= f.name %>_len; /* the static len(<%= f.name %>) >= <%= f.count %>, proved by the build */
+<% end %>	if (!spc_ready) {
+		return 0;
+	}
+	{
+		uint32_t now = spc_cycles();
+
+		if (spc_polled && now - spc_last_poll > spc_poll_max) {
+			spc_poll_max = now - spc_last_poll;
+			spc_ring_store(SPC_W, SPC_CH_M(SPC_I) + SPC_CH_M_POLL_MAX, spc_poll_max);
+		}
+		spc_last_poll = now;
+		spc_polled = 1u;
+	}
+	head = spc_ring_load(SPC_W, SPC_CH_P(SPC_I) + SPC_CH_P_HEAD);
+	spc_ring_dmb();
+<% if bell %>	if (head == spc_tail) {
+		/* waiting, then head again: a put that missed the 1 is seen here */
+		if (!spc_waiting) {
+			spc_waiting = 1u;
+			spc_ring_store(SPC_W, SPC_CH_C(SPC_I) + SPC_CH_C_WAITING, 1u);
+			spc_ring_dmb();
+			head = spc_ring_load(SPC_W, SPC_CH_P(SPC_I) + SPC_CH_P_HEAD);
+			spc_ring_dmb();
+		}
+		if (head == spc_tail) {
+			return 0;
+		}
+	}
+<% else %>	if (head == spc_tail) {
+		return 0;
+	}
+<% end %>	if (head - spc_tail > SPC_DEPTH) {
+		spc_fault(SPC_CH_FAULT_OCCUPANCY);
+		return 0;
+	}
+	slot = spc_ring_slot(SPC_W, SPC_OFFSET, SPC_STRIDE, SPC_DEPTH, spc_tail);
+	if (((volatile uint32_t *)slot)[0] != SPC_MSG_BYTES) {
+		spc_fault(SPC_CH_FAULT_LEN);
+		return 0;
+	}
+<% if bell %>	if (spc_waiting) {
+		spc_waiting = 0u;
+		spc_ring_store(SPC_W, SPC_CH_C(SPC_I) + SPC_CH_C_WAITING, 0u);
+	}
+<% end %>	SPC_LABEL("spc_ring_<%= c.name %>_get_copy_begin");
+<% k.fields.each do |f| %><% n = f.array ? f.count : 1 %>	for (uint32_t i = 0; i < <%= n %>u; i++) {
+		uint32_t v = 0u;
+
+<% f.width.times do |b| %>		v |= (uint32_t)slot[8u + <%= f.offset %>u + i * <%= f.width %>u + <%= b %>u] << <%= 8 * b %>;
+<% end %>		<%= f.name %>[i] = <%= get_cast[f.type] %>v;
+	}
+<% end %>	SPC_LABEL("spc_ring_<%= c.name %>_get_copy_end");
+	if (spc_wait_ref.valid) {
+		uint32_t w = spc_wait_of(&spc_wait_ref, spc_cycles(), ((volatile uint32_t *)slot)[1]);
+
+		spc_lat_min = spc_lat_n == 0u || w < spc_lat_min ? w : spc_lat_min;
+		if (spc_lat_n == 0u || w > spc_lat_max) {
+			/* the message this get takes is number spc_tail (a get takes one) */
+			spc_lat_max = w;
+			spc_ring_store(SPC_W, SPC_CH_C(SPC_I) + SPC_CH_C_LAT_MAX_AT, spc_tail);
+		}
+		spc_lat_sum += w;
+		spc_lat_n++;
+		spc_channel_<%= c.name %>_wait_hist[spc_wait_bucket(w)]++;
+		spc_ring_store(SPC_W, SPC_CH_M(SPC_I) + SPC_CH_M_LAT_MIN, spc_lat_min);
+		spc_ring_store(SPC_W, SPC_CH_M(SPC_I) + SPC_CH_M_LAT_MAX, spc_lat_max);
+		spc_ring_store(SPC_W, SPC_CH_M(SPC_I) + SPC_CH_M_LAT_SUM_LO, (uint32_t)spc_lat_sum);
+		spc_ring_store(SPC_W, SPC_CH_M(SPC_I) + SPC_CH_M_LAT_SUM_HI, (uint32_t)(spc_lat_sum >> 32));
+		spc_ring_store(SPC_W, SPC_CH_M(SPC_I) + SPC_CH_M_LAT_N, spc_lat_n);
+	}
+	spc_ring_dmb();
+	SPC_LABEL("spc_ring_<%= c.name %>_get_pub_begin");
+	spc_tail++;
+	spc_ring_store(SPC_W, SPC_CH_C(SPC_I) + SPC_CH_C_TAIL, spc_tail);
+	SPC_LABEL("spc_ring_<%= c.name %>_get_pub_end");
+	spc_taken++;
+	spc_ring_store(SPC_W, SPC_CH_C(SPC_I) + SPC_CH_C_TAKEN, spc_taken);
+	return 1;
+}
+<% end %>

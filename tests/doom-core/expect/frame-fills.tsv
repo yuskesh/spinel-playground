@@ -1,0 +1,212 @@
+# the values that fill the frame lane's expectation, read out of result records by
+# tests/doom-core/harness/fills.rb. harness/expect.rb --fills substitutes each row's value
+# for that key's TBD; `from` names the run directory and the record it was read out of.
+# Nothing here is typed: regenerate it from the records rather than editing a cell.
+# tbd	191
+# filled	191
+# uncovered	0
+# record	lane/records/frame.adapter.none.200.json	2026-09-16T21:08:05Z	adapter frame none 200 tics	completed rc=0
+# record	lane/records/frame.adapter.none.60.untracked-result.json	2026-09-16T21:08:11Z	adapter frame none 60 tics	completed rc=1
+# record	lane/records/frame.adapter.none.600.json	2026-09-16T21:05:09Z	adapter frame none 600 tics	completed rc=0
+# record	lane/records/frame.adapter.push-kind.60.json	2026-09-16T21:08:09Z	adapter frame push-kind 60 tics	completed rc=1
+# record	lane/records/frame.compiled.none.600.json	2026-09-16T21:05:09Z	compiled frame none 600 tics	completed rc=0
+# record	lane/records/frame.compiled.planes-bound-short.600.json	2026-09-16T21:07:59Z	compiled frame planes-bound-short 600 tics	completed rc=0
+# record	lane/records/frame.compiled.sky-iscale.600.json	2026-09-16T21:07:54Z	compiled frame sky-iscale 600 tics	completed rc=0
+# record	lane/records/frame.compiled.sky-skip.600.json	2026-09-16T21:07:21Z	compiled frame sky-skip 600 tics	completed rc=0
+# record	lane/records/frame.compiled.sky-texmid.600.json	2026-09-16T21:07:25Z	compiled frame sky-texmid 600 tics	completed rc=0
+# record	lane/records/frame.ruby.none.600.json	2026-09-16T21:05:09Z	ruby frame none 600 tics	completed rc=0
+# record	lane/records/frame.session.none.200.json	2026-09-16T21:08:04Z	session frame none 200 tics	completed rc=0
+# record	lane/records/frame.session.none.60.fields-wrongslot.json	2026-09-16T21:08:05Z	session frame none 60 tics	completed rc=0
+# record	lane/records/frame.session.none.600.json	2026-09-16T21:05:09Z	session frame none 600 tics	completed rc=0
+#case_id	key	value	from
+frame.adapter.none.200	adapter.ids_allocated	162	lane/records/frame.adapter.none.200.json
+frame.adapter.none.200	adapter.ids_released_once	162	lane/records/frame.adapter.none.200.json
+frame.adapter.none.200	checks.slots_compared	540760	lane/records/frame.adapter.none.200.json
+frame.adapter.none.200	copy.mobj_alloc_max	222	lane/records/frame.adapter.none.200.json
+frame.adapter.none.200	copy.mobj_cells	349376	lane/records/frame.adapter.none.200.json
+frame.adapter.none.200	copy.sector_cells	57200	lane/records/frame.adapter.none.200.json
+frame.adapter.none.200	exec.fuzz_columns	321	lane/records/frame.adapter.none.200.json
+frame.adapter.none.200	exec.jobs	153800	lane/records/frame.adapter.none.200.json
+frame.adapter.none.200	exec.runs	200	lane/records/frame.adapter.none.200.json
+frame.adapter.none.200	exec.screens	200	lane/records/frame.adapter.none.200.json
+frame.adapter.none.200	furniture.screens_end	200	lane/records/frame.adapter.none.200.json
+frame.adapter.none.200	leaves.absang	3714	lane/records/frame.adapter.none.200.json
+frame.adapter.none.200	leaves.addspr	3079	lane/records/frame.adapter.none.200.json
+frame.adapter.none.200	leaves.chkbbox	6101	lane/records/frame.adapter.none.200.json
+frame.adapter.none.200	leaves.chplane	6774	lane/records/frame.adapter.none.200.json
+frame.adapter.none.200	leaves.clipv	20818	lane/records/frame.adapter.none.200.json
+frame.adapter.none.200	leaves.crunch	1892	lane/records/frame.adapter.none.200.json
+frame.adapter.none.200	leaves.fplane	5804	lane/records/frame.adapter.none.200.json
+frame.adapter.none.200	leaves.lindex	86159	lane/records/frame.adapter.none.200.json
+frame.adapter.none.200	leaves.new_planes.chplane	120	lane/records/frame.adapter.none.200.json
+frame.adapter.none.200	leaves.new_planes.fplane	1834	lane/records/frame.adapter.none.200.json
+frame.adapter.none.200	leaves.new_vissprites	2785	lane/records/frame.adapter.none.200.json
+frame.adapter.none.200	leaves.pangle	32166	lane/records/frame.adapter.none.200.json
+frame.adapter.none.200	leaves.pdist	3714	lane/records/frame.adapter.none.200.json
+frame.adapter.none.200	leaves.segloop	3714	lane/records/frame.adapter.none.200.json
+frame.adapter.none.200	leaves.segside	367	lane/records/frame.adapter.none.200.json
+frame.adapter.none.200	leaves.sgscale	6999	lane/records/frame.adapter.none.200.json
+frame.adapter.none.200	leaves.ssclear	200	lane/records/frame.adapter.none.200.json
+frame.adapter.none.200	leaves.vssort	200	lane/records/frame.adapter.none.200.json
+frame.adapter.none.200	planes.clears	200	lane/records/frame.adapter.none.200.json
+frame.adapter.none.200	planes.drawn	1954	lane/records/frame.adapter.none.200.json
+frame.adapter.none.200	planes.sentinels	2642	lane/records/frame.adapter.none.200.json
+frame.adapter.none.200	planes.sky	31	lane/records/frame.adapter.none.200.json
+frame.adapter.none.200	planes.sky_columns	0	lane/records/frame.adapter.none.200.json
+frame.adapter.none.200	planes.sky_planes_recognized	31	lane/records/frame.adapter.none.200.json
+frame.adapter.none.200	planes.spans_emitted	33540	lane/records/frame.adapter.none.200.json
+frame.adapter.none.200	pushes.checks	800	lane/records/frame.adapter.none.200.json
+frame.adapter.none.200	pushes.marks	400	lane/records/frame.adapter.none.200.json
+frame.adapter.none.200	pushes.masked	37907	lane/records/frame.adapter.none.200.json
+frame.adapter.none.200	pushes.wall	82353	lane/records/frame.adapter.none.200.json
+frame.adapter.none.200	segloop.columns	82353	lane/records/frame.adapter.none.200.json
+frame.adapter.none.60.untracked-result	adapter.ids_allocated	162	lane/records/frame.adapter.none.60.untracked-result.json
+frame.adapter.none.60.untracked-result	adapter.ids_released_once	161	lane/records/frame.adapter.none.60.untracked-result.json
+frame.adapter.none.60.untracked-result	adapter.second_release	2	lane/records/frame.adapter.none.60.untracked-result.json
+frame.adapter.none.600	copy.mobj_alloc_max	222	lane/records/frame.adapter.none.600.json
+frame.adapter.none.600	copy.mobj_cells	1059776	lane/records/frame.adapter.none.600.json
+frame.adapter.none.600	copy.sector_cells	171600	lane/records/frame.adapter.none.600.json
+frame.adapter.none.600	furniture.screens_end	600	lane/records/frame.adapter.none.600.json
+frame.adapter.none.600	leaves.absang	8427	lane/records/frame.adapter.none.600.json
+frame.adapter.none.600	leaves.addspr	8149	lane/records/frame.adapter.none.600.json
+frame.adapter.none.600	leaves.chkbbox	16602	lane/records/frame.adapter.none.600.json
+frame.adapter.none.600	leaves.chplane	15356	lane/records/frame.adapter.none.600.json
+frame.adapter.none.600	leaves.clipv	38384	lane/records/frame.adapter.none.600.json
+frame.adapter.none.600	leaves.crunch	3796	lane/records/frame.adapter.none.600.json
+frame.adapter.none.600	leaves.fplane	15710	lane/records/frame.adapter.none.600.json
+frame.adapter.none.600	leaves.lindex	227433	lane/records/frame.adapter.none.600.json
+frame.adapter.none.600	leaves.new_planes.chplane	120	lane/records/frame.adapter.none.600.json
+frame.adapter.none.600	leaves.new_planes.fplane	4667	lane/records/frame.adapter.none.600.json
+frame.adapter.none.600	leaves.new_vissprites	6076	lane/records/frame.adapter.none.600.json
+frame.adapter.none.600	leaves.pangle	81184	lane/records/frame.adapter.none.600.json
+frame.adapter.none.600	leaves.pdist	8427	lane/records/frame.adapter.none.600.json
+frame.adapter.none.600	leaves.segloop	8427	lane/records/frame.adapter.none.600.json
+frame.adapter.none.600	leaves.segside	1613	lane/records/frame.adapter.none.600.json
+frame.adapter.none.600	leaves.sgscale	15770	lane/records/frame.adapter.none.600.json
+frame.adapter.none.600	leaves.ssclear	600	lane/records/frame.adapter.none.600.json
+frame.adapter.none.600	leaves.vssort	600	lane/records/frame.adapter.none.600.json
+frame.adapter.none.600	planes.sky_columns	1296	lane/records/frame.adapter.none.600.json
+frame.adapter.none.600	planes.sky_planes_recognized	63	lane/records/frame.adapter.none.600.json
+frame.adapter.none.600	segloop.columns	220797	lane/records/frame.adapter.none.600.json
+frame.adapter.push-kind.60	adapter.ids_allocated	162	lane/records/frame.adapter.push-kind.60.json
+frame.adapter.push-kind.60	adapter.ids_released_once	162	lane/records/frame.adapter.push-kind.60.json
+frame.adapter.push-kind.60	adapter.second_release	refused	lane/records/frame.adapter.push-kind.60.json
+frame.compiled.none.600	copy.mobj_alloc_max	222	lane/records/frame.compiled.none.600.json
+frame.compiled.none.600	copy.mobj_cells	1059776	lane/records/frame.compiled.none.600.json
+frame.compiled.none.600	copy.sector_cells	171600	lane/records/frame.compiled.none.600.json
+frame.compiled.none.600	furniture.screens_end	600	lane/records/frame.compiled.none.600.json
+frame.compiled.none.600	leaves.absang	8427	lane/records/frame.compiled.none.600.json
+frame.compiled.none.600	leaves.addspr	8149	lane/records/frame.compiled.none.600.json
+frame.compiled.none.600	leaves.chkbbox	16602	lane/records/frame.compiled.none.600.json
+frame.compiled.none.600	leaves.chplane	15356	lane/records/frame.compiled.none.600.json
+frame.compiled.none.600	leaves.clipv	38384	lane/records/frame.compiled.none.600.json
+frame.compiled.none.600	leaves.crunch	3796	lane/records/frame.compiled.none.600.json
+frame.compiled.none.600	leaves.fplane	15710	lane/records/frame.compiled.none.600.json
+frame.compiled.none.600	leaves.lindex	227433	lane/records/frame.compiled.none.600.json
+frame.compiled.none.600	leaves.new_planes.chplane	120	lane/records/frame.compiled.none.600.json
+frame.compiled.none.600	leaves.new_planes.fplane	4667	lane/records/frame.compiled.none.600.json
+frame.compiled.none.600	leaves.new_vissprites	6076	lane/records/frame.compiled.none.600.json
+frame.compiled.none.600	leaves.pangle	81184	lane/records/frame.compiled.none.600.json
+frame.compiled.none.600	leaves.pdist	8427	lane/records/frame.compiled.none.600.json
+frame.compiled.none.600	leaves.segloop	8427	lane/records/frame.compiled.none.600.json
+frame.compiled.none.600	leaves.segside	1613	lane/records/frame.compiled.none.600.json
+frame.compiled.none.600	leaves.sgscale	15770	lane/records/frame.compiled.none.600.json
+frame.compiled.none.600	leaves.ssclear	600	lane/records/frame.compiled.none.600.json
+frame.compiled.none.600	leaves.vssort	600	lane/records/frame.compiled.none.600.json
+frame.compiled.none.600	planes.sky_columns	1296	lane/records/frame.compiled.none.600.json
+frame.compiled.none.600	planes.sky_planes_recognized	63	lane/records/frame.compiled.none.600.json
+frame.compiled.none.600	segloop.columns	220797	lane/records/frame.compiled.none.600.json
+frame.compiled.planes-bound-short.600	first.plane-disagree	frame 0 after the walk counters nspan/nsched/nwall port 202,842,640 original 212,852,640	lane/records/frame.compiled.planes-bound-short.600.json
+frame.compiled.sky-iscale.600	first.plane-disagree	frame 572 after the walk sky column job 335 port 106,60,61,65537,6553600,682112,0 original 106,60,61,65536,6553600,682112,0	lane/records/frame.compiled.sky-iscale.600.json
+frame.compiled.sky-skip.600	first.plane-disagree	frame 106 the walk drew 0 sky planes, the original 1	lane/records/frame.compiled.sky-skip.600.json
+frame.compiled.sky-texmid.600	first.plane-disagree	frame 572 after the walk sky column job 335 port 106,60,61,65536,6619136,682112,0 original 106,60,61,65536,6553600,682112,0	lane/records/frame.compiled.sky-texmid.600.json
+frame.ruby.none.600	copy.mobj_alloc_max	222	lane/records/frame.ruby.none.600.json
+frame.ruby.none.600	copy.mobj_cells	1059776	lane/records/frame.ruby.none.600.json
+frame.ruby.none.600	copy.sector_cells	171600	lane/records/frame.ruby.none.600.json
+frame.ruby.none.600	furniture.screens_end	600	lane/records/frame.ruby.none.600.json
+frame.ruby.none.600	leaves.absang	8427	lane/records/frame.ruby.none.600.json
+frame.ruby.none.600	leaves.addspr	8149	lane/records/frame.ruby.none.600.json
+frame.ruby.none.600	leaves.chkbbox	16602	lane/records/frame.ruby.none.600.json
+frame.ruby.none.600	leaves.chplane	15356	lane/records/frame.ruby.none.600.json
+frame.ruby.none.600	leaves.clipv	38384	lane/records/frame.ruby.none.600.json
+frame.ruby.none.600	leaves.crunch	3796	lane/records/frame.ruby.none.600.json
+frame.ruby.none.600	leaves.fplane	15710	lane/records/frame.ruby.none.600.json
+frame.ruby.none.600	leaves.lindex	227433	lane/records/frame.ruby.none.600.json
+frame.ruby.none.600	leaves.new_planes.chplane	120	lane/records/frame.ruby.none.600.json
+frame.ruby.none.600	leaves.new_planes.fplane	4667	lane/records/frame.ruby.none.600.json
+frame.ruby.none.600	leaves.new_vissprites	6076	lane/records/frame.ruby.none.600.json
+frame.ruby.none.600	leaves.pangle	81184	lane/records/frame.ruby.none.600.json
+frame.ruby.none.600	leaves.pdist	8427	lane/records/frame.ruby.none.600.json
+frame.ruby.none.600	leaves.segloop	8427	lane/records/frame.ruby.none.600.json
+frame.ruby.none.600	leaves.segside	1613	lane/records/frame.ruby.none.600.json
+frame.ruby.none.600	leaves.sgscale	15770	lane/records/frame.ruby.none.600.json
+frame.ruby.none.600	leaves.ssclear	600	lane/records/frame.ruby.none.600.json
+frame.ruby.none.600	leaves.vssort	600	lane/records/frame.ruby.none.600.json
+frame.ruby.none.600	planes.sky_columns	1296	lane/records/frame.ruby.none.600.json
+frame.ruby.none.600	planes.sky_planes_recognized	63	lane/records/frame.ruby.none.600.json
+frame.ruby.none.600	segloop.columns	220797	lane/records/frame.ruby.none.600.json
+frame.session.none.200	checks.slots_compared	540760	lane/records/frame.session.none.200.json
+frame.session.none.200	copy.mobj_alloc_max	222	lane/records/frame.session.none.200.json
+frame.session.none.200	copy.mobj_cells	349376	lane/records/frame.session.none.200.json
+frame.session.none.200	copy.sector_cells	57200	lane/records/frame.session.none.200.json
+frame.session.none.200	exec.fuzz_columns	321	lane/records/frame.session.none.200.json
+frame.session.none.200	exec.jobs	153800	lane/records/frame.session.none.200.json
+frame.session.none.200	exec.runs	200	lane/records/frame.session.none.200.json
+frame.session.none.200	exec.screens	200	lane/records/frame.session.none.200.json
+frame.session.none.200	furniture.screens_end	200	lane/records/frame.session.none.200.json
+frame.session.none.200	leaves.absang	3714	lane/records/frame.session.none.200.json
+frame.session.none.200	leaves.addspr	3079	lane/records/frame.session.none.200.json
+frame.session.none.200	leaves.chkbbox	6101	lane/records/frame.session.none.200.json
+frame.session.none.200	leaves.chplane	6774	lane/records/frame.session.none.200.json
+frame.session.none.200	leaves.clipv	20818	lane/records/frame.session.none.200.json
+frame.session.none.200	leaves.crunch	1892	lane/records/frame.session.none.200.json
+frame.session.none.200	leaves.fplane	5804	lane/records/frame.session.none.200.json
+frame.session.none.200	leaves.lindex	86159	lane/records/frame.session.none.200.json
+frame.session.none.200	leaves.new_planes.chplane	120	lane/records/frame.session.none.200.json
+frame.session.none.200	leaves.new_planes.fplane	1834	lane/records/frame.session.none.200.json
+frame.session.none.200	leaves.new_vissprites	2785	lane/records/frame.session.none.200.json
+frame.session.none.200	leaves.pangle	32166	lane/records/frame.session.none.200.json
+frame.session.none.200	leaves.pdist	3714	lane/records/frame.session.none.200.json
+frame.session.none.200	leaves.segloop	3714	lane/records/frame.session.none.200.json
+frame.session.none.200	leaves.segside	367	lane/records/frame.session.none.200.json
+frame.session.none.200	leaves.sgscale	6999	lane/records/frame.session.none.200.json
+frame.session.none.200	leaves.ssclear	200	lane/records/frame.session.none.200.json
+frame.session.none.200	leaves.vssort	200	lane/records/frame.session.none.200.json
+frame.session.none.200	planes.clears	200	lane/records/frame.session.none.200.json
+frame.session.none.200	planes.drawn	1954	lane/records/frame.session.none.200.json
+frame.session.none.200	planes.sentinels	2642	lane/records/frame.session.none.200.json
+frame.session.none.200	planes.sky	31	lane/records/frame.session.none.200.json
+frame.session.none.200	planes.sky_columns	0	lane/records/frame.session.none.200.json
+frame.session.none.200	planes.sky_planes_recognized	31	lane/records/frame.session.none.200.json
+frame.session.none.200	planes.spans_emitted	33540	lane/records/frame.session.none.200.json
+frame.session.none.200	pushes.checks	800	lane/records/frame.session.none.200.json
+frame.session.none.200	pushes.marks	400	lane/records/frame.session.none.200.json
+frame.session.none.200	pushes.masked	37907	lane/records/frame.session.none.200.json
+frame.session.none.200	pushes.wall	82353	lane/records/frame.session.none.200.json
+frame.session.none.200	segloop.columns	82353	lane/records/frame.session.none.200.json
+frame.session.none.60.fields-wrongslot	first.slot-disagree	wall frame 0 wall job 0 slots 0 -7	lane/records/frame.session.none.60.fields-wrongslot.json
+frame.session.none.600	copy.mobj_alloc_max	222	lane/records/frame.session.none.600.json
+frame.session.none.600	copy.mobj_cells	1059776	lane/records/frame.session.none.600.json
+frame.session.none.600	copy.sector_cells	171600	lane/records/frame.session.none.600.json
+frame.session.none.600	furniture.screens_end	600	lane/records/frame.session.none.600.json
+frame.session.none.600	leaves.absang	8427	lane/records/frame.session.none.600.json
+frame.session.none.600	leaves.addspr	8149	lane/records/frame.session.none.600.json
+frame.session.none.600	leaves.chkbbox	16602	lane/records/frame.session.none.600.json
+frame.session.none.600	leaves.chplane	15356	lane/records/frame.session.none.600.json
+frame.session.none.600	leaves.clipv	38384	lane/records/frame.session.none.600.json
+frame.session.none.600	leaves.crunch	3796	lane/records/frame.session.none.600.json
+frame.session.none.600	leaves.fplane	15710	lane/records/frame.session.none.600.json
+frame.session.none.600	leaves.lindex	227433	lane/records/frame.session.none.600.json
+frame.session.none.600	leaves.new_planes.chplane	120	lane/records/frame.session.none.600.json
+frame.session.none.600	leaves.new_planes.fplane	4667	lane/records/frame.session.none.600.json
+frame.session.none.600	leaves.new_vissprites	6076	lane/records/frame.session.none.600.json
+frame.session.none.600	leaves.pangle	81184	lane/records/frame.session.none.600.json
+frame.session.none.600	leaves.pdist	8427	lane/records/frame.session.none.600.json
+frame.session.none.600	leaves.segloop	8427	lane/records/frame.session.none.600.json
+frame.session.none.600	leaves.segside	1613	lane/records/frame.session.none.600.json
+frame.session.none.600	leaves.sgscale	15770	lane/records/frame.session.none.600.json
+frame.session.none.600	leaves.ssclear	600	lane/records/frame.session.none.600.json
+frame.session.none.600	leaves.vssort	600	lane/records/frame.session.none.600.json
+frame.session.none.600	planes.sky_columns	1296	lane/records/frame.session.none.600.json
+frame.session.none.600	planes.sky_planes_recognized	63	lane/records/frame.session.none.600.json
+frame.session.none.600	segloop.columns	220797	lane/records/frame.session.none.600.json

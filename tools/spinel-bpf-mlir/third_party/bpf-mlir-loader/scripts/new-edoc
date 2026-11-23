@@ -1,0 +1,93 @@
+#!/bin/bash
+# scripts/new-edoc — 採番つき文書骨格の作成 (「Edoc は計画時に採番 + 即コミット」の機械化)
+
+#   scripts/new-edoc <snake_case_title>            # 実験: E{次番}_<title>.md を作成しコミット
+#   scripts/new-edoc -t R <snake_case_title>       # 調査: R{次番}_<title>.md
+#   scripts/new-edoc -n <snake_case_title>         # dry-run (番号とパスを表示するだけ)
+
+# 何をするか:
+#   1. docs/experiments/ (または -t R で docs/researches/) を**ファイルシステムで**走査し、
+#      tracked / untracked を問わず最大番号 +1 を取る — 骨格ファイルの存在が採番予約の
+#      正典 (CLAUDE.md の文書採番ルール)。並走セッションの未コミット分も
+#      同じ working tree に居るので、この走査が見落とさない。
+#   2. 「状態: 予約・未着手」の骨格 (メタデータ/背景/仮説/手順/結果/結論/Honest
+#      boundary) を書く。仮説は起票時点の素案と明記する枠だけ置く。
+#   3. **そのファイルだけを** git add してコミットする (ディレクトリ一括 add による
+#      巻き込み事故を防ぐ)。コミットが予約の対外的な確定。
+
+set -euo pipefail
+
+HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+ROOT=$(cd -- "$HERE/.." && pwd)
+
+kind=E
+dry=0
+while getopts "t:nh" opt; do
+  case "$opt" in
+    t) kind=$OPTARG ;;
+    n) dry=1 ;;
+    h|*) sed -n '2,12p' "$0"; exit 0 ;;
+  esac
+done
+shift $((OPTIND - 1))
+
+title=${1:-}
+if [ -z "$title" ]; then
+  echo "new-edoc: title がありません。使い方は scripts/new-edoc -h" >&2; exit 2
+fi
+if ! printf '%s' "$title" | LC_ALL=C grep -qE '^[a-z0-9][a-z0-9_]*$'; then
+  echo "new-edoc: title は snake_case ([a-z0-9_]、先頭は英数字) で: '$title'" >&2; exit 2
+fi
+
+case "$kind" in
+  E) dir="$ROOT/docs/experiments"; label=実験 ;;
+  R) dir="$ROOT/docs/researches";  label=調査 ;;
+  *) echo "new-edoc: -t は E か R (P は plan 名が意味を持つので手で切る)" >&2; exit 2 ;;
+esac
+
+# 最大番号: ファイル名の数字部だけを見る。tracked/untracked の区別はしない
+# (working tree の存在 = 予約)。
+max=$(ls "$dir"/"$kind"[0-9]*_*.md 2>/dev/null \
+      | sed -E "s|.*/${kind}0*([0-9]+)_.*|\1|" | sort -n | tail -1 || true)
+next=$(( ${max:-0} + 1 ))
+num=$(printf '%03d' "$next")
+file="$dir/${kind}${num}_${title}.md"
+today=$(date +%Y-%m-%d)
+
+if [ -e "$file" ]; then
+  echo "new-edoc: $file が既に存在します" >&2; exit 1
+fi
+if [ "$dry" -eq 1 ]; then
+  echo "dry-run: ${kind}${num} -> $file"
+  exit 0
+fi
+
+cat > "$file" <<EOF
+# ${kind}${num}: ${title} (仮題 — 着手時に日本語の題へ)
+
+- **date**: ${today} (採番予約 + 骨格)
+- **カテゴリ**: (未定 — 着手時に)
+- **状態**: **予約・未着手**
+- **関連**: (起票元の P/R/E を必ず書く)
+
+## 背景
+
+(起票元の計画・調査から引き継げる分をここに。空のまま着手しないこと)
+
+## 仮説 (起票時点の素案 — 着手時に更新してよいが、結果を見た後の書き換えは禁止)
+
+- **H1**:
+
+## 手順 (予定)
+
+1.
+
+## 手順と結果 / 結論 / Honest boundary (着手後に記入)
+
+(未記入)
+EOF
+
+cd "$ROOT"
+git add -- "${file#$ROOT/}"
+git commit -q -m "${kind}${num} 採番予約: ${title} — 骨格先置き (計画時採番ルール、scripts/new-edoc)" -- "${file#$ROOT/}"
+echo "reserved ${kind}${num}: ${file#$ROOT/} (コミット済み。push は任意のタイミングで)"

@@ -1,0 +1,2242 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+#
+# tools/shader/spinel-rb2spv — a Ruby method body → a SPIR-V shader + an f32 CPU reference
+#
+#   spinel-rb2spv <src.rb> --out <dir> [--lane wgsl] [--emit-only]
+#   spinel-rb2spv <src.rb> --check          # subset check only (prints the refusal TSV)
+#
+# The product form of the shader plan's first phase. The prototype was docs/researches/r011_probes/src/rb2spv.py
+# (489 lines of Python); this one was **written anew in the Ruby subset** (the user's decision on 2026-08-24,
+# the move away from Python). **It is not added to mlirgen** (the plan keeps it a separate tool, outside review, until mlirgen
+# integration / so as not to add to what a later port must carry).
+#
+# ★ There is only one emission (func + arith).
+#   The lane's admission rests only on (iii) "one emission branches into two exits inside MLIR",
+#   so **spirv dialect is written by hand only in the shell**. That is checked mechanically
+#   (--check-emission). The prototype had both hand-written spirv and func+arith;
+#   the product dropped the former.
+#
+#   src.rb ─┬→ func+arith (once) ─┬→ mlir-opt --convert-*-to-spirv → joined to the shell
+#           │                     │    → mlir-translate --serialize-spirv → spirv-val → naga
+#           │                     └→ mlir-opt --convert-*-to-llvm
+#           │                          → mlir-translate --mlir-to-llvmir → clang -c (f32 reference)
+#           └→ table sp_shader_table.h + signature sig + refusal TSV
+#
+# Input contract (id-based; the earlier position join is not used):
+#   1. SPINEL_DEBUG=1 spinel --dump-ast   structure (with node ids)
+#   2. spinel-typedump <rb> nodes         node id → inferred type
+#   3. spinel-typedump <rb> methods       signatures (argument names, types, return type)
+#   **At start-up it checks that 1 and 2 give the same kind for the same id, and if they
+#   disagree it dies instead of misreading quietly** (a guard for upstream changing the AST format).
+#
+# Decision record: the oracle thresholds / the split of roles among CPU references / the contraction contract and
+# the spelling of shader_def were fixed by an earlier experiment. This is their implementation, not the place for design.
+
+require "open3"
+require "fileutils"
+require "tmpdir"
+
+ROOT     = File.expand_path("../..", __dir__)
+SPINEL   = ENV["SPINEL"]   || File.join(ROOT, "vendor/spinel/bin/spinel")
+TYPEDUMP = ENV["TYPEDUMP"] || File.join(ROOT, "tools/contract/build/spinel-typedump")
+
+# Input outside the subset is not an exception but a "refusal" — it always carries a reason + node id + line:column
+# (the refusal goes into a TSV and becomes an artifact).
+class Refuse < StandardError
+  attr_reader :kind, :nid, :line, :col, :why
+  def initialize(kind, nid, line, col, why)
+    @kind, @nid, @line, @col, @why = kind, nid, line, col, why
+    super("REFUSE #{kind} (node #{nid}, #{line}:#{col}): #{why}")
+  end
+  def tsv_row
+    [kind, nid, "#{line}:#{col}", why].join("\t")
+  end
+end
+
+def die(msg)
+  warn "spinel-rb2spv: FATAL #{msg}"
+  exit 4
+end
+
+# ---------------------------------------------------------------- input 1: structure
+class Ast
+  attr_reader :nodes, :root
+
+  def initialize(path)
+    out, st = Open3.capture2e({ "SPINEL_DEBUG" => "1" }, SPINEL, "--dump-ast", path)
+    die("spinel --dump-ast failed:\n#{out}") unless st.success?
+    @nodes = {}
+    @root = 0
+    out.each_line do |line|
+      line = line.chomp
+      next if line.empty?
+      tag = line[0]
+      next unless "NSIFRA".include?(tag)
+      rest = line[2..] || ""
+      parts = rest.split(" ", 3)
+      nid = Integer(parts[0], exception: false)
+      next if nid.nil?
+      n = (@nodes[nid] ||= { id: nid, kind: nil, s: {}, i: {}, f: {}, r: {}, a: {},
+                             line: 0, col: 0 })
+      case tag
+      when "N" then n[:kind] = parts[1]
+      when "S" then n[:s][parts[1]] = parts[2] || ""
+      when "F" then n[:f][parts[1]] = parts[2].to_f
+      when "R" then n[:r][parts[1]] = parts[2].to_i
+      when "A" then n[:a][parts[1]] = (parts[2] || "").split(",").map(&:to_i)
+      when "I"
+        v = parts[2].to_i
+        n[:i][parts[1]] = v
+        n[:line] = v if parts[1] == "node_line"
+        n[:col]  = v if parts[1] == "node_col"
+      end
+    end
+    if @nodes.empty? || @nodes.values.none? { |n| n[:line] != 0 }
+      die("--dump-ast has no node_line at all (SPINEL_DEBUG is not in effect)")
+    end
+  end
+
+  def n(i) = @nodes[i]
+  def ref(node, key) = @nodes[node[:r][key].to_i]
+  def arr(node, key) = (node[:a][key] || []).map { |i| @nodes[i] }
+end
+
+# ------------------------------------------------ inputs 2/3: inferred types (looked up by id)
+class Types
+  attr_reader :ty, :kind, :methods
+
+  def initialize(path)
+    @ty = {}
+    @kind = {}
+    out, st = Open3.capture2e(TYPEDUMP, path, "nodes")
+    die("spinel-typedump nodes failed:\n#{out}") unless st.success?
+    out.each_line.drop(1).each do |line|
+      f = line.chomp.split("\t")
+      next if f.size < 3
+      @kind[f[0].to_i] = f[1]
+      @ty[f[0].to_i]   = f[2]
+    end
+
+    @methods = {}
+    out, st = Open3.capture2e(TYPEDUMP, path, "methods")
+    die("spinel-typedump methods failed:\n#{out}") unless st.success?
+    out.each_line.drop(1).each do |line|
+      f = line.chomp.split("\t")
+      next if f.size < 6
+      @methods[f[1]] = { ret: f[3], nparams: f[4].to_i,
+                         params: f[5].split(",").reject(&:empty?).map { |p| p.split(":") } }
+    end
+  end
+
+  # Contract gate: do the 2 inputs give the same kind for the same id?
+  # If they disagree, die rather than misread quietly (the research's guard).
+  #
+  # One disagreement is the analysis's own, since upstream Spinel f8ff01939: it
+  # puts the one expression a pair of parentheses holds in their place, so the
+  # ParenthesesNode and its StatementsNode are NilNodes in typedump while the
+  # expression is not (or is itself such a pair). Exactly that shape is
+  # admitted; the pair then reads the expression's type.
+  def peeled_pair(ast, p, seen = {})
+    pn = ast.n(p)
+    return nil unless pn && pn[:kind] == "ParenthesesNode" && @kind[p] == "NilNode"
+    sn = ast.ref(pn, "body")
+    return nil unless sn && sn[:kind] == "StatementsNode" && @kind[sn[:id]] == "NilNode"
+    body = ast.arr(sn, "body")
+    return nil unless body.size == 1 && body[0]
+    e = body[0][:id]
+    return nil if seen[e]
+    seen[e] = true
+    if @kind[e] == "NilNode" && body[0][:kind] != "NilNode"
+      inner = peeled_pair(ast, e, seen)
+      return inner && [p, sn[:id]] + inner
+    end
+    return nil unless @kind[e] == body[0][:kind]
+    [p, sn[:id], e]
+  end
+
+  def cross_check!(ast)
+    peeled = {}
+    @kind.each_key do |i|
+      next if peeled[i]
+      chain = peeled_pair(ast, i)
+      next unless chain
+      chain[0..-2].each { |j| peeled[j] = chain[-1] }
+    end
+    peeled.each { |j, e| @ty[j] = @ty[e] }
+    bad = @kind.keys.select do |i|
+      nd = ast.n(i)
+      nd && nd[:kind] && nd[:kind] != @kind[i] && !peeled[i]
+    end
+    return if bad.empty?
+    detail = bad.first(5).map { |i| "id #{i}: ast=#{ast.n(i)[:kind]} typedump=#{@kind[i]}" }
+    die("input contract violation — dump-ast and typedump disagree on the kind of #{bad.size} ids\n  " +
+        detail.join("\n  ") +
+        "\n  → upstream may have changed the AST format. Stopping here rather than misreading it silently")
+  end
+end
+
+# ------------------------------------------------------- reading the shader_def declaration
+#
+# The spelling was fixed earlier (including the per-lane contract: of the contraction contract). The reading copies
+# tensor_def's precedent as it is (a top-level CallNode without a receiver, the first argument a symbol,
+# the rest a KeywordHashNode. An unknown keyword is a loud refusal).
+SHADER_KEYS = %w[fragment varyings uniforms target lanes contract quant coord
+                 attributes vertex textures].freeze
+LANES       = %w[wgsl msl].freeze
+# WGSL cannot choose its contraction, so only the fixed value is accepted.
+WGSL_CONTRACT = "fused"
+MSL_CONTRACTS = %w[fused frontend separate].freeze
+
+# With both `attributes:` + `vertex:`, it is the vertex pipeline form.
+# Without them, the first phase's fullscreen + FragCoord form (byte for byte unchanged). Only one of them is a loud refusal.
+ShaderDecl = Struct.new(:name, :line, :channels, :alpha, :varyings, :uniforms,
+                        :format, :lanes, :contract, :quant, :coord, :text,
+                        :attributes, :vertex, :texture, :pass_through,
+                        keyword_init: true) do
+  def vpipe?
+    !vertex.nil?
+  end
+
+  def textured?
+    !texture.nil?
+  end
+
+  # The Ruby of the methods the generator writes for pass-through varyings.
+  # It goes after the source, so the source's line numbers stay as they are.
+  def pass_defs
+    return "" if pass_through.empty?
+    params = (attributes.keys + uniforms.keys).join(", ")
+    pass_through.map { |method, attribute| "def #{method}(#{params})\n  #{attribute}\nend\n" }.join
+  end
+
+  # The one ordered list of the fragment arguments of the vertex pipeline form:
+  # varyings, then uniforms, then the texels. The seed, the arity check and the
+  # shell all take the order from here, because typedump's cross check compares
+  # node kinds only and cannot see two arguments exchanged.
+  def frag_inputs
+    varyings.keys.map { |n| [:varying, n] } +
+      uniforms.keys.map { |n| [:uniform, n] } +
+      (textured? ? texture[:texel].map { |n| [:texel, n] } : [])
+  end
+
+  # The a channel exists only when fragment: a: names a method, which read_one accepts only
+  # with a texture.
+  def frag_channels
+    channels.key?("a") ? %w[r g b a] : %w[r g b]
+  end
+end
+
+# The file that marks a shader's output directory as textured, and the CPU
+# references a textured shader does not have.
+TEXTURED_MARKER = "textured"
+CPU_REF_SOURCES = %w[ref_native.rb ref_c.c ref_driver.c raster_ref.c].freeze
+
+class DeclReader
+  def initialize(ast, src_text)
+    @ast = ast
+    @src = src_text
+  end
+
+  def sym(node, what)
+    unless node && node[:kind] == "SymbolNode"
+      raise Refuse.new(node ? node[:kind] : "(nil)", node ? node[:id] : -1,
+                       node ? node[:line] : 0, node ? node[:col] : 0,
+                       "#{what} must be a symbol")
+    end
+    node[:s]["unescaped"] || node[:s]["value"] || node[:s]["name"]
+  end
+
+  def read_all
+    prog = @ast.n(@ast.root)
+    stmts = @ast.ref(prog, "statements")
+    decls = []
+    @ast.arr(stmts, "body").each do |st|
+      next unless st && st[:kind] == "CallNode" && st[:s]["name"] == "shader_def"
+      if st[:r].fetch("receiver", -1) >= 0
+        raise Refuse.new(st[:kind], st[:id], st[:line], st[:col],
+                         "shader_def must be a top-level call with no receiver")
+      end
+      decls << read_one(st)
+    end
+    decls
+  end
+
+  private
+
+  def read_one(st)
+    argsn = @ast.ref(st, "arguments")
+    args = argsn ? @ast.arr(argsn, "arguments") : []
+    if args.empty?
+      raise Refuse.new(st[:kind], st[:id], st[:line], st[:col], "shader_def: no name")
+    end
+    name = sym(args[0], "the first argument of shader_def")
+    kw = {}
+    args.drop(1).each do |extra|
+      unless extra[:kind] == "KeywordHashNode"
+        raise Refuse.new(extra[:kind], extra[:id], extra[:line], extra[:col],
+                         "shader_def :#{name}: positional arguments are not accepted (write #{SHADER_KEYS.join(': ')}:)")
+      end
+      @ast.arr(extra, "elements").each do |assoc|
+        k = sym(@ast.ref(assoc, "key"), "a keyword of shader_def :#{name}")
+        kw[k] = @ast.ref(assoc, "value")
+      end
+    end
+    unknown = kw.keys - SHADER_KEYS
+    unless unknown.empty?
+      raise Refuse.new(st[:kind], st[:id], st[:line], st[:col],
+                       "shader_def :#{name}: unknown keywords #{unknown.sort.join(', ')} " \
+                       "(accepted: #{SHADER_KEYS.join(', ')})")
+    end
+
+    frag = kw["fragment"]
+    unless frag && frag[:kind] == "HashNode"
+      raise Refuse.new(st[:kind], st[:id], st[:line], st[:col],
+                       "shader_def :#{name}: fragment: is required and must be a Hash " \
+                       "(1 method = 1 scalar output. R011 §4.3)")
+    end
+    channels = {}
+    alpha = nil
+    @ast.arr(frag, "elements").each do |assoc|
+      ch = sym(@ast.ref(assoc, "key"), "a key of fragment:")
+      v = @ast.ref(assoc, "value")
+      if ch == "a" && v && (v[:kind] == "FloatNode" || v[:kind] == "IntegerNode")
+        alpha = v[:kind] == "FloatNode" ? v[:f]["value"] : v[:i]["value"].to_f
+        next
+      end
+      unless %w[r g b a].include?(ch)
+        raise Refuse.new(v ? v[:kind] : "(nil)", v ? v[:id] : st[:id],
+                         v ? v[:line] : st[:line], v ? v[:col] : st[:col],
+                         "the keys of fragment: are r/g/b/a only (got #{ch})")
+      end
+      channels[ch] = sym(v, "the value of fragment: #{ch}")
+    end
+    %w[r g b].each do |ch|
+      next if channels.key?(ch)
+      raise Refuse.new(st[:kind], st[:id], st[:line], st[:col],
+                       "shader_def :#{name}: fragment: has no #{ch}: " \
+                       "(v1 requires 1 color target with the 3 RGB channels)")
+    end
+    alpha = 1.0 if alpha.nil? && !channels.key?("a")
+
+    lanes = read_lanes(st, name, kw["lanes"])
+    contract = read_contract(st, name, kw["contract"], lanes)
+    format = read_format(st, name, kw["target"])
+    quant = kw["quant"] ? sym(kw["quant"], "quant:") : "half_even"
+    coord = kw["coord"] ? sym(kw["coord"], "coord:") : "keep"
+    unless quant == "half_even"
+      raise Refuse.new(st[:kind], st[:id], st[:line], st[:col],
+                       "quant: :#{quant} is not accepted in v1 (:half_even only — E039 D5)")
+    end
+    unless coord == "keep"
+      raise Refuse.new(st[:kind], st[:id], st[:line], st[:col],
+                       "coord: :#{coord} is not accepted (:keep only — naga's default flips y, " \
+                       "and without --keep-coordinate-space the picture is upside down. R011 stage 1)")
+    end
+
+    attributes = read_scalar_table(st, name, kw["attributes"], "attributes")
+    vertex = read_vertex(st, name, kw["vertex"])
+    varyings = read_varyings(kw["varyings"])
+    uniforms = read_uniforms(kw["uniforms"])
+    if vertex.nil? != attributes.nil?
+      raise Refuse.new(st[:kind], st[:id], st[:line], st[:col],
+                       "shader_def :#{name}: write both vertex: and attributes:, or neither " \
+                       "(GR-4 — there is no form with only one of them)")
+    end
+    if vertex
+      # The vertex pipeline form: varyings are "one varying = one method", uniforms are scalar f32.
+      varyings.each do |k, v|
+        next unless v == "f32"
+        raise Refuse.new(st[:kind], st[:id], st[:line], st[:col],
+                         "shader_def :#{name}: in the vertex pipeline form, varyings: #{k} must be " \
+                         "a method name (:f32 is the Phase 1 form's type table — GR-4 refuses mixing the two forms)")
+      end
+      uniforms.each do |k, v|
+        next if v == "f32"
+        raise Refuse.new(st[:kind], st[:id], st[:line], st[:col],
+                         "shader_def :#{name}: uniforms: #{k} must be :f32 (v1 has scalars only. Got :#{v})")
+      end
+    else
+      varyings.each do |k, v|
+        next if v == "f32"
+        raise Refuse.new(st[:kind], st[:id], st[:line], st[:col],
+                         "shader_def :#{name}: varyings: #{k} is :#{v} — in the Phase 1 form (no vertex:) " \
+                         "varyings is a type table with :f32 only. To compute a varying with a method, " \
+                         "declare vertex: and attributes: (GR-4)")
+      end
+      unless uniforms.empty?
+        raise Refuse.new(st[:kind], st[:id], st[:line], st[:col],
+                         "shader_def :#{name}: uniforms: is accepted only in the vertex pipeline form (with vertex:) " \
+                         "(the Phase 1 shell has no uniform buffer — E138)")
+      end
+    end
+
+    texture = nil
+    if kw.key?("textures")
+      if vertex.nil?
+        raise Refuse.new(st[:kind], st[:id], st[:line], st[:col],
+                         "shader_def :#{name}: textures: is accepted only in the vertex pipeline form (with vertex: and attributes:)")
+      end
+      if lanes.include?("msl")
+        raise Refuse.new(st[:kind], st[:id], st[:line], st[:col],
+                         "shader_def :#{name}: textures: is not accepted with the :msl lane " \
+                         "(draw_metal.m has no texture path, so the MSL could not be drawn)")
+      end
+      texture = read_textures(st, name, kw["textures"], varyings, uniforms)
+    end
+    if channels.key?("a") && texture.nil?
+      raise Refuse.new(st[:kind], st[:id], st[:line], st[:col],
+                       "shader_def :#{name}: fragment: a: names a method, which is accepted only with textures: " \
+                       "(without a texture write a number for a constant alpha, or leave it out for 1.0)")
+    end
+
+    text = decl_text(st)
+    if texture
+      # decl_text stops at the first line that does not end in a comma, so a
+      # multi-line textures: would cut off the rest of the declaration.
+      list = lambda { |h| h.map { |k, v| "#{k}=#{v}" }.join(",") }
+      text += "\n# normalized: " + [
+        "fragment #{list.call(channels)}", "alpha #{alpha.inspect}",
+        "attributes #{list.call(attributes)}", "vertex #{list.call(vertex)}",
+        "varyings #{list.call(varyings)}", "uniforms #{list.call(uniforms)}",
+        "texture #{texture[:name]}", "coord #{texture[:coord].join(',')}",
+        "texel #{texture[:texel].join(',')}", "format #{format}",
+        "lanes #{lanes.join(',')}", "contract #{list.call(contract)}",
+      ].join("; ") + "\n"
+    end
+
+    pass_through = vertex ? take_pass_through(st, name, varyings, attributes, uniforms) : {}
+
+    ShaderDecl.new(name: name, line: st[:line], channels: channels, alpha: alpha,
+                   varyings: varyings,
+                   uniforms: uniforms,
+                   format: format, lanes: lanes, contract: contract,
+                   quant: quant, coord: coord, text: text,
+                   attributes: attributes, vertex: vertex, texture: texture,
+                   pass_through: pass_through)
+  end
+
+  # A varying that names an attribute is that attribute. Its value becomes the
+  # name of a method the generator writes; answers those methods and attributes.
+  def take_pass_through(st, name, varyings, attributes, uniforms)
+    written = {}
+    varyings.each do |key, value|
+      method_exists = @ast.nodes.values.any? { |n| n[:kind] == "DefNode" && n[:s]["name"] == value }
+      if attributes.key?(value) && method_exists
+        raise Refuse.new(st[:kind], st[:id], st[:line], st[:col],
+                         "shader_def :#{name}: varyings: #{key} names :#{value}, which is both an attribute and a method " \
+                         "(rename one of them)")
+      end
+      if uniforms.key?(value) && !method_exists
+        raise Refuse.new(st[:kind], st[:id], st[:line], st[:col],
+                         "shader_def :#{name}: varyings: #{key} names the uniform :#{value}; only an attribute can be " \
+                         "passed through, and a fragment method already receives the uniforms")
+      end
+      next unless attributes.key?(value)
+      method = "__sp_pass_#{name}_#{value}"
+      written[method] = value
+      varyings[key] = method
+    end
+    written
+  end
+
+  # textures: { name: { coord: [:u, :v], texel: [:tr, :tg, :tb, :ta] } }.
+  # One 2D f32 texture. The shell samples it once at the two named varyings, and
+  # the four components reach the fragment methods as Float arguments after the
+  # uniforms.
+  def read_textures(st, name, node, varyings, uniforms)
+    refuse = lambda do |n, why|
+      n ||= st
+      raise Refuse.new(n[:kind], n[:id], n[:line], n[:col], "shader_def :#{name}: textures: #{why}")
+    end
+    hash_kinds = %w[HashNode KeywordHashNode]
+    refuse.call(node, "must be a Hash ({ name: { coord: [...], texel: [...] } })") unless node && hash_kinds.include?(node[:kind])
+    elements = @ast.arr(node, "elements")
+    refuse.call(node, "is empty") if elements.empty?
+    refuse.call(node, "accepts one texture (got #{elements.size})") if elements.size != 1
+    tex = sym(@ast.ref(elements.first, "key"), "the name of a texture")
+    body = @ast.ref(elements.first, "value")
+    refuse.call(body, "#{tex} must be a Hash with coord: and texel:") unless body && hash_kinds.include?(body[:kind])
+    entries = {}
+    @ast.arr(body, "elements").each do |assoc|
+      key = sym(@ast.ref(assoc, "key"), "a key of textures: #{tex}")
+      refuse.call(assoc, "#{tex}: unknown key #{key} (accepted: coord, texel)") unless %w[coord texel].include?(key)
+      refuse.call(assoc, "#{tex}: #{key}: is given twice") if entries.key?(key)
+      entries[key] = @ast.ref(assoc, "value")
+    end
+    names = lambda do |key|
+      n = entries[key]
+      refuse.call(body, "#{tex}: #{key}: is required") if n.nil?
+      refuse.call(n, "#{tex}: #{key}: must be an Array of symbols") unless n[:kind] == "ArrayNode"
+      [n, @ast.arr(n, "elements").map { |e| sym(e, "an element of #{key}:") }]
+    end
+    coord_node, coord = names.call("coord")
+    refuse.call(coord_node, "#{tex}: coord: needs 2 varyings (got #{coord.size})") if coord.size != 2
+    undeclared = coord - varyings.keys
+    refuse.call(coord_node, "#{tex}: coord: names undeclared varyings #{undeclared.join(', ')}") unless undeclared.empty?
+    texel_node, texel = names.call("texel")
+    refuse.call(texel_node, "#{tex}: texel: needs 4 names, r g b a (got #{texel.size})") if texel.size != 4
+    refuse.call(texel_node, "#{tex}: texel: repeats a name") if texel.uniq.size != 4
+    clash = texel & (varyings.keys + uniforms.keys)
+    refuse.call(texel_node, "#{tex}: texel: names also used by varyings or uniforms: #{clash.join(', ')}") unless clash.empty?
+    { name: tex, coord: coord, texel: texel }
+  end
+
+  # attributes: { ax: :f32, ... } — v1 accepts scalar :f32 only, declaration order = location order.
+  def read_scalar_table(st, name, node, what)
+    return nil if node.nil?
+    out = {}
+    @ast.arr(node, "elements").each do |assoc|
+      k = sym(@ast.ref(assoc, "key"), "a key of #{what}:")
+      v = sym(@ast.ref(assoc, "value"), "a value of #{what}:")
+      unless v == "f32"
+        raise Refuse.new(st[:kind], st[:id], st[:line], st[:col],
+                         "shader_def :#{name}: #{what}: #{k} must be :f32 (v1 has scalars only. Got :#{v})")
+      end
+      out[k] = v
+    end
+    if out.empty?
+      raise Refuse.new(st[:kind], st[:id], st[:line], st[:col],
+                       "shader_def :#{name}: #{what}: is empty")
+    end
+    out
+  end
+
+  # vertex: { x: :pos_x, y: :pos_y } — one method per component of the clip position.
+  # v1 is 2D: the keys are exactly x and y. The shell fixes z=0, w=1.
+  def read_vertex(st, name, node)
+    return nil if node.nil?
+    out = {}
+    @ast.arr(node, "elements").each do |assoc|
+      k = sym(@ast.ref(assoc, "key"), "a key of vertex:")
+      out[k] = sym(@ast.ref(assoc, "value"), "the value of vertex: #{k}")
+    end
+    unless out.keys.sort == %w[x y]
+      raise Refuse.new(st[:kind], st[:id], st[:line], st[:col],
+                       "shader_def :#{name}: the keys of vertex: must be exactly x and y " \
+                       "(v1 is 2D — the shell fixes z=0, w=1. GR-4. Got #{out.keys.sort.join(', ')})")
+    end
+    out
+  end
+
+  def read_lanes(st, name, node)
+    return ["wgsl"] if node.nil?
+    unless node[:kind] == "ArrayNode"
+      raise Refuse.new(node[:kind], node[:id], node[:line], node[:col],
+                       "lanes: must be an Array ([:wgsl] / [:wgsl, :msl])")
+    end
+    ls = @ast.arr(node, "elements").map { |e| sym(e, "lanes:") }
+    bad = ls - LANES
+    unless bad.empty?
+      raise Refuse.new(node[:kind], node[:id], node[:line], node[:col],
+                       "lanes: has unknown lanes #{bad.join(', ')} (accepted: #{LANES.join(', ')})")
+    end
+    raise Refuse.new(node[:kind], node[:id], node[:line], node[:col],
+                     "lanes: is empty") if ls.empty?
+    ls
+  end
+
+  # The contraction contract: one key serves both "what cannot be chosen must be declared at its fixed value; another value is a loud refusal" (WGSL)
+  # and "what can be chosen defaults to the deterministic side" (MSL).
+  def read_contract(st, name, node, lanes)
+    got = {}
+    if node
+      unless node[:kind] == "HashNode" || node[:kind] == "KeywordHashNode"
+        raise Refuse.new(node[:kind], node[:id], node[:line], node[:col],
+                         "contract: must be a Hash per lane " \
+                         "({ wgsl: :fused, msl: :separate })")
+      end
+      @ast.arr(node, "elements").each do |assoc|
+        got[sym(@ast.ref(assoc, "key"), "a key of contract:")] =
+          sym(@ast.ref(assoc, "value"), "a value of contract:")
+      end
+    end
+    unknown = got.keys - LANES
+    unless unknown.empty?
+      raise Refuse.new(st[:kind], st[:id], st[:line], st[:col],
+                       "contract: has unknown lanes #{unknown.sort.join(', ')}")
+    end
+    out = {}
+    lanes.each do |l|
+      case l
+      when "wgsl"
+        v = got.fetch("wgsl", WGSL_CONTRACT)
+        unless v == WGSL_CONTRACT
+          raise Refuse.new(st[:kind], st[:id], st[:line], st[:col],
+                           "contract: { wgsl: :#{v} } is not accepted — WGSL, by its spec, cannot " \
+                           "forbid FMA, so it is fixed at :#{WGSL_CONTRACT} (R010 §3.3 / GR-3). " \
+                           "Only the msl lane can be chosen")
+        end
+        out["wgsl"] = WGSL_CONTRACT
+      when "msl"
+        v = got.fetch("msl", "separate")   # the default is the deterministic side
+        unless MSL_CONTRACTS.include?(v)
+          raise Refuse.new(st[:kind], st[:id], st[:line], st[:col],
+                           "contract: { msl: :#{v} } is not accepted " \
+                           "(the 3 values #{MSL_CONTRACTS.map { |c| ':' + c }.join(' / ')}. GR-3)")
+        end
+        out["msl"] = v
+      end
+    end
+    out
+  end
+
+  def read_format(st, name, node)
+    return "rgba8unorm" if node.nil?
+    unless node[:kind] == "HashNode" || node[:kind] == "KeywordHashNode"
+      raise Refuse.new(node[:kind], node[:id], node[:line], node[:col],
+                       "target: must be a Hash ({ format: :rgba8unorm })")
+    end
+    fmt = nil
+    @ast.arr(node, "elements").each do |assoc|
+      k = sym(@ast.ref(assoc, "key"), "a key of target:")
+      unless k == "format"
+        raise Refuse.new(node[:kind], node[:id], node[:line], node[:col],
+                         "the only key target: accepts is format: (got #{k})")
+      end
+      fmt = sym(@ast.ref(assoc, "value"), "target: format:")
+    end
+    unless fmt == "rgba8unorm"
+      raise Refuse.new(node[:kind], node[:id], node[:line], node[:col],
+                       "target: format: :#{fmt} is not accepted in v1 (:rgba8unorm only)")
+    end
+    fmt
+  end
+
+  def read_varyings(node)
+    return {} if node.nil?
+    out = {}
+    @ast.arr(node, "elements").each do |assoc|
+      out[sym(@ast.ref(assoc, "key"), "a key of varyings:")] =
+        sym(@ast.ref(assoc, "value"), "a value of varyings:")
+    end
+    out
+  end
+
+  def read_uniforms(node)
+    return {} if node.nil?
+    out = {}
+    @ast.arr(node, "elements").each do |assoc|
+      out[sym(@ast.ref(assoc, "key"), "a key of uniforms:")] =
+        sym(@ast.ref(assoc, "value"), "a value of uniforms:")
+    end
+    out
+  end
+
+  # Half of the material for the signature sig = the declaration text itself.
+  # Cut out naively from the line number — a declaration is one statement, so up to the next blank line is enough.
+  def decl_text(st)
+    lines = @src.lines
+    i = st[:line] - 1
+    return "" if i.negative? || i >= lines.size
+    buf = []
+    while i < lines.size
+      buf << lines[i]
+      break if lines[i].rstrip.end_with?("keep") || lines[i].strip.empty?
+      break if buf.size > 1 && !lines[i].rstrip.end_with?(",")
+      i += 1
+    end
+    buf.join
+  end
+end
+
+# ------------------------------------------------------------ the subset v1 checker
+#
+# The boundary was fixed as it is by the research. Here the reasons tell apart what is "refused on a judgement of precision"
+# and what "cannot be written" — `/` and `sqrt` were **confirmed writable** in stage 2,
+# so refusing them is not a limit of capability (v2 allows them together with a tolerance contract).
+# v2, first increment: `/` is allowed. Its tolerance comes from composing the specification's ULPs over the expression tree.
+BINOPS = { "+" => "addf", "-" => "subf", "*" => "mulf", "/" => "divf" }.freeze
+# Calls with one receiver and no arguments (`sqrt` allowed in v2).
+UNOPS = { "sqrt" => "sqrt" }.freeze
+# What is **still** refused on a judgement of precision. The reason says **why**, not "still".
+#
+# ★ Only what **has a spelling in Ruby** is listed here (found when v2 began).
+# The earlier v1 refusal list also named `normalize` / `length` / `dot` / `mix`,
+# but those are **WGSL vec functions** and have no corresponding spelling in Ruby's scalar subset
+# (`Float#normalize` does not exist; writing it makes inference answer poly and **the type gate fails it first**).
+# So they are not "candidates for refusal on precision" but "spellings that do not exist until vec arrives",
+# and they come under the precision contract **when vec is introduced** (the research's (a)/(b) branch).
+DEFERRED_WHY = "the tolerance of transcendental functions **depends on the input magnitude** — for `/` and `sqrt` " \
+               "the WGSL spec states the tolerance as the constants 2.5 / 2 ULP, so an upper bound could be " \
+               "composed from the expression tree (GR-8), but here no bound can be written by adding constant ULPs. " \
+               "Allowing them needs an extended composition rule and subjects designed for value range and input distribution"
+DEFERRED = %w[pow exp log sin cos tan atan atan2 cbrt hypot].to_h { |n| [n, DEFERRED_WHY] }.freeze
+
+# The tolerances of the WGSL specification (ULP). **The source is SPEC** — not measured.
+#   `+` `-` `*`  correctly rounded (0)
+#   `/`          2.5
+#   `sqrt`       inverseSqrt's 2, plus the `/` when the implementation uses `1/inverseSqrt`: 3
+#   varying interpolation 4 (CTS) — applied once only, on a leaf
+SPEC_ULP = { "divf" => 2.5, "sqrt" => 3.0 }.freeze
+VARYING_ULP = 4.0
+
+Expr = Struct.new(:op, :kids, :val, :name)
+
+class Subset
+  def initialize(ast, types)
+    @ast = ast
+    @t = types
+  end
+
+  def want_float!(node)
+    t = @t.ty[node[:id]]
+    if t.nil?
+      raise Refuse.new(node[:kind], node[:id], node[:line], node[:col],
+                       "no inferred type (typedump has no type for this node)")
+    end
+    return if t == "float"
+    raise Refuse.new(node[:kind], node[:id], node[:line], node[:col],
+                     "the inferred type is #{t}, not float. shader subset v1 is Float only " \
+                     "(Spinel has no vec type; vec is vocabulary of the declaration side — R011 §4.3)")
+  end
+
+  def expr(nid, env)
+    node = @ast.n(nid)
+    raise Refuse.new("(missing)", nid, 0, 0, "referred to a node that is not in the AST") if node.nil?
+    case node[:kind]
+    when "FloatNode"
+      want_float!(node)
+      Expr.new("const", [], node[:f]["value"], nil)
+    when "LocalVariableReadNode", "RequiredParameterNode"
+      want_float!(node) if node[:kind] == "LocalVariableReadNode"
+      nm = node[:s]["name"]
+      unless env.include?(nm)
+        raise Refuse.new(node[:kind], node[:id], node[:line], node[:col],
+                         "unbound local #{nm.inspect}")
+      end
+      Expr.new("var", [], nil, nm)
+    when "IntegerNode"
+      raise Refuse.new(node[:kind], node[:id], node[:line], node[:col],
+                       "Integer literal (v1 is Float only. Write it like 0.5)")
+    when "CallNode"
+      call_expr(node, env)
+    when "ParenthesesNode"
+      # Parentheses are **pure grouping** and add neither an operation nor error.
+      # v2 needed the form that wraps a unary receiver in parentheses, like `(u + 0.5).sqrt`.
+      # The contents must be "a StatementsNode with one statement" (several statements are outside the subset).
+      body = @ast.ref(node, "body")
+      stmts = body ? @ast.arr(body, "body") : []
+      unless stmts.size == 1
+        raise Refuse.new(node[:kind], node[:id], node[:line], node[:col],
+                         "#{stmts.size} statements inside parentheses (the subset accepts exactly 1 expression)")
+      end
+      expr(stmts.first[:id], env)
+    else
+      raise Refuse.new(node[:kind], node[:id], node[:line], node[:col],
+                       "syntax outside the subset (v1 is straight-line code of the form \"assignments*, expression\" only. " \
+                       "Control flow is the next increment after v2 — R011 §4.2)")
+    end
+  end
+
+  # nparams: the expected number of arguments (the position is the contract). The first phase's fragment has 2;
+  # the vertex pipeline form takes all of "attributes + uniforms" or "varyings + uniforms".
+  def method_body(name, nparams: 2, world: "fragment")
+    defs = @ast.nodes.values.select { |n| n[:kind] == "DefNode" && n[:s]["name"] == name }
+    if defs.size != 1
+      die("#{defs.size} definitions of def #{name} (there must be exactly 1)")
+    end
+    d = defs.first
+    sig = @t.methods[name]
+    if sig.nil?
+      die("#{name} is not in typedump's methods (the method may be unreachable)")
+    end
+    if sig[:ret] != "float"
+      raise Refuse.new("DefNode", d[:id], d[:line], d[:col],
+                       "the inferred return type is #{sig[:ret]}, not float")
+    end
+    if sig[:nparams] != nparams || sig[:params].any? { |p| p[1] != "float" }
+      raise Refuse.new("DefNode", d[:id], d[:line], d[:col],
+                       "the arguments must be exactly #{nparams} Floats — " \
+                       "the arguments of the #{world} world are all of them in declaration order, and the position is the contract (GR-4) " \
+                       "(got #{sig[:params].map { |p| p.join(':') }.join(', ')})")
+    end
+    pnames = sig[:params].map { |p| p[0] }
+    body = @ast.ref(d, "body")
+    stmts = body ? @ast.arr(body, "body") : []
+    if stmts.empty?
+      raise Refuse.new("DefNode", d[:id], d[:line], d[:col], "empty body")
+    end
+    env = pnames.dup
+    lets = []
+    stmts[0..-2].each do |s|
+      unless s[:kind] == "LocalVariableWriteNode"
+        raise Refuse.new(s[:kind], s[:id], s[:line], s[:col],
+                         "a statement other than an assignment in the middle of the body (v1 accepts only the form \"assignments*, expression\")")
+      end
+      want_float!(s)
+      e = expr(s[:r]["value"], env)
+      nm = s[:s]["name"]
+      lets << [nm, e]
+      env << nm
+    end
+    last = stmts.last
+    if last[:kind] == "LocalVariableWriteNode"
+      raise Refuse.new(last[:kind], last[:id], last[:line], last[:col],
+                       "the last statement is an assignment (end with an expression that returns the value)")
+    end
+    { name: name, params: pnames, lets: lets, result: expr(last[:id], env) }
+  end
+
+  private
+
+  def call_expr(node, env)
+    want_float!(node)
+    name = node[:s]["name"] || ""
+    if UNOPS.key?(name)
+      return unop_expr(node, env, name)
+    end
+    unless BINOPS.key?(name)
+      why = if DEFERRED.key?(name)
+              "#{name} is refused in v2 too — #{DEFERRED[name]}"
+            else
+              "call outside the subset #{name.inspect} " \
+              "(only #{BINOPS.keys.join(' ')} and #{UNOPS.keys.join(' ')} are allowed)"
+            end
+      raise Refuse.new(node[:kind], node[:id], node[:line], node[:col], why)
+    end
+    if node[:r].fetch("block", -1) != -1
+      raise Refuse.new(node[:kind], node[:id], node[:line], node[:col], "call with a block")
+    end
+    recv = node[:r].fetch("receiver", -1)
+    if recv.negative?
+      raise Refuse.new(node[:kind], node[:id], node[:line], node[:col],
+                       "call without a receiver (function calls are outside the subset)")
+    end
+    argsn = node[:r].fetch("arguments", -1)
+    if argsn.negative?
+      raise Refuse.new(node[:kind], node[:id], node[:line], node[:col], "binary operation without an argument")
+    end
+    alist = @ast.n(argsn)[:a]["arguments"] || []
+    if alist.size != 1
+      raise Refuse.new(node[:kind], node[:id], node[:line], node[:col],
+                       "binary operation with #{alist.size} arguments")
+    end
+    Expr.new(BINOPS[name], [expr(recv, env), expr(alist.first, env)], nil, nil)
+  end
+
+  # The form `Math.sqrt(x)`. **Ruby has no `Float#sqrt`**, so only the module function spelling
+  # is accepted (trying to accept the method form makes inference answer poly
+  # and the type gate fails it — confirmed by measurement). It checks that the receiver is the constant `Math`
+  # and makes the single argument its child.
+  def unop_expr(node, env, name)
+    if node[:r].fetch("block", -1) != -1
+      raise Refuse.new(node[:kind], node[:id], node[:line], node[:col], "call with a block")
+    end
+    recv = node[:r].fetch("receiver", -1)
+    rnode = recv >= 0 ? @ast.n(recv) : nil
+    unless rnode && rnode[:kind] == "ConstantReadNode" && rnode[:s]["name"] == "Math"
+      raise Refuse.new(node[:kind], node[:id], node[:line], node[:col],
+                       "#{name} is accepted only in the form `Math.#{name}(x)` " \
+                       "(Ruby has no Float##{name}, and for the method form inference answers poly)")
+    end
+    argsn = node[:r].fetch("arguments", -1)
+    alist = argsn >= 0 ? (@ast.n(argsn)[:a]["arguments"] || []) : []
+    unless alist.size == 1
+      raise Refuse.new(node[:kind], node[:id], node[:line], node[:col],
+                       "Math.#{name} has #{alist.size} arguments (there must be exactly 1)")
+    end
+    Expr.new(UNOPS[name], [expr(alist.first, env)], nil, nil)
+  end
+end
+
+# ------------------------------------------------ composing the tolerance
+#
+# ★ This is an **upper bound**, not a prediction. Each op of the expression tree gets the WGSL specification's ULP.
+# The source is SPEC (not measured).
+#
+#   input error  if a varying appears in the expression, **4 ULP once only** (CTS)
+#   + - *        **add nothing** (correctly rounded — WGSL §15.7.5)
+#   /            **+2.5**
+#   sqrt         **+3** (inverseSqrt's 2 + the `/` when the implementation uses `1/inverseSqrt`)
+#
+# ★ The first version "added the leaves' 4 ULP per occurrence", and **flat.rb came out at 16 ULP**
+# (u and v appear 4 times). That is wrong for 2 reasons:
+#   (1) **several reads of the same varying are not independent** — there is one error source,
+#       and stacking it as if each occurrence varied independently makes the bound unduly loose
+#   (2) it becomes incompatible with the current check (fixed 4 ULP scaled to the range) and changes the check
+#       of expressions without `/`/`sqrt` **in the lenient direction** (the measurement was 1.5 ULP)
+# Therefore **the input part counts once, as a max, and only what operations contribute is added**.
+# `+ - *` are 0 because the specification says they are correctly rounded;
+# **this is not a claim that rounding error does not accumulate** (the accumulated part is seen inside the input's 4 ULP) —
+# this reading extends the current contract as it is.
+#
+# Measurements are usually below the bound, so **the measured value is always printed as INFO too**
+# (looking only at the bound, one would not notice that the bound is too loose).
+def op_tol(e)
+  case e.op
+  when "const", "var" then 0.0
+  when "sqrt"         then op_tol(e.kids[0]) + SPEC_ULP["sqrt"]
+  when "divf"         then e.kids.sum { |k| op_tol(k) } + SPEC_ULP["divf"]
+  else                     e.kids.sum { |k| op_tol(k) }
+  end
+end
+
+def uses_input?(e, inputs)
+  return inputs.include?(e.name) if e.op == "var"
+  e.kids.any? { |k| uses_input?(k, inputs) }
+end
+
+# The bound for one method. lets are expanded when counting (a binding does not cut the error).
+def tol_of_method(m, inputs)
+  exprs = m[:lets].map { |_nm, e| e } + [m[:result]]
+  base = exprs.any? { |e| uses_input?(e, inputs) } ? VARYING_ULP : 0.0
+  base + exprs.sum { |e| op_tol(e) }
+end
+
+# ------------------------------------------- the nesting depth of expressions (a downstream ceiling)
+#
+# ★ This is neither a type nor a syntax limit but **a limit of the downstream toolchain**.
+# Our emission is 1 operation = 1 SSA temporary, but **naga inlines every expression used only once
+# into one deeply nested expression**. The Metal compiler stops nesting parentheses
+# at **256 levels**, so hitting that fails.
+#
+#   Measured: MSL depth = 2n + 2 (n = the number of operations in the chain).
+#                n=127 (depth 256) passes, **n=128 (258) fails**.
+#                **The WGSL lane fails at the same n** — wgpu translates to MSL
+#                on macOS. `MTLCompileOptions` has no setting for bracket depth.
+#
+# So the generator first counts "the depth once naga has inlined",
+# and **refuses loudly before the downstream failure**. naga folds expressions used once
+# and puts a `let` on expressions used several times, so the count uses the model **fold single uses**.
+#
+# ★ There is more than one ceiling (corrected later — the first measurement covered wgpu only):
+#   naga→Metal parentheses, 256 levels:   n=127 (model depth 256) passes, n=128 fails
+#   **Tint (Dawn)'s parser recursion limit**: n=61 (model depth 126) passes, **n=62 (128) fails**
+#     — reproduced on both Linux and Mac (the same Dawn tag 56f332d7). The standing gate
+#     draws with both wgpu and Dawn, so **the binding one is the lower = Tint**.
+# Hence the default 126 (= n ≤ 61). The old default 258 was calibrated against the Metal measurement
+# and did not test Dawn. **This boundary is an observation over the measured family of expressions**,
+# not a proof, so expressions of another shape can fall outside it (an honest boundary).
+# The checker is **a guard, not a proof**.
+MAX_NEST = (ENV["SP_SHADER_MAX_NEST"] || "126").to_i
+
+# ★ What is counted is **SSA bindings, not Ruby names**.
+# At first this was counted by name, wrongly: writing `a = a * k + v` n times uses the name `a` n times,
+# so it judged "used several times, so naga puts a let" and reported depth 2.
+# But a Ruby reassignment creates **a different SSA value every time**, each used only once,
+# so naga folds them all. **A model written without looking at the output (naga's) misses.**
+#
+# Count references per binding: a binding referenced once is folded (its depth propagates);
+# a binding referenced several times gets a `let` from naga, so it looks like depth 1 to its user.
+def inlined_depth(m)
+  # binding ids: 0..(params-1) are the arguments, then numbered in lets order
+  env = {}
+  m[:params].each_with_index { |p, i| env[p] = i }
+  nb = m[:params].size
+  refs = Hash.new(0)
+  binds = []       # [expr, a copy of env] in let order
+
+  resolve = lambda do |e, scope, acc|
+    case e.op
+    when "var"   then acc << scope[e.name] if scope.key?(e.name)
+    when "const" then nil
+    else e.kids.each { |k| resolve.call(k, scope, acc) }
+    end
+  end
+
+  m[:lets].each do |nm, e|
+    scope = env.dup
+    acc = []
+    resolve.call(e, scope, acc)
+    acc.each { |id| refs[id] += 1 }
+    binds << [e, scope]
+    env[nm] = nb
+    nb += 1
+  end
+  racc = []
+  resolve.call(m[:result], env, racc)
+  racc.each { |id| refs[id] += 1 }
+
+  depth = {}
+  m[:params].each_with_index { |_p, i| depth[i] = 1 }
+  d = lambda do |e, scope|
+    case e.op
+    when "const" then 1
+    when "var"
+      id = scope[e.name]
+      id.nil? ? 1 : (refs[id] > 1 ? 1 : depth.fetch(id, 1))
+    else 1 + e.kids.map { |k| d.call(k, scope) }.max
+    end
+  end
+  binds.each_with_index do |(e, scope), i|
+    depth[m[:params].size + i] = d.call(e, scope)
+  end
+  d.call(m[:result], env)
+end
+
+# ------------------------------------------------- emission (func + arith, one only)
+#
+# ★ This is the only emission. Both spirv dialect and LLVM dialect are nothing but
+# what mlir-opt lowered from it (the basis of the lane's admission (iii)).
+#
+# f32 literals: round the f64 to f32, and write the shortest decimal that represents that f32 exactly.
+# Ruby's Float#to_s is the shortest round-trip representation, so the "9-digit problem" is solved here
+# (it gives the same string as the prototype's Python repr — the condition for the port's differential check to work).
+def f32_lit(x)
+  r = [x].pack("f").unpack1("f")
+  s = r.to_s
+  s += ".0" unless s.include?(".") || s.include?("e") || s.include?("E")
+  s
+end
+
+class ArithEmit
+  def initialize
+    @lines = []
+    @k = 0
+  end
+  attr_reader :lines
+
+  def tmp
+    @k += 1
+    "%k#{@k}"
+  end
+
+  def emit(e, env)
+    case e.op
+    when "const"
+      t = tmp
+      @lines << "    #{t} = arith.constant #{f32_lit(e.val)} : f32"
+      t
+    when "var"
+      env.fetch(e.name)
+    when "sqrt"
+      # Unary operations use the math dialect (arith has no square root). It is the spelling the tensor side already uses,
+      # and --convert-math-to-spirv / -to-llvm lower it to each exit.
+      a = emit(e.kids[0], env)
+      t = tmp
+      @lines << "    #{t} = math.sqrt #{a} : f32"
+      t
+    else
+      a = emit(e.kids[0], env)
+      b = emit(e.kids[1], env)
+      t = tmp
+      @lines << "    #{t} = arith.#{e.op} #{a}, #{b} : f32"
+      t
+    end
+  end
+end
+
+# Every method into one module. Target-independent (func + arith only).
+# funcs: [[MLIR function name, method_body], ...] — the fragment's are ch_r/ch_g/ch_b,
+# the vertex world's are vp_x/vp_y and vv_<i> (in varying declaration order). The number of arguments is
+# exactly the number method_body checked (the position is the contract).
+def emit_arith(funcs, decl)
+  out = []
+  out << "// spinel-rb2spv: **the only emission** of shader_def :#{decl.name}."
+  out << "//   --convert-func-to-spirv --convert-arith-to-spirv → shader (SPIR-V → naga)"
+  out << "//   --convert-func-to-llvm  --convert-arith-to-llvm  → f32 CPU reference (R2)"
+  out << "// Only the shell (shell.mlir) writes spirv dialect by hand."
+  out << "module attributes {"
+  out << "  spirv.target_env = #spirv.target_env<#spirv.vce<v1.0, [Shader], []>, " \
+         "#spirv.resource_limits<>>"
+  out << "} {"
+  funcs.each do |fname, m|
+    em = ArithEmit.new
+    env = {}
+    m[:params].each_with_index { |pn, i| env[pn] = "%arg#{i}" }
+    m[:lets].each { |nm, e| env[nm] = em.emit(e, env) }
+    r = em.emit(m[:result], env)
+    sig = m[:params].each_index.map { |i| "%arg#{i}: f32" }.join(", ")
+    out << "  func.func @#{fname}(#{sig}) -> f32 {"
+    out.concat(em.lines)
+    out << "    return #{r} : f32"
+    out << "  }"
+  end
+  out << "}"
+  out.join("\n") + "\n"
+end
+
+# ------------------------------------------------------------------------ the shell
+#
+# In the prototype, splice.py (33 lines) inserted the body at `// __BODY__`. In the product the generator also
+# writes the shell, and one join is enough (an item the research left as an open task).
+#
+# **This is the only place where spirv dialect is written by hand** — entry point /
+# GlobalVariable / execution model need the shell because MLIR has no graphics path.
+# --check-emission checks that spirv dialect appears in no file
+# other than this one.
+VS_MAIN = <<~'MLIR'
+    spirv.func @vs_main() -> () "None" {
+      %vip = spirv.mlir.addressof @gl_VertexIndex : !spirv.ptr<i32, Input>
+      %vi  = spirv.Load "Input" %vip : i32
+      %c1 = spirv.Constant 1 : i32
+      %c2 = spirv.Constant 2 : i32
+      %c4 = spirv.Constant 4 : i32
+      %ax = spirv.BitwiseAnd %vi, %c1 : i32
+      %mx = spirv.IMul %ax, %c4 : i32
+      %ay = spirv.BitwiseAnd %vi, %c2 : i32
+      %my = spirv.IMul %ay, %c2 : i32
+      %fx = spirv.ConvertSToF %mx : i32 to f32
+      %fy = spirv.ConvertSToF %my : i32 to f32
+      %one = spirv.Constant 1.0 : f32
+      %zero = spirv.Constant 0.0 : f32
+      %x = spirv.FSub %fx, %one : f32
+      %y = spirv.FSub %fy, %one : f32
+      %pos = spirv.CompositeConstruct %x, %y, %zero, %one : (f32, f32, f32, f32) -> vector<4xf32>
+      %pp = spirv.mlir.addressof @gl_Position : !spirv.ptr<vector<4xf32>, Output>
+      spirv.Store "Output" %pp, %pos : vector<4xf32>
+      spirv.Return
+    }
+MLIR
+
+# u = (x+0.5)/W is built directly from FragCoord (not through varying interpolation = the vendor's
+# unspecified interpolation is kept out of the oracle; implements the research's rule "no bit-exact claim
+# that depends on fixed-function hardware").
+def emit_shell(decl, res)
+  inv = f32_lit(1.0 / res)
+  <<~MLIR
+    // spinel-rb2spv: the shell of shader_def :#{decl.name}.
+    // **This file alone writes spirv dialect by hand** (--check-emission checks it).
+    // The bodies spirv.func @ch_* are what mlir-opt lowered from the func+arith emission, joined in.
+    spirv.module Logical GLSL450 requires #spirv.vce<v1.0, [Shader], []> {
+      spirv.GlobalVariable @gl_Position built_in("Position") : !spirv.ptr<vector<4xf32>, Output>
+      spirv.GlobalVariable @gl_VertexIndex built_in("VertexIndex") : !spirv.ptr<i32, Input>
+      spirv.GlobalVariable @gl_FragCoord built_in("FragCoord") : !spirv.ptr<vector<4xf32>, Input>
+      spirv.GlobalVariable @fragColor {location = 0 : i32} : !spirv.ptr<vector<4xf32>, Output>
+
+    // __BODY__
+
+    #{VS_MAIN.rstrip}
+
+      spirv.func @fs_main() -> () "None" {
+        %fcp = spirv.mlir.addressof @gl_FragCoord : !spirv.ptr<vector<4xf32>, Input>
+        %fc  = spirv.Load "Input" %fcp : vector<4xf32>
+        %px  = spirv.CompositeExtract %fc[0 : i32] : vector<4xf32>
+        %py  = spirv.CompositeExtract %fc[1 : i32] : vector<4xf32>
+        %inv = spirv.Constant #{inv} : f32
+        %uu  = spirv.FMul %px, %inv : f32
+        %vv  = spirv.FMul %py, %inv : f32
+        %r   = spirv.FunctionCall @ch_r(%uu, %vv) : (f32, f32) -> f32
+        %g   = spirv.FunctionCall @ch_g(%uu, %vv) : (f32, f32) -> f32
+        %b   = spirv.FunctionCall @ch_b(%uu, %vv) : (f32, f32) -> f32
+        %alpha = spirv.Constant #{f32_lit(decl.alpha || 1.0)} : f32
+        %col = spirv.CompositeConstruct %r, %g, %b, %alpha : (f32, f32, f32, f32) -> vector<4xf32>
+        %op  = spirv.mlir.addressof @fragColor : !spirv.ptr<vector<4xf32>, Output>
+        spirv.Store "Output" %op, %col : vector<4xf32>
+        spirv.Return
+      }
+
+      spirv.EntryPoint "Vertex" @vs_main, @gl_Position, @gl_VertexIndex
+      spirv.EntryPoint "Fragment" @fs_main, @gl_FragCoord, @fragColor
+      spirv.ExecutionMode @fs_main "OriginUpperLeft"
+    }
+  MLIR
+end
+
+# The vertex pipeline version of the shell.
+#
+# Differences from the first phase's shell:
+#   - vs_main is real: it reads the attributes (f32 Input in location order),
+#     computes the clip position with vp_x/vp_y (z=0, w=1 fixed — v1 is 2D) and the varyings with vv_<j>
+#   - the fragment reads the interpolated varyings (f32 Input), not FragCoord
+#   - uniform buffer (group 0, binding 0): a struct packing the f32s in declaration order, 4 B apart.
+#     Read from both vertex and fragment (a SPIR-V 1.0 interface list holds only Input/Output,
+#     so it is not written in the EntryPoint)
+def emit_shell_vpipe(decl)
+  attrs = decl.attributes.keys
+  varys = decl.varyings.keys
+  unis  = decl.uniforms.keys
+  na, nv, nu = attrs.size, varys.size, unis.size
+  g = []
+  attrs.each_with_index do |_a, i|
+    g << "  spirv.GlobalVariable @a#{i} {location = #{i} : i32} : !spirv.ptr<f32, Input>"
+  end
+  g << "  spirv.GlobalVariable @gl_Position built_in(\"Position\") : !spirv.ptr<vector<4xf32>, Output>"
+  varys.each_with_index do |_v, j|
+    g << "  spirv.GlobalVariable @vo#{j} {location = #{j} : i32} : !spirv.ptr<f32, Output>"
+    g << "  spirv.GlobalVariable @vi#{j} {location = #{j} : i32} : !spirv.ptr<f32, Input>"
+  end
+  g << "  spirv.GlobalVariable @fragColor {location = 0 : i32} : !spirv.ptr<vector<4xf32>, Output>"
+  ubty = nil
+  if nu.positive?
+    members = unis.each_index.map { |i| "f32 [#{i * 4}]" }.join(", ")
+    ubty = "!spirv.struct<(#{members}), Block>"
+    g << "  spirv.GlobalVariable @ub bind(0, 0) : !spirv.ptr<#{ubty}, Uniform>"
+  end
+  image = "!spirv.image<f32, Dim2D, NoDepth, NonArrayed, SingleSampled, NeedSampler, Unknown>"
+  if decl.textured?
+    # The numbers are fixed: without a uniform, binding 0 stays empty.
+    g << "  spirv.GlobalVariable @tex bind(0, 1) : !spirv.ptr<#{image}, UniformConstant>"
+    g << "  spirv.GlobalVariable @smp bind(0, 2) : !spirv.ptr<!spirv.sampler, UniformConstant>"
+  end
+
+  # Uniform reads (the same text for both stages). %pfx avoids SSA name clashes.
+  load_unis = lambda do |pfx|
+    next [] if nu.zero?
+    l = ["      %#{pfx}ubp = spirv.mlir.addressof @ub : !spirv.ptr<#{ubty}, Uniform>"]
+    unis.each_index do |i|
+      l << "      %#{pfx}ci#{i} = spirv.Constant #{i} : i32"
+      l << "      %#{pfx}up#{i} = spirv.AccessChain %#{pfx}ubp[%#{pfx}ci#{i}] : " \
+           "!spirv.ptr<#{ubty}, Uniform>, i32 -> !spirv.ptr<f32, Uniform>"
+      l << "      %#{pfx}u#{i} = spirv.Load \"Uniform\" %#{pfx}up#{i} : f32"
+    end
+    l
+  end
+
+  vs = ["    spirv.func @vs_main() -> () \"None\" {"]
+  attrs.each_index do |i|
+    vs << "      %ap#{i} = spirv.mlir.addressof @a#{i} : !spirv.ptr<f32, Input>"
+    vs << "      %a#{i} = spirv.Load \"Input\" %ap#{i} : f32"
+  end
+  vs.concat(load_unis.call("s"))
+  vargs = attrs.each_index.map { |i| "%a#{i}" } + unis.each_index.map { |i| "%su#{i}" }
+  vsig = "(#{(['f32'] * (na + nu)).join(', ')}) -> f32"
+  vs << "      %px = spirv.FunctionCall @vp_x(#{vargs.join(', ')}) : #{vsig}"
+  vs << "      %py = spirv.FunctionCall @vp_y(#{vargs.join(', ')}) : #{vsig}"
+  vs << "      %zero = spirv.Constant 0.0 : f32"
+  vs << "      %one = spirv.Constant 1.0 : f32"
+  vs << "      %pos = spirv.CompositeConstruct %px, %py, %zero, %one : (f32, f32, f32, f32) -> vector<4xf32>"
+  vs << "      %pp = spirv.mlir.addressof @gl_Position : !spirv.ptr<vector<4xf32>, Output>"
+  vs << "      spirv.Store \"Output\" %pp, %pos : vector<4xf32>"
+  varys.each_index do |j|
+    vs << "      %vv#{j} = spirv.FunctionCall @vv_#{j}(#{vargs.join(', ')}) : #{vsig}"
+    vs << "      %vop#{j} = spirv.mlir.addressof @vo#{j} : !spirv.ptr<f32, Output>"
+    vs << "      spirv.Store \"Output\" %vop#{j}, %vv#{j} : f32"
+  end
+  vs << "      spirv.Return"
+  vs << "    }"
+
+  fs = ["    spirv.func @fs_main() -> () \"None\" {"]
+  varys.each_index do |j|
+    fs << "      %vip#{j} = spirv.mlir.addressof @vi#{j} : !spirv.ptr<f32, Input>"
+    fs << "      %vi#{j} = spirv.Load \"Input\" %vip#{j} : f32"
+  end
+  fs.concat(load_unis.call("f"))
+  if decl.textured?
+    cu, cv = decl.texture[:coord].map { |n| "%vi#{varys.index(n)}" }
+    sampled = "!spirv.sampled_image<#{image}>"
+    fs << "      %imp = spirv.mlir.addressof @tex : !spirv.ptr<#{image}, UniformConstant>"
+    fs << "      %img = spirv.Load \"UniformConstant\" %imp : #{image}"
+    fs << "      %smpp = spirv.mlir.addressof @smp : !spirv.ptr<!spirv.sampler, UniformConstant>"
+    fs << "      %smpv = spirv.Load \"UniformConstant\" %smpp : !spirv.sampler"
+    fs << "      %si = spirv.SampledImage %img, %smpv : #{image}, !spirv.sampler -> #{sampled}"
+    fs << "      %uv = spirv.CompositeConstruct #{cu}, #{cv} : (f32, f32) -> vector<2xf32>"
+    fs << "      %lod = spirv.Constant 0.0 : f32"
+    fs << "      %tv = spirv.ImageSampleExplicitLod %si, %uv [\"Lod\"], %lod : #{sampled}, vector<2xf32>, f32 -> vector<4xf32>"
+    4.times { |i| fs << "      %t#{i} = spirv.CompositeExtract %tv[#{i} : i32] : vector<4xf32>" }
+  end
+  fargs = decl.frag_inputs.map do |kind, n|
+    case kind
+    when :varying then "%vi#{varys.index(n)}"
+    when :uniform then "%fu#{unis.index(n)}"
+    when :texel   then "%t#{decl.texture[:texel].index(n)}"
+    end
+  end
+  fsig = "(#{(['f32'] * fargs.size).join(', ')}) -> f32"
+  %w[r g b].each do |c|
+    fs << "      %#{c} = spirv.FunctionCall @ch_#{c}(#{fargs.join(', ')}) : #{fsig}"
+  end
+  if decl.channels.key?("a")
+    fs << "      %alpha = spirv.FunctionCall @ch_a(#{fargs.join(', ')}) : #{fsig}"
+  else
+    fs << "      %alpha = spirv.Constant #{f32_lit(decl.alpha || 1.0)} : f32"
+  end
+  fs << "      %col = spirv.CompositeConstruct %r, %g, %b, %alpha : (f32, f32, f32, f32) -> vector<4xf32>"
+  fs << "      %op = spirv.mlir.addressof @fragColor : !spirv.ptr<vector<4xf32>, Output>"
+  fs << "      spirv.Store \"Output\" %op, %col : vector<4xf32>"
+  fs << "      spirv.Return"
+  fs << "    }"
+
+  vs_if = ["@gl_Position"] + attrs.each_index.map { |i| "@a#{i}" } + varys.each_index.map { |j| "@vo#{j}" }
+  fs_if = varys.each_index.map { |j| "@vi#{j}" } + ["@fragColor"]
+  <<~MLIR
+    // spinel-rb2spv: the shell of shader_def :#{decl.name} (the vertex pipeline form).
+    // **This file alone writes spirv dialect by hand** (--check-emission checks it).
+    spirv.module Logical GLSL450 requires #spirv.vce<v1.0, [Shader], []> {
+    #{g.join("\n")}
+
+    // __BODY__
+
+    #{vs.join("\n")}
+
+    #{fs.join("\n")}
+
+      spirv.EntryPoint "Vertex" @vs_main, #{vs_if.join(', ')}
+      spirv.EntryPoint "Fragment" @fs_main, #{fs_if.join(', ')}
+      spirv.ExecutionMode @fs_main "OriginUpperLeft"
+    }
+  MLIR
+end
+
+# ---------------------------------------------- the coverage mask shell
+#
+# Transforms the vertices with **the same emission's vp_x/vp_y** as the value shader, passes the primitive
+# ID the scene supplies (triangle number + 1, carried as f32) to the fragment as **a flat-interpolated varying**,
+# and writes it as u32 into R32Uint.
+#
+#   - the ID is an extra attribute (location = the number of existing attributes) — the value shader's locations do not move
+#   - the 3 vertices of a triangle_list carry the same value, so flat interpolation is exact (with linear interpolation
+#     the barycentric coordinates need not sum to exactly 1 in f32, so even equal values could wobble)
+#   - the FS output is **a scalar u32** (R32Uint has one component). Small integers, so ConvertFToU is exact
+#   - it runs in **a separate pass** (no MRT — keeps the change to draw.c to R32Uint + a u32 readback)
+#
+# ★ This shell also falls under "only shells may write spirv dialect by hand".
+def emit_shell_cov(decl)
+  attrs = decl.attributes.keys
+  unis  = decl.uniforms.keys
+  na, nu = attrs.size, unis.size
+  g = []
+  attrs.each_with_index do |_a, i|
+    g << "  spirv.GlobalVariable @a#{i} {location = #{i} : i32} : !spirv.ptr<f32, Input>"
+  end
+  # The ID goes at the location after the existing attributes (the value shader's assignment does not move)
+  g << "  spirv.GlobalVariable @aid {location = #{na} : i32} : !spirv.ptr<f32, Input>"
+  g << "  spirv.GlobalVariable @gl_Position built_in(\"Position\") : !spirv.ptr<vector<4xf32>, Output>"
+  g << "  spirv.GlobalVariable @co0 {location = 0 : i32, flat} : !spirv.ptr<f32, Output>"
+  g << "  spirv.GlobalVariable @ci0 {location = 0 : i32, flat} : !spirv.ptr<f32, Input>"
+  g << "  spirv.GlobalVariable @covOut {location = 0 : i32} : !spirv.ptr<ui32, Output>"
+  ubty = nil
+  if nu.positive?
+    members = unis.each_index.map { |i| "f32 [#{i * 4}]" }.join(", ")
+    ubty = "!spirv.struct<(#{members}), Block>"
+    g << "  spirv.GlobalVariable @ub bind(0, 0) : !spirv.ptr<#{ubty}, Uniform>"
+  end
+
+  vs = ["    spirv.func @vs_main() -> () \"None\" {"]
+  attrs.each_index do |i|
+    vs << "      %ap#{i} = spirv.mlir.addressof @a#{i} : !spirv.ptr<f32, Input>"
+    vs << "      %a#{i} = spirv.Load \"Input\" %ap#{i} : f32"
+  end
+  if nu.positive?
+    vs << "      %subp = spirv.mlir.addressof @ub : !spirv.ptr<#{ubty}, Uniform>"
+    unis.each_index do |i|
+      vs << "      %sci#{i} = spirv.Constant #{i} : i32"
+      vs << "      %sup#{i} = spirv.AccessChain %subp[%sci#{i}] : " \
+            "!spirv.ptr<#{ubty}, Uniform>, i32 -> !spirv.ptr<f32, Uniform>"
+      vs << "      %su#{i} = spirv.Load \"Uniform\" %sup#{i} : f32"
+    end
+  end
+  vargs = attrs.each_index.map { |i| "%a#{i}" } + unis.each_index.map { |i| "%su#{i}" }
+  vsig = "(#{(['f32'] * (na + nu)).join(', ')}) -> f32"
+  vs << "      %px = spirv.FunctionCall @vp_x(#{vargs.join(', ')}) : #{vsig}"
+  vs << "      %py = spirv.FunctionCall @vp_y(#{vargs.join(', ')}) : #{vsig}"
+  vs << "      %zero = spirv.Constant 0.0 : f32"
+  vs << "      %one = spirv.Constant 1.0 : f32"
+  vs << "      %pos = spirv.CompositeConstruct %px, %py, %zero, %one : (f32, f32, f32, f32) -> vector<4xf32>"
+  vs << "      %pp = spirv.mlir.addressof @gl_Position : !spirv.ptr<vector<4xf32>, Output>"
+  vs << "      spirv.Store \"Output\" %pp, %pos : vector<4xf32>"
+  vs << "      %aidp = spirv.mlir.addressof @aid : !spirv.ptr<f32, Input>"
+  vs << "      %aid = spirv.Load \"Input\" %aidp : f32"
+  vs << "      %cop = spirv.mlir.addressof @co0 : !spirv.ptr<f32, Output>"
+  vs << "      spirv.Store \"Output\" %cop, %aid : f32"
+  vs << "      spirv.Return"
+  vs << "    }"
+
+  fs = ["    spirv.func @fs_main() -> () \"None\" {"]
+  fs << "      %cip = spirv.mlir.addressof @ci0 : !spirv.ptr<f32, Input>"
+  fs << "      %cid = spirv.Load \"Input\" %cip : f32"
+  fs << "      %cu = spirv.ConvertFToU %cid : f32 to ui32"
+  fs << "      %op = spirv.mlir.addressof @covOut : !spirv.ptr<ui32, Output>"
+  fs << "      spirv.Store \"Output\" %op, %cu : ui32"
+  fs << "      spirv.Return"
+  fs << "    }"
+
+  vs_if = ["@gl_Position"] + attrs.each_index.map { |i| "@a#{i}" } + ["@aid", "@co0"]
+  fs_if = ["@ci0", "@covOut"]
+  <<~MLIR
+    // spinel-rb2spv: **the coverage mask shell** of shader_def :#{decl.name}.
+    // It calls the same emission's vp_x/vp_y as the value shader (a separate vertex transform would break attributing differences).
+    // **Only shells write spirv dialect by hand** (--check-emission checks it).
+    spirv.module Logical GLSL450 requires #spirv.vce<v1.0, [Shader], []> {
+    #{g.join("\n")}
+
+    // __BODY__
+
+    #{vs.join("\n")}
+
+    #{fs.join("\n")}
+
+      spirv.EntryPoint "Vertex" @vs_main, #{vs_if.join(', ')}
+      spirv.EntryPoint "Fragment" @fs_main, #{fs_if.join(', ')}
+      spirv.ExecutionMode @fs_main "OriginUpperLeft"
+    }
+  MLIR
+end
+
+# ------------------------------------------------ driving the 2 exits (mlir-opt/translate)
+# The default is macOS = Homebrew LLVM 22. On Linux apt.llvm.org puts it
+# in /usr/lib/llvm-22 (the pinned version). **The macOS default is unchanged** — additions only.
+# spinel-extended: no Homebrew or apt default. LLVM_BIN, else $LLVM_PREFIX/bin
+# (docs/building.md selects the LLVM 23.1.1 release through LLVM_PREFIX).
+LLVM_BIN = ENV["LLVM_BIN"] || (ENV["LLVM_PREFIX"] && File.join(ENV["LLVM_PREFIX"], "bin")) ||
+           die("set LLVM_PREFIX (or LLVM_BIN) to the LLVM whose mlir-opt/mlir-translate/clang to use")
+MLIR_OPT = File.join(LLVM_BIN, "mlir-opt")
+MLIR_TR  = File.join(LLVM_BIN, "mlir-translate")
+
+def run!(argv, what, stdin_path: nil)
+  out, st = if stdin_path
+              Open3.capture2e(*argv, stdin_data: File.binread(stdin_path), binmode: true)
+            else
+              Open3.capture2e(*argv, binmode: true)
+            end
+  die("#{what} failed:\n#{out}") unless st.success?
+  out
+end
+
+# Exit A: spirv. Lowers **the same emission** to spirv dialect, joins it to the shell,
+# serializes → spirv-val → naga (WGSL).
+def exit_spirv(dir, decl)
+  lowered = run!([MLIR_OPT, "--convert-func-to-spirv", "--convert-arith-to-spirv",
+                  "--convert-math-to-spirv",   # E145: math.sqrt (v2)
+                  File.join(dir, "emission.mlir")], "mlir-opt (spirv exit)")
+  # Takes out only the lowered spirv.func and inserts it into the shell (one join).
+  body = extract_funcs(lowered)
+  if body.empty?
+    die("mlir-opt did not produce spirv.func @ch_* (the lowering failed):\n#{lowered[0, 400]}")
+  end
+  shell = File.read(File.join(dir, "shell.mlir"))
+  File.write(File.join(dir, "shader.mlir"), shell.sub("// __BODY__", body.join("\n")))
+
+  run!([MLIR_TR, "--no-implicit-module", "--serialize-spirv",
+        "-o", File.join(dir, "shader.spv"), File.join(dir, "shader.mlir")],
+       "mlir-translate --serialize-spirv")
+  run!(["spirv-val", File.join(dir, "shader.spv")], "spirv-val")
+  # naga: --keep-coordinate-space is required (the default flips y)
+  run!(["naga", "--keep-coordinate-space",
+        File.join(dir, "shader.spv"), File.join(dir, "shader.wgsl")], "naga (WGSL conversion)")
+
+  # The coverage mask's second shader. It only inserts **the same body** (vp_x/vp_y lowered from
+  # the same emission) into another shell, so not one byte of the value shader's artifacts moves.
+  if decl.vpipe?
+    cov_shell = File.join(dir, "shell_cov.mlir")
+    File.write(cov_shell, emit_shell_cov(decl))
+    File.write(File.join(dir, "shader_cov.mlir"),
+               File.read(cov_shell).sub("// __BODY__", body.join("\n")))
+    run!([MLIR_TR, "--no-implicit-module", "--serialize-spirv",
+          "-o", File.join(dir, "shader_cov.spv"), File.join(dir, "shader_cov.mlir")],
+         "mlir-translate --serialize-spirv (coverage)")
+    run!(["spirv-val", File.join(dir, "shader_cov.spv")], "spirv-val (coverage)")
+    run!(["naga", "--keep-coordinate-space",
+          File.join(dir, "shader_cov.spv"), File.join(dir, "shader_cov.wgsl")],
+         "naga (WGSL conversion of the coverage shader)")
+  end
+  File.join(dir, "shader.spv")
+end
+
+# Takes out only the spirv.func definitions from the lowered module.
+def extract_funcs(text)
+  out = []
+  depth = 0
+  collecting = false
+  text.each_line do |l|
+    if !collecting && l =~ /spirv\.func @(ch_|vp_|vv_)/
+      collecting = true
+      depth = 0
+    end
+    next unless collecting
+    out << l.rstrip
+    depth += l.count("{")
+    depth -= l.count("}")
+    collecting = false if depth <= 0
+  end
+  out
+end
+
+# The MSL lane (opt-in, `lanes: [:msl]`).
+#
+# ★ This is not an extra exit — naga only translates **the same SPIR-V** to MSL
+# (SPIR-V is canonical; WGSL and MSL are both derived). So MSL does not go into
+# the signature.
+#
+# Of the contraction contract's 3 regimes, the generator governs only `:separate`:
+#   :fused     does nothing (at run time mathMode defaults to Fast)
+#   :frontend  does nothing (mathMode=Safe is passed at run time)
+#   :separate  **writes `#pragma STDC FP_CONTRACT OFF` at the top of the generated MSL**
+#              — not dependent on the application's MTLCompileOptions (the pragma
+#              overrides even mathMode=Fast)
+def exit_msl(dir, decl)
+  msl = File.join(dir, "shader.metal")
+  run!(["naga", "--keep-coordinate-space", File.join(dir, "shader.spv"), msl],
+       "naga (MSL conversion)")
+  regime = decl.contract["msl"]
+  if regime == "separate"
+    src = File.read(msl)
+    # Put after the `#include` lines (in some setups Metal's preprocessor complains when it comes first).
+    lines = src.lines
+    ins = lines.index { |l| !l.start_with?("//") && !l.strip.empty? && !l.start_with?("#include") }
+    ins = lines.size if ins.nil?
+    lines.insert(ins, "#pragma STDC FP_CONTRACT OFF   // contraction contract :separate (written by the generator)\n")
+    File.write(msl, lines.join)
+  end
+  msl
+end
+
+# Exit B: llvm. Lowers **the same emission** to LLVM dialect and makes the f32 CPU reference.
+# The R2 reference = "f32 without contraction" = the baseline that is bitwise equal to C built with `-ffp-contract=off`.
+def exit_llvm(dir, _decl)
+  run!([MLIR_OPT, "--convert-func-to-llvm", "--convert-arith-to-llvm",
+        "--convert-math-to-llvm",    # E145: math.sqrt (v2)
+        "--reconcile-unrealized-casts",
+        "-o", File.join(dir, "ref_llvm.mlir"), File.join(dir, "emission.mlir")],
+       "mlir-opt (llvm exit)")
+  run!([MLIR_TR, "--mlir-to-llvmir",
+        "-o", File.join(dir, "ref.ll"), File.join(dir, "ref_llvm.mlir")],
+       "mlir-translate --mlir-to-llvmir")
+  # ★ What arrives here is **LLVM IR (.ll)**. macOS's `cc` is clang, so it works, but
+  # Debian's `cc` is gcc, which **reads .ll as "linker input", only warns and returns exit 0**
+  # (success without producing anything — a trap of a familiar kind). Only clang consumes IR, so
+  # the default is split — macOS keeps `cc` (= clang), and the output does not change.
+  # ★ The tool that consumes IR is **pinned to the same version as mlir-translate** (unified for both OSes later).
+  # Why: once `math.sqrt` was added, LLVM 22 emitted the `nocreateundeforpoison` attribute and
+  # **Apple clang (the cc line) failed with "unterminated attribute group"**.
+  # .ll is a versioned LLVM format, so it should be read by the version that wrote it
+  # (this branch was first added for the trap where Linux's gcc silently ignored .ll — the same reasoning
+  # reached macOS). There is one version boundary.
+  cc = ENV["CC"] || File.join(LLVM_BIN, "clang")
+  obj = File.join(dir, "ref.o")
+  run!([cc, "-c", "-O2", "-o", obj, File.join(dir, "ref.ll")],
+       "cc -c (f32 CPU reference)")
+  # Do not trust exit 0: check that the artifact exists (never pass silently)
+  die("cc -c (f32 CPU reference) exited 0 but did not make #{obj} " \
+      "(#{cc} most likely cannot take LLVM IR)") unless File.exist?(obj)
+  obj
+end
+
+# --------------------------------------------- reference driver and C cross-checker
+#
+# ★ There are 2 exits (shader / CPU reference .o), both lowered from emission.mlir.
+# The `ref_c.c` below is **a checker, not an exit** — the same expression tree written directly in C,
+# built with `-ffp-contract=off` and compared byte for byte with the .o's output. A match is
+# a differential check that "MLIR's lowering did not change the semantics" (making the research's
+# measurement permanent). Do not read it as "a third emission".
+def emit_ref_driver(decl, res)
+  <<~C
+    /* Generated by spinel-rb2spv: the f32 CPU reference driver of shader_def :#{decl.name}.
+     * Not one line of the bodies (ch_r/ch_g/ch_b) is written in C — it links ref.o, which
+     * mlir-opt --convert-*-to-llvm lowered from emission.mlir.
+     * This is **R2** (f32 without contraction). */
+    #include <stdio.h>
+    float ch_r(float, float);
+    float ch_g(float, float);
+    float ch_b(float, float);
+    int main(int argc, char **argv) {
+      FILE *f = fopen(argc > 1 ? argv[1] : "ref.rgba", "wb");
+      if (!f) return 1;
+      for (int y = 0; y < #{res}; y++) for (int x = 0; x < #{res}; x++) {
+        float u = ((float)x + 0.5f) * #{f32_lit(1.0 / res)}f;
+        float v = ((float)y + 0.5f) * #{f32_lit(1.0 / res)}f;
+        float px[4] = { ch_r(u, v), ch_g(u, v), ch_b(u, v), #{f32_lit(decl.alpha || 1.0)}f };
+        fwrite(px, 4, 4, f);
+      }
+      fclose(f);
+      return 0;
+    }
+  C
+end
+
+# **R1** = Spinel native (f64) = "the correct answer as Ruby".
+# Implements the plan's "the CPU reference is generated automatically by compiling the same Ruby natively".
+# It includes the original source as it is, so the reference comes from **the same single source as the shader**.
+def emit_ref_native(src, chans, decl, res)
+  # ★ shader_def is **a declaration**, not executable Ruby (like tensor_def).
+  # It is removed from the native reference — otherwise bin/spinel
+  # stops with `unsupported call: CallNode shader_def`.
+  body = File.read(src)
+  if decl.text && !decl.text.empty? && body.include?(decl.text)
+    body = body.sub(decl.text, "# (shader_def removed from the R1 reference — a declaration, not a computation)\n")
+  else
+    die("could not cut out the shader_def declaration text (cannot make the R1 reference). " \
+        "Write the declaration as one statement")
+  end
+  d = ["", "# ---- R1 (f64) reference driver added by spinel-rb2spv ----",
+       "# The generator does not read this file. It is only compiled natively with bin/spinel and run.",
+       "y = 0", "while y < #{res}", "  x = 0", "  while x < #{res}",
+       "    u = (x.to_f + 0.5) * #{1.0 / res}",
+       "    v = (y.to_f + 0.5) * #{1.0 / res}"]
+  chans.each_with_index do |(_tag, m), k|
+    d << "    print #{m[:name]}(u, v)"
+    d << (k == chans.size - 1 ? "    print \"\\n\"" : "    print \" \"")
+  end
+  d += ["    x = x + 1", "  end", "  y = y + 1", "end"]
+  body + d.join("\n") + "\n"
+end
+
+def c_expr(e, env)
+  case e.op
+  when "const" then "#{f32_lit(e.val)}f"
+  when "var"   then env.fetch(e.name)
+  when "sqrt"  then "sqrtf(#{c_expr(e.kids[0], env)})"
+  else
+    op = { "addf" => "+", "subf" => "-", "mulf" => "*", "divf" => "/" }.fetch(e.op)
+    "(#{c_expr(e.kids[0], env)} #{op} #{c_expr(e.kids[1], env)})"
+  end
+end
+
+def emit_ref_c(chans, decl, res)
+  out = ["/* Generated by spinel-rb2spv: **a checker**, not an exit.",
+         " * The same expression tree written directly in C. Built with -ffp-contract=off and compared byte for byte",
+         " * with ref.o's output, it is a differential check that MLIR's lowering did not change the semantics",
+         " * (makes the research's nd=0 max=0 permanent).",
+         " * Built with -ffp-contract=fast it evaluates fused, and a difference is correct. */",
+         "#include <stdio.h>", "#include <math.h>", ""]
+  chans.each do |tag, m|
+    env = { m[:params][0] => "u", m[:params][1] => "v" }
+    out << "static float ch_#{tag}(float u, float v) {"
+    m[:lets].each do |nm, e|
+      out << "  float #{nm} = #{c_expr(e, env)};"
+      env[nm] = nm
+    end
+    out << "  return #{c_expr(m[:result], env)};"
+    out << "}"
+  end
+  out << ""
+  out << "int main(int argc, char **argv) {"
+  out << "  FILE *f = fopen(argc > 1 ? argv[1] : \"ref_c.rgba\", \"wb\");"
+  out << "  if (!f) return 1;"
+  out << "  for (int y = 0; y < #{res}; y++) for (int x = 0; x < #{res}; x++) {"
+  out << "    float u = ((float)x + 0.5f) * #{f32_lit(1.0 / res)}f;"
+  out << "    float v = ((float)y + 0.5f) * #{f32_lit(1.0 / res)}f;"
+  out << "    float px[4] = { ch_r(u, v), ch_g(u, v), ch_b(u, v), " \
+         "#{f32_lit(decl.alpha || 1.0)}f };"
+  out << "    fwrite(px, 4, 4, f);"
+  out << "  }"
+  out << "  fclose(f);"
+  out << "  return 0;"
+  out << "}"
+  out.join("\n") + "\n"
+end
+
+# --------------------------- references for the vertex pipeline form
+#
+# The reference has 3 parts:
+#   ref_driver.c / ref_c.c  **the lowering differential sweep** — drives each function with deterministic
+#                           pseudo-random inputs and compares ref.o (MLIR lowering) with the direct C
+#                           byte for byte. The vpipe version of the first phase's "every pixel on the same grid",
+#                           looking at the lowering alone, independent of rasterization
+#   raster_ref.c            **R2's picture** — a CPU rasterizer with f64 edge functions + the top-left rule +
+#                           affine interpolation. All f32 computation for vertices and fragments
+#                           uses ref.o's functions (= no contraction); only the grid is f64
+#   ref_native.rb (appended) **R1's picture** — the same rasterizer in Ruby (f64).
+#                           Positions are f64 too, so its coverage can split from the f32 GPU's —
+#                           the test scene's margin rule avoids that
+
+# A deterministic generator so that both sweeps make the same inputs (embedded in both as C text)
+SWEEP_GEN_C = <<~C
+  static float sw(int fi, int t, int i) {
+    unsigned s = (unsigned)(fi * 2654435761u + t * 40503u + i * 97u + 12345u);
+    s ^= s >> 13; s *= 1103515245u; s ^= s >> 16;
+    return (float)((double)(s & 0xFFFFFFu) / 8388608.0 - 1.0);
+  }
+C
+
+def emit_sweep_main(funcs)
+  body = ["int main(int argc, char **argv) {",
+          "  FILE *f = fopen(argc > 1 ? argv[1] : \"sweep.bin\", \"wb\");",
+          "  if (!f) return 1;"]
+  funcs.each_with_index do |(fname, m), fi|
+    n = m[:params].size
+    args = (0...n).map { |i| "sw(#{fi}, t, #{i})" }.join(", ")
+    body << "  for (int t = 0; t < 4096; t++) {"
+    body << "    float o = #{fname}(#{args});"
+    body << "    fwrite(&o, 4, 1, f);"
+    body << "  }"
+  end
+  body << "  fclose(f);"
+  body << "  return 0;"
+  body << "}"
+  body.join("\n")
+end
+
+def emit_ref_driver_vpipe(funcs, decl)
+  protos = funcs.map { |fname, m| "float #{fname}(#{(['float'] * m[:params].size).join(', ')});" }
+  <<~C
+    /* Generated by spinel-rb2spv: the lowering differential sweep driver (vpipe form).
+     * The bodies come from linking ref.o (what mlir-opt lowered from emission.mlir). */
+    #include <stdio.h>
+    #include <math.h>
+    #{protos.join("\n")}
+    #{SWEEP_GEN_C}
+    #{emit_sweep_main(funcs)}
+  C
+end
+
+def emit_ref_c_vpipe(funcs, decl)
+  defs = funcs.map do |fname, m|
+    env = {}
+    m[:params].each_with_index { |pn, i| env[pn] = "p#{i}" }
+    sig = m[:params].each_index.map { |i| "float p#{i}" }.join(", ")
+    b = ["static float #{fname}(#{sig}) {"]
+    m[:lets].each do |nm, e|
+      b << "  float #{nm} = #{c_expr(e, env)};"
+      env[nm] = nm
+    end
+    b << "  return #{c_expr(m[:result], env)};"
+    b << "}"
+    b.join("\n")
+  end
+  <<~C
+    /* Generated by spinel-rb2spv: **a checker**, not an exit (the same role as the first phase's
+     * ref_c.c). The same expression tree written directly in C, swept with -ffp-contract=off and compared
+     * byte for byte with ref.o. */
+    #include <stdio.h>
+    #include <math.h>
+    #{defs.join("\n")}
+    #{SWEEP_GEN_C}
+    #{emit_sweep_main(funcs)}
+  C
+end
+
+# R2's picture: a CPU rasterizer. Coverage is decided by f64 edge functions + the top-left rule;
+# all f32 computation (vertices, varyings, fragments) uses ref.o's functions. Interpolation is built in f64
+# and rounded to f32 once (the comparison contract's varying tolerance of 4 ULP is stated against this reference).
+def emit_raster_ref(decl, res)
+  na = decl.attributes.size
+  nv = decl.varyings.size
+  nu = decl.uniforms.size
+  fsig = (["float"] * (nv + nu)).join(", ")
+  vsig = (["float"] * (na + nu)).join(", ")
+  vargs = ->(vtx) { (0...na).map { |i| "va[#{vtx}][#{i}]" } + (0...nu).map { |i| "ub[#{i}]" } }
+  <<~C
+    /* Generated by spinel-rb2spv: R2's picture = the CPU rasterizer reference.
+     *   raster_ref <scene.txt> <out.rgba> <out_cover.bin> [out_dist.bin]
+     * out_dist.bin (optional) = **the distance from the pixel centre to the nearest triangle
+     * edge (in pixels, f32)**. Material for checking "mismatches are within one grid step of an edge"
+     * in the coverage control scene; not used for the coverage decision itself.
+     * scene.txt: line 1 "nv" / then nv lines (#{na} attribute decimals each) /
+     * finally one line of #{nu} uniforms. Write decimals that f64 reads exactly.
+     * The coverage rule is f64 edge functions + the top-left rule (window coordinates
+     * x=(ndc+1)/2*W, y=(1-ndc)/2*H — WebGPU's framebuffer coordinates, y downwards). */
+    #include <stdio.h>
+    #include <stdlib.h>
+    #include <string.h>
+    #include <math.h>
+    #{(%w[x y].map { |c| "float vp_#{c}(#{vsig});" } +
+       (0...nv).map { |j| "float vv_#{j}(#{vsig});" } +
+       %w[r g b].map { |c| "float ch_#{c}(#{fsig});" }).join("\n")}
+
+    #define W #{res}
+    #define H #{res}
+    static double orient2d(double ax, double ay, double bx, double by, double cx, double cy) {
+      return (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+    }
+    /* Inside = the triangle normalized to the w > 0 orientation; the rule for edges whose w == 0 pixels are included.
+     * With y downwards and area > 0: top = horizontal with b.x > a.x / left = b.y < a.y */
+    static int top_left(double axp, double ayp, double bxp, double byp) {
+      if (ayp == byp) return bxp > axp;
+      return byp < ayp;
+    }
+    int main(int argc, char **argv) {
+      if (argc < 4) return 2;
+      FILE *sc = fopen(argv[1], "r");
+      if (!sc) { perror(argv[1]); return 2; }
+      int nvtx = 0;
+      if (fscanf(sc, "%d", &nvtx) != 1 || nvtx <= 0 || nvtx % 3) return 2;
+      double *attr = malloc(sizeof(double) * (size_t)nvtx * #{na});
+      for (int i = 0; i < nvtx * #{na}; i++)
+        if (fscanf(sc, "%lf", &attr[i]) != 1) return 2;
+      float ub[#{[nu, 1].max}] = {0};
+      for (int i = 0; i < #{nu}; i++) { double d; if (fscanf(sc, "%lf", &d) != 1) return 2; ub[i] = (float)d; }
+      fclose(sc);
+
+      static float img[W * H * 4];
+      static unsigned char cov[W * H];
+      static float edist[W * H];      /* distance to the nearest edge (in pixels) */
+      memset(cov, 0, sizeof(cov));
+      for (int k = 0; k < W * H; k++) edist[k] = 1.0e30f;
+      for (int k = 0; k < W * H; k++) { img[k*4+0]=0; img[k*4+1]=0; img[k*4+2]=0; img[k*4+3]=0; }
+
+      for (int t = 0; t < nvtx / 3; t++) {
+        float va[3][#{na}];
+        double px[3], py[3];
+        float vy[3][#{[nv, 1].max}];
+        for (int v = 0; v < 3; v++) {
+          for (int i = 0; i < #{na}; i++) va[v][i] = (float)attr[(t * 3 + v) * #{na} + i];
+          float nx = vp_x(#{vargs.call('v').join(', ')});
+          float ny = vp_y(#{vargs.call('v').join(', ')});
+          px[v] = ((double)nx + 1.0) * 0.5 * W;
+          py[v] = (1.0 - (double)ny) * 0.5 * H;
+    #{(0...nv).map { |j| "      vy[v][#{j}] = vv_#{j}(#{vargs.call('v').join(', ')});" }.join("\n")}
+        }
+        double area = orient2d(px[0], py[0], px[1], py[1], px[2], py[2]);
+        int i0 = 0, i1 = 1, i2 = 2;
+        if (area == 0.0) continue;
+        if (area < 0.0) { i1 = 2; i2 = 1; area = -area; }
+        for (int yy = 0; yy < H; yy++) for (int xx = 0; xx < W; xx++) {
+          double cx = xx + 0.5, cy = yy + 0.5;
+          double w0 = orient2d(px[i1], py[i1], px[i2], py[i2], cx, cy);
+          double w1 = orient2d(px[i2], py[i2], px[i0], py[i0], cx, cy);
+          double w2 = orient2d(px[i0], py[i0], px[i1], py[i1], cx, cy);
+          /* Distance to the edge = |orient2d| / edge length. Taken whether the pixel is covered or not. */
+          {
+            double e0x = px[i2] - px[i1], e0y = py[i2] - py[i1];
+            double e1x = px[i0] - px[i2], e1y = py[i0] - py[i2];
+            double e2x = px[i1] - px[i0], e2y = py[i1] - py[i0];
+            double l0e = sqrt(e0x * e0x + e0y * e0y);
+            double l1e = sqrt(e1x * e1x + e1y * e1y);
+            double l2e = sqrt(e2x * e2x + e2y * e2y);
+            double d0 = l0e > 0.0 ? fabs(w0) / l0e : 1.0e30;
+            double d1 = l1e > 0.0 ? fabs(w1) / l1e : 1.0e30;
+            double d2 = l2e > 0.0 ? fabs(w2) / l2e : 1.0e30;
+            double dm = d0 < d1 ? d0 : d1;
+            if (d2 < dm) dm = d2;
+            size_t kd = (size_t)yy * W + xx;
+            if ((float)dm < edist[kd]) edist[kd] = (float)dm;
+          }
+          int in0 = w0 > 0.0 || (w0 == 0.0 && top_left(px[i1], py[i1], px[i2], py[i2]));
+          int in1 = w1 > 0.0 || (w1 == 0.0 && top_left(px[i2], py[i2], px[i0], py[i0]));
+          int in2 = w2 > 0.0 || (w2 == 0.0 && top_left(px[i0], py[i0], px[i1], py[i1]));
+          if (!(in0 && in1 && in2)) continue;
+          double l0 = w0 / area, l1 = w1 / area, l2 = w2 / area;
+          float fv[#{[nv, 1].max}];
+          for (int j = 0; j < #{nv}; j++)
+            fv[j] = (float)(l0 * (double)vy[i0][j] + l1 * (double)vy[i1][j] + l2 * (double)vy[i2][j]);
+          size_t k = (size_t)yy * W + xx;
+          img[k*4+0] = ch_r(#{((0...nv).map { |j| "fv[#{j}]" } + (0...nu).map { |i| "ub[#{i}]" }).join(', ')});
+          img[k*4+1] = ch_g(#{((0...nv).map { |j| "fv[#{j}]" } + (0...nu).map { |i| "ub[#{i}]" }).join(', ')});
+          img[k*4+2] = ch_b(#{((0...nv).map { |j| "fv[#{j}]" } + (0...nu).map { |i| "ub[#{i}]" }).join(', ')});
+          img[k*4+3] = #{f32_lit(decl.alpha || 1.0)}f;
+          cov[k] = (unsigned char)(t + 1);
+        }
+      }
+      FILE *fo = fopen(argv[2], "wb");
+      if (!fo) return 2;
+      fwrite(img, 4, (size_t)W * H * 4, fo);
+      fclose(fo);
+      fo = fopen(argv[3], "wb");
+      if (!fo) return 2;
+      fwrite(cov, 1, (size_t)W * H, fo);
+      fclose(fo);
+      if (argc >= 5) {
+        fo = fopen(argv[4], "wb");
+        if (!fo) return 2;
+        fwrite(edist, 4, (size_t)W * H, fo);
+        fclose(fo);
+      }
+      return 0;
+    }
+  C
+end
+
+# R1's picture: the same rasterizer in Ruby (f64). Positions are f64 too (= the correct answer as Ruby).
+# The output is one pixel per line, "r g b cov".
+def emit_ref_native_vpipe(src, decl, res)
+  body = File.read(src)
+  if decl.text && !decl.text.empty? && body.include?(decl.text)
+    body = body.sub(decl.text, "# (shader_def removed from the R1 reference — a declaration, not a computation)\n")
+  else
+    die("could not cut out the shader_def declaration text (cannot make the R1 reference)")
+  end
+  body += "\n" + decl.pass_defs
+  na = decl.attributes.size
+  nv = decl.varyings.size
+  nu = decl.uniforms.size
+  vread = ->(vtx) { (0...na).map { |i| "attr[(#{vtx}) * #{na} + #{i}]" } + (0...nu).map { |i| "ub[#{i}]" } }
+  d = ["", "# ---- R1 (f64) rasterizer reference added by spinel-rb2spv ----",
+       "# Usage: ref_native <scene.txt>. The output is one pixel per line, \"r g b cov\".",
+       "lines = File.read(ARGV[0]).split(\"\\n\")",
+       "toks = []",
+       "lines.each { |l| l.split(\" \").each { |w| toks << w unless w.empty? } }",
+       "nvtx = toks[0].to_i",
+       "attr = Array.new(nvtx * #{na}, 0.0)",
+       "i = 0",
+       "while i < nvtx * #{na}",
+       "  attr[i] = toks[1 + i].to_f",
+       "  i += 1",
+       "end",
+       "ub = Array.new(#{[nu, 1].max}, 0.0)",
+       "i = 0",
+       "while i < #{nu}",
+       "  ub[i] = toks[1 + nvtx * #{na} + i].to_f",
+       "  i += 1",
+       "end",
+       "",
+       "def __sp_orient(ax, ay, bx, by, cx, cy)",
+       "  (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)",
+       "end",
+       "def __sp_topleft(ax, ay, bx, by)",
+       "  return bx > ax if ay == by",
+       "  by < ay",
+       "end",
+       "",
+       "img = Array.new(#{res} * #{res} * 3, 0.0)",
+       "cov = Array.new(#{res} * #{res}, 0)",
+       "t = 0",
+       "while t < nvtx / 3",
+       "  px = Array.new(3, 0.0)",
+       "  py = Array.new(3, 0.0)",
+       "  vy = Array.new(3 * #{[nv, 1].max}, 0.0)",
+       "  v = 0",
+       "  while v < 3",
+       "    b = t * 3 + v",
+       "    px[v] = (#{decl.vertex['x']}(#{vread.call('b').join(', ')}) + 1.0) * 0.5 * #{res}",
+       "    py[v] = (1.0 - #{decl.vertex['y']}(#{vread.call('b').join(', ')})) * 0.5 * #{res}"]
+  decl.varyings.each_with_index do |(_k, nm), j|
+    d << "    vy[v * #{nv} + #{j}] = #{nm}(#{vread.call('b').join(', ')})"
+  end
+  d += ["    v += 1",
+        "  end",
+        "  area = __sp_orient(px[0], py[0], px[1], py[1], px[2], py[2])",
+        "  i0 = 0",
+        "  i1 = 1",
+        "  i2 = 2",
+        "  if area != 0.0",
+        "    if area < 0.0",
+        "      i1 = 2",
+        "      i2 = 1",
+        "      area = -area",
+        "    end",
+        "    yy = 0",
+        "    while yy < #{res}",
+        "      xx = 0",
+        "      while xx < #{res}",
+        "        cx = xx.to_f + 0.5",
+        "        cy = yy.to_f + 0.5",
+        "        w0 = __sp_orient(px[i1], py[i1], px[i2], py[i2], cx, cy)",
+        "        w1 = __sp_orient(px[i2], py[i2], px[i0], py[i0], cx, cy)",
+        "        w2 = __sp_orient(px[i0], py[i0], px[i1], py[i1], cx, cy)",
+        "        in0 = w0 > 0.0 || (w0 == 0.0 && __sp_topleft(px[i1], py[i1], px[i2], py[i2]))",
+        "        in1 = w1 > 0.0 || (w1 == 0.0 && __sp_topleft(px[i2], py[i2], px[i0], py[i0]))",
+        "        in2 = w2 > 0.0 || (w2 == 0.0 && __sp_topleft(px[i0], py[i0], px[i1], py[i1]))",
+        "        if in0 && in1 && in2",
+        "          l0 = w0 / area",
+        "          l1 = w1 / area",
+        "          l2 = w2 / area"]
+  fargs = (0...nv).map { |j| "fv#{j}" } + (0...nu).map { |i| "ub[#{i}]" }
+  (0...nv).each do |j|
+    d << "          fv#{j} = l0 * vy[i0 * #{nv} + #{j}] + l1 * vy[i1 * #{nv} + #{j}] + l2 * vy[i2 * #{nv} + #{j}]"
+  end
+  d += ["          k = (yy * #{res} + xx) * 3",
+        "          img[k] = #{decl.channels['r']}(#{fargs.join(', ')})",
+        "          img[k + 1] = #{decl.channels['g']}(#{fargs.join(', ')})",
+        "          img[k + 2] = #{decl.channels['b']}(#{fargs.join(', ')})",
+        "          cov[yy * #{res} + xx] = t + 1",
+        "        end",
+        "        xx += 1",
+        "      end",
+        "      yy += 1",
+        "    end",
+        "  end",
+        "  t += 1",
+        "end",
+        "k = 0",
+        "while k < #{res} * #{res}",
+        "  print img[k * 3]",
+        "  print \" \"",
+        "  print img[k * 3 + 1]",
+        "  print \" \"",
+        "  print img[k * 3 + 2]",
+        "  print \" \"",
+        "  print cov[k]",
+        "  print \"\\n\"",
+        "  k += 1",
+        "end"]
+  body + d.join("\n") + "\n"
+end
+
+# ------------------------------------------------------------------- signature sig
+#
+# **The SPIR-V binary is canonical**. WGSL and MSL are derived by naga, so they
+# do not go into the hash (if they did, merely upgrading naga would change every kernel name).
+def fnv1a64(bytes)
+  h = 0xcbf29ce484222325
+  bytes.each_byte { |b| h = ((h ^ b) * 0x100000001b3) & 0xFFFFFFFFFFFFFFFF }
+  h
+end
+
+def signature(decl, spv_path)
+  fnv1a64(decl.text) ^ fnv1a64(File.binread(spv_path))
+end
+
+# --------------------------------------------------------------------- table
+#
+# Follows tensor_def's two-file rule (table + checker). The table is in a form C can read.
+def emit_table(dir, decl, sig, spv_path, chans, tol = 4.0)
+  wgsl = File.join(dir, "shader.wgsl")
+  rows = chans.map { |tag, m| "  /* #{tag} = #{m[:name]}(#{m[:params].join(', ')}) */" }
+  table = <<~C
+    /* sp_shader_table.h — generated by spinel-rb2spv. Do not edit by hand.
+     *
+     * signature sig = FNV1a(shader_def declaration text) ^ FNV1a(SPIR-V binary).
+     * **SPIR-V is canonical** (WGSL/MSL are derived by naga, so they do not go into the hash).
+     * The CPU reference (.o) carries the same sig — the only means of checking that "the reference and the shader came
+     * from the same emission". */
+     */
+    #ifndef SP_SHADER_TABLE_H
+    #define SP_SHADER_TABLE_H
+
+    #define SP_SHADER_#{decl.name.upcase}_SIG 0x#{format('%016x', sig)}ULL
+    #define SP_SHADER_#{decl.name.upcase}_SPV_BYTES #{File.size(spv_path)}
+    #define SP_SHADER_#{decl.name.upcase}_FORMAT "#{decl.format}"
+    #define SP_SHADER_#{decl.name.upcase}_LANES "#{decl.lanes.join(',')}"
+    #define SP_SHADER_#{decl.name.upcase}_CONTRACT_WGSL "#{decl.contract['wgsl'] || '-'}"
+    /* MSL is in the table but not in the hash (the same reason as WGSL — derived by naga) */
+    #define SP_SHADER_#{decl.name.upcase}_CONTRACT_MSL "#{decl.contract['msl'] || '-'}"
+    #define SP_SHADER_#{decl.name.upcase}_COORD "#{decl.coord}"
+    #define SP_SHADER_#{decl.name.upcase}_QUANT "#{decl.quant}"
+    /* WGSL is in the table but not in the hash */
+    #define SP_SHADER_#{decl.name.upcase}_WGSL_BYTES #{File.exist?(wgsl) ? File.size(wgsl) : 0}
+    /* The upper bound of the value tolerance (ULP@range). **The source is SPEC** — an upper bound composed
+     * from the WGSL specification's per-operation ULPs over the expression tree, not a measurement. The checker reads it. */
+    #define SP_SHADER_#{decl.name.upcase}_TOL_ULP #{format('%.2f', tol)}
+    #{rows.join("\n")}
+
+    #endif /* SP_SHADER_TABLE_H */
+  C
+  return table unless decl.textured?
+  note = <<~C
+    /* Textured shader: ref.o holds only the pure functions that receive the
+     * texels, so it says nothing about sampling or about the whole shader.
+     * TOL_ULP covers the arithmetic only, not the sampling. */
+    #define SP_SHADER_#{decl.name.upcase}_TEXTURED 1
+
+  C
+  table.sub(/^#endif/) { note + $& }
+end
+
+# ------------------------------------------------------------ seeding the types
+#
+# ★ Spinel's inference is **whole-program**. If nothing calls a shader method,
+# its arguments and return value stay `unknown`, and the subset check refuses them as "not float".
+# The research's subject (`r011_probes/rb/frag2.rb`) had a CPU reference driver at its end, and
+# **that happened to fix the types** — the prototype was riding on that side effect.
+#
+# Making a shader's source contain a CPU loop in the product is the wrong approach, so the generator
+# makes a copy seeded with "a call of each declared method with Floats, once",
+# and **runs both input contracts (dump-ast / typedump) on that copy**
+# (both look at the same file, so the ids do not disagree).
+#
+# The seed does not lie: it calls only the methods the declaration says are "one method = one scalar Float",
+# with Float literal arguments. If a body does not close over Float,
+# inference widens and the subset check refuses it (= the correct behaviour).
+def seed_source(src, decls)
+  # Arity differs per method (the fragment takes varyings+uniforms,
+  # the vertex world attributes+uniforms). The seed calls with as many Float literals as the declaration gives.
+  seeds = {}
+  decls.each do |d|
+    nu = d.uniforms.size
+    nfrag = d.vpipe? ? d.frag_inputs.size : 2 + nu
+    d.frag_channels.each { |ch| seeds[d.channels[ch]] ||= nfrag if d.channels[ch] }
+    next unless d.vpipe?
+    nvtx = d.attributes.size + nu
+    (d.vertex.values + d.varyings.values).each { |nm| seeds[nm] ||= nvtx }
+  end
+  seed = ["", "# ---- typing seed placed by spinel-rb2spv.",
+          "# Calls that only tell whole-program inference \"these take Floats and return a Float\";",
+          "# they are never executed (the generator runs typedump only)."]
+  seeds.each_with_index do |(nm, np), k|
+    args = (0...np).map { |i| (0.5 / (i + 1)).to_s }.join(", ")
+    seed << "__sp_seed#{k} = #{nm}(#{args})"
+    seed << "print __sp_seed#{k}"
+  end
+  File.read(src) + "\n" + decls.map(&:pass_defs).join + seed.join("\n") + "\n"
+end
+
+# ------------------------------------------- mechanical check of H1 (--check-emission)
+#
+# The lane's admission rests on (iii) alone. So if "only the shell writes spirv dialect
+# by hand" breaks, the basis for admission is gone. This is the check the plan's rule asks for.
+SPIRV_TOKEN = /\bspirv\.[A-Za-z]/
+
+def check_emission!(dir)
+  bad = []
+  { "emission.mlir" => "the only emission (func + arith only)",
+    "ref_llvm.mlir" => "the llvm exit (mlir-opt's output)" }.each do |f, what|
+    path = File.join(dir, f)
+    next unless File.exist?(path)
+    File.foreach(path).with_index(1) do |l, i|
+      # The module attribute spirv.target_env declares "which GPU it is for";
+      # it is not a spirv dialect operation. Only this is allowed.
+      next if l.include?("spirv.target_env") || l.include?("spirv.vce") ||
+              l.include?("spirv.resource_limits")
+      bad << "#{f}:#{i}: #{l.strip}" if l =~ SPIRV_TOKEN
+    end
+    warn "  ok #{f} — #{what} has no hand-written spirv dialect"
+  end
+  return true if bad.empty?
+  warn "spinel-rb2spv: EMISSION check FAIL — spirv dialect outside the shell:"
+  bad.first(10).each { |b| warn "    #{b}" }
+  warn "  → the only ground for admitting the lane is (iii) \"1 emission branches into 2 exits inside MLIR\""
+  warn "    (R011 §5). Hand-writing spirv outside the shell removes that ground."
+  false
+end
+
+# ------------------------------------------------------------------ driver
+#
+# From here down is the CLI. spinel-shader-attrib borrows the front end (Ast/Types/DeclReader/
+# Subset/Expr/seed_source) with `load`, so it is wrapped in a guard —
+# so that the subset definition and the type reading (the id-based contract) are not written in two places.
+if __FILE__ == $PROGRAM_NAME
+
+def usage
+  warn File.read(__FILE__).lines[1, 12].map { |l| l.sub(/^# ?/, "") }.join
+  exit 2
+end
+
+src = nil
+outdir = nil
+mode = :build
+res = 256
+i = 0
+while i < ARGV.size
+  case ARGV[i]
+  when "--out"   then outdir = ARGV[i + 1]; i += 2
+  when "--check" then mode = :check; i += 1
+  when "--res"   then res = ARGV[i + 1].to_i; i += 2
+  when "-h", "--help" then usage
+  else
+    if ARGV[i].start_with?("-")
+      warn "spinel-rb2spv: unknown argument #{ARGV[i]}"
+      usage
+    end
+    src = ARGV[i]
+    i += 1
+  end
+end
+usage if src.nil?
+die("no input: #{src}") unless File.exist?(src)
+die("bin/spinel is missing: #{SPINEL}") unless File.executable?(SPINEL)
+die("spinel-typedump is missing: #{TYPEDUMP}") unless File.executable?(TYPEDUMP)
+
+# Pass 1: read the declarations (no types needed — shader_def has only symbols and literals)
+reject_rows = []
+decls = nil
+begin
+  decls = DeclReader.new(Ast.new(src), File.read(src)).read_all
+rescue Refuse => e
+  reject_rows << e.tsv_row
+  decls = []
+end
+
+if decls.empty? && reject_rows.empty?
+  die("#{src} has no shader_def (spelling: E085 §3 / docs/tools/shader.md)")
+end
+
+# Pass 2: run the 2 input contracts on the seeded copy (see "seeding the types")
+seeded = File.join(Dir.tmpdir, "sp_rb2spv_seed_#{Process.pid}.rb")
+at_exit { File.unlink(seeded) if File.exist?(seeded) }
+File.write(seeded, seed_source(src, decls))
+ast = Ast.new(seeded)
+types = Types.new(seeded)
+types.cross_check!(ast)         # contract gate (die rather than misread quietly)
+
+built = []
+decls.each do |decl|
+  sub = Subset.new(ast, types)
+  chans = nil
+  vworld = nil
+  funcs = nil
+  begin
+    nu = decl.uniforms.size
+    if decl.vpipe?
+      # The arguments are all of them in declaration order — fragment = varyings + uniforms,
+      # vertex world = attributes + uniforms. The position is the contract.
+      nfrag = decl.frag_inputs.size
+      nvtx = decl.attributes.size + nu
+      chans = decl.frag_channels.map do |ch|
+        [ch, sub.method_body(decl.channels[ch], nparams: nfrag, world: "fragment")]
+      end
+      vworld = { pos: {}, vary: [] }
+      %w[x y].each do |c|
+        vworld[:pos][c] = sub.method_body(decl.vertex[c], nparams: nvtx, world: "vertex")
+      end
+      decl.varyings.each do |k, nm|
+        vworld[:vary] << [k, sub.method_body(nm, nparams: nvtx, world: "vertex")]
+      end
+    else
+      chans = %w[r g b].map { |ch| [ch, sub.method_body(decl.channels[ch])] }
+    end
+  rescue Refuse => e
+    reject_rows << e.tsv_row
+    warn "spinel-rb2spv: #{e.message}"
+    warn "  → the boundary of shader subset v1 is R011 §4.2 / docs/tools/shader.md"
+    next
+  end
+  funcs = chans.map { |tag, m| ["ch_#{tag}", m] }
+  if vworld
+    funcs += vworld[:pos].map { |c, m| ["vp_#{c}", m] }
+    funcs += vworld[:vary].each_with_index.map { |(_k, m), j| ["vv_#{j}", m] }
+  end
+
+  # A downstream ceiling. **Some inputs pass the subset check yet fail in naga+Metal**, so
+  # they are counted and refused here (a hole the boundary table did not cover). The vertex world's
+  # methods are inlined by naga the same way, so it applies to every function.
+  too_deep = funcs.map { |fn, m| [fn, m, inlined_depth(m)] }
+                  .select { |_ch, _m, dp| dp > MAX_NEST }
+  unless too_deep.empty?
+    too_deep.each do |ch, m, dp|
+      reject_rows << ["ChainTooDeep", "-", "#{m[:name]}",
+                      "the expression depth after inlining is #{dp}, over the limit #{MAX_NEST}. " \
+                      "**This is not a type or syntax limit but a downstream one** — naga " \
+                      "folds every expression used only once into one nested expression, " \
+                      "which hits **Tint's (Dawn's) parser recursion limit** (E137: model depth 126 " \
+                      "passes and 128 fails — reproduced on both Linux and Mac). Metal's 256 levels of parentheses " \
+                      "(E135) are a second ceiling beyond it. SP_SHADER_MAX_NEST moves the limit, " \
+                      "but not the limit of the real device"].join("\t")
+      warn "spinel-rb2spv: REFUSE ChainTooDeep (#{m[:name]}): depth #{dp} > #{MAX_NEST}"
+    end
+    next
+  end
+
+  if mode == :check
+    warn "spinel-rb2spv: :#{decl.name} passed subset v1 " \
+         "(#{funcs.size} functions, largest nesting depth #{funcs.map { |_c, m| inlined_depth(m) }.max})"
+    next
+  end
+
+  die("--out <dir> is required") if outdir.nil?
+  dir = File.join(outdir, decl.name)
+  FileUtils.mkdir_p(dir)
+  # The marker goes in before anything is rewritten and leaves only after a
+  # complete plain build, so a failure can never leave textured output unmarked.
+  marker = File.join(dir, TEXTURED_MARKER)
+  if decl.textured?
+    File.write(marker, "this shader samples a texture: it has no CPU reference to compare with\n") unless File.exist?(marker)
+    CPU_REF_SOURCES.each { |f| FileUtils.rm_rf(File.join(dir, f)) }
+  end
+  File.write(File.join(dir, "emission.mlir"), emit_arith(funcs, decl))
+  if decl.textured?
+    File.write(File.join(dir, "shell.mlir"), emit_shell_vpipe(decl))
+  elsif decl.vpipe?
+    File.write(File.join(dir, "shell.mlir"), emit_shell_vpipe(decl))
+    File.write(File.join(dir, "ref_native.rb"), emit_ref_native_vpipe(src, decl, res))
+    File.write(File.join(dir, "ref_driver.c"), emit_ref_driver_vpipe(funcs, decl))
+    File.write(File.join(dir, "ref_c.c"), emit_ref_c_vpipe(funcs, decl))
+    File.write(File.join(dir, "raster_ref.c"), emit_raster_ref(decl, res))
+  else
+    File.write(File.join(dir, "shell.mlir"), emit_shell(decl, res))
+    File.write(File.join(dir, "ref_native.rb"), emit_ref_native(src, chans, decl, res))
+    File.write(File.join(dir, "ref_driver.c"), emit_ref_driver(decl, res))
+    File.write(File.join(dir, "ref_c.c"), emit_ref_c(chans, decl, res))
+  end
+
+  spv = exit_spirv(dir, decl)
+  ref = exit_llvm(dir, decl)
+  exit_msl(dir, decl) if decl.lanes.include?("msl")
+  unless check_emission!(dir)
+    exit 1
+  end
+  sig = signature(decl, spv)
+  # Compose the upper bound of the value tolerance from the expression tree. Only varyings (leaves that go through interpolation)
+  # carry CTS's 4 ULP — the first phase's u/v are built from FragCoord and do not go through interpolation, but
+  # **both are "input leaves", so they are treated alike** (to agree with the current fixed 4 ULP).
+  vary_names = chans.first[1][:params]
+  tol = chans.map { |_tag, m| tol_of_method(m, vary_names) }.max
+  File.write(File.join(dir, "tol.txt"), format("%.4f\n", tol))
+  File.write(File.join(dir, "sp_shader_table.h"), emit_table(dir, decl, sig, spv, chans, tol))
+  File.write(File.join(dir, "sig.txt"), format("%016x\n", sig))
+  FileUtils.rm_rf(marker) unless decl.textured?
+  built << [decl.name, sig, spv, ref]
+end
+
+unless reject_rows.empty?
+  # ★ Writing to the current directory when --out is missing dirties the repository root (it happened once).
+  # The refusal TSV is an artifact, so with nowhere to put it, it goes to standard error and stops.
+  path = outdir ? File.join(outdir, "reject.tsv") : nil
+  if path.nil?
+    warn "spinel-rb2spv: #{reject_rows.size} refused (no --out, so no TSV is written):"
+    reject_rows.each { |r| warn "  #{r}" }
+    exit 3
+  end
+  FileUtils.mkdir_p(File.dirname(path))
+  File.write(path, "kind\tnode\tat\twhy\n" + reject_rows.join("\n") + "\n")
+  warn "spinel-rb2spv: #{reject_rows.size} refused -> #{path}"
+  exit 3
+end
+
+built.each do |name, sig, spv, ref|
+  puts format("built :%s  sig=%016x  spv=%dB  ref=%s", name, sig, File.size(spv), File.basename(ref))
+end
+exit(built.empty? && mode == :build ? 3 : 0)
+
+end # if __FILE__ == $PROGRAM_NAME (E136)

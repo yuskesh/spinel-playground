@@ -1,0 +1,17 @@
+[3, 2, 1]
+1
+4
+[1, 4, 9, 16]
+9
+[6, 4, 2]
+2
+1
+:drained
+false
+1
+raised: boom
+:only
+peek: end
+next: end
+nil
+[]

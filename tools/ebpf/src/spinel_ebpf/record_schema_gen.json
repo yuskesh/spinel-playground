@@ -1,0 +1,419 @@
+{
+  "schema": "spinel-ebpf.record-schema/1",
+  "generated_by": "tools/gen_record_mirror.c (make -C src/codegen_c mirror)",
+  "generated_from": "src/codegen_c/record_schema.h",
+  "note": "Ringbuf record contracts (S1-S3). offset/record_bytes are computed by the generator's layout rule -- the same one the kernel struct and the userspace mirror come from -- so nothing downstream re-derives C alignment. `egress` is what the userspace push_fn makes of one record; layer-2 enrichers (env-gated) may add more attributes. `consumer` (S4) is the typed-consumer contract: the exact `ev.<name>` set a Ruby `on_emit :<id>` block may read, and the FFI symbols it lowers to. A derived property carries `cap` (E378): the output capacity, in bytes incl. NUL, that BOTH the accessor and the span builder hand the derivation, declared >= the longest value it can return. A field property has none -- it reads the record's bytes directly, so its width is the field's `bytes`. `value_maps` (E397) is the type-driven half: a property that carries `value_map` draws its value from exactly that closed set, `authority` says where the names come from and `btf_*` is how a test goes and checks that claim against the running kernel. E434 adds the three statements a reader outside this repository needed and could only get from prose: `clocks` + each egress `timing_form` (what the span's start and end ARE, and how a record's ktime becomes a wall clock -- omit the conversion and every span is dated 1970, with nothing rejecting it), each attribute's `present` (when it is on the span, in a closed grammar, or `unexpressible(<reason>)` where the channel does not publish enough to state it), each egress `drop_when` (when a record becomes no span at all), and each derivation's `residue` (whether the body is generated, or a consumer has to write it -- and, for `ambient`, that no consumer can write it from the record).",
+  "value_maps": [
+    {
+      "id": "tcp_state",
+      "authority": "the kernel's own TCP state enum (include/net/tcp_states.h; the same values are frozen into the uapi enum BPF_TCP_* in include/uapi/linux/bpf.h). Both are in vmlinux BTF, so the declaration below is checked against the running kernel rather than trusted (E397 m02)",
+      "unknown": "unnamed(%ld)",
+      "arch_invariant": true,
+      "btf_mode": "names",
+      "btf_anchor": "TCP_ESTABLISHED",
+      "btf_prefix": "TCP_",
+      "btf_omit": "TCP_MAX_STATES",
+      "note": "the state a sock was in, spelled as the kernel spells it (without the TCP_ prefix, which is the enum's namespace and not part of the name of the state)",
+      "values": [
+        { "value": 1, "name": "ESTABLISHED" },
+        { "value": 2, "name": "SYN_SENT" },
+        { "value": 3, "name": "SYN_RECV" },
+        { "value": 4, "name": "FIN_WAIT1" },
+        { "value": 5, "name": "FIN_WAIT2" },
+        { "value": 6, "name": "TIME_WAIT" },
+        { "value": 7, "name": "CLOSE" },
+        { "value": 8, "name": "CLOSE_WAIT" },
+        { "value": 9, "name": "LAST_ACK" },
+        { "value": 10, "name": "LISTEN" },
+        { "value": 11, "name": "CLOSING" },
+        { "value": 12, "name": "NEW_SYN_RECV" },
+        { "value": 13, "name": "BOUND_INACTIVE" }
+      ]
+    },
+    {
+      "id": "conn_direction",
+      "authority": "E306's reading of the pre-ESTABLISHED TCP state. The names are this project's (semconv has no connection-direction key); only the two keys come from the kernel enum, and those are checked against its BTF",
+      "unknown": "other",
+      "arch_invariant": true,
+      "btf_mode": "keys",
+      "btf_anchor": "TCP_ESTABLISHED",
+      "btf_prefix": "TCP_",
+      "btf_omit": "",
+      "note": "\"active\" = we initiated, \"passive\" = we accepted, \"other\" = a transition into ESTABLISHED from neither (and, on a probe that emits every transition, any transition at all -- which is what spnl.conn.tcp_state is for)",
+      "values": [
+        { "value": 2, "name": "active" },
+        { "value": 3, "name": "passive" }
+      ]
+    }
+  ],
+  "clocks": [
+    { "id": "monotonic", "kernel_src": "bpf_ktime_get_ns()", "posix_clock": "CLOCK_MONOTONIC", "to_wall": "wall_unix_ns = ktime_ns + (clock_gettime(CLOCK_REALTIME) - clock_gettime(CLOCK_MONOTONIC))", "note": "the offset must be sampled by the process reading the records, on the machine and boot that produced them: it is not a property of the record and it does not travel with a .bpf.o. Sample it once per drain, not once per record -- the two clocks drift under NTP slew and a per-record sample makes span order depend on the reader (E292 fixed the same class in the other direction: an ns timestamp truncated at an FFI :int boundary, which also rendered as 1970)" }
+  ],
+  "bounds_sets": [
+    { "id": "otel_duration_s", "unit": "s", "authority": "OpenTelemetry eBPF Instrumentation (OBI, ex-Beyla) pkg/export/bucket.go -- the default duration buckets its HTTP/RPC duration metrics use. E272 adopted them for http.server.request.duration so that the two agents' histograms are comparable; E400 makes the array itself the declaration both sides read", "values": [0, 0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10], "note": "seconds. A record carries nanoseconds, so a metric over a *_ns property declares value_unit \"ns\" and the generator emits the ns -> s conversion; the pair of units is checked against a closed list, so an unconverted nanosecond value cannot be silently bucketed against second boundaries" },
+    { "id": "log2_ns_31", "unit": "ns", "authority": "derived from the kernel's own histogram: every boundary is 2^k - 1, the exclusive upper edge of a spnl_hist_log2 slot, so each bucket is a whole number of slots and no count is ever split. The count 31 is Splunk Observability Cloud's documented ceiling (\"Use no more than 31 bucket boundaries when sending histograms\"; more are dropped -- measured, and dropped silently behind HTTP 200). The split point between one-to-one and paired buckets is measured, not chosen", "values": [1, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047, 4095, 8191, 16383, 32767, 65535, 131071, 262143, 524287, 1048575, 2097151, 4194303, 8388607, 16777215, 33554431, 67108863, 134217727, 536870911, 2147483647, 8589934591, 34359738367], "note": "nanoseconds. Buckets 0..26 are log2 slots 0..26 exactly (1 ns .. 134 ms); buckets 27..30 hold two slots each (.. 34.4 s); bucket 31 is everything above 2^35 ns and is unbounded, like the top bucket of any explicit histogram. A latency slower than 34.4 s is therefore reported as 34.4 s -- the same failure OBI's own seconds ruler has above 10 s, one order of magnitude further out" }
+  ],
+  "channels": [
+    {
+      "id": "dns",
+      "record_struct": "<unit>_dns_event",
+      "ringbuf_map": "<unit>_dns_events",
+      "ringbuf_size": "256 * 1024",
+      "record_bytes": 128,
+      "record_min_bytes": 120,
+      "required_through": "duration_ns",
+      "producers": ["emit_dns", "dns_emit"],
+      "fields": [
+        { "name": "hdr", "ctype": "struct spnl_event_hdr", "count": 0, "offset": 0, "bytes": 16, "expose": "", "note": "ADR-002 16B common header (type/version/reserved/timestamp)" },
+        { "name": "pid", "ctype": "__u32", "count": 0, "offset": 16, "bytes": 4, "expose": "int", "note": "producer tgid (init-ns)" },
+        { "name": "comm", "ctype": "char", "count": 16, "offset": 20, "bytes": 16, "expose": "str", "note": "bpf_get_current_comm -> process.executable.name" },
+        { "name": "raw", "ctype": "unsigned char", "count": 64, "offset": 36, "bytes": 64, "expose": "", "note": "first 64B of the DNS payload; QNAME parsed in userspace" },
+        { "name": "cgid", "ctype": "__u64", "count": 0, "offset": 104, "bytes": 8, "expose": "int", "note": "E304: cgroup id -> k8s.* pod attribution" },
+        { "name": "duration_ns", "ctype": "__u64", "count": 0, "offset": 112, "bytes": 8, "expose": "int", "note": "E311: resolution RTT; 0 = query-only (E295)" },
+        { "name": "raw_status", "ctype": "__s32", "count": 0, "offset": 120, "bytes": 4, "expose": "", "note": "E428: what happened when the kernel tried to fill `raw`. 0 = the bytes are the sender's; -1 = there was no user buffer to read (msg_iter described pages or kernel memory); anything else = the errno bpf_probe_read_user returned. Before E428 the return value was discarded, so a record carrying no bytes was indistinguishable from one whose bytes did not parse, and the drain reported the second reason for the first cause. NOT exposed to Ruby: a bare errno is the kind of number E397 is about, and what a consumer wants -- `ev.qname` -- is already empty in both cases. The drain reads it to pick the drop reason it prints" }
+      ],
+      "egress": {
+        "push_fn": "spnl_otlp_dns_span_push",
+        "span_name": "resolve {dns.question.name}",
+        "span_kind": "INTERNAL",
+        "timing": "start = hdr.timestamp (ktime -> unix); end = start + duration_ns (equal to start for emit_dns)",
+        "timing_form": { "start": "record_ktime:hdr.timestamp", "clock": "monotonic", "end": "start_plus:duration_ns" },
+        "drop_when": "empty(qname)",
+        "drop_when_ast": {"pred": "empty", "of": {"derived": "qname"}},
+        "note": "E312's request-tree push (spnl_otlp_request_tree_push) consumes the same record and the same attribute keys, but nests it under a request span as a CLIENT child",
+        "attributes": [
+          { "key": "dns.question.name", "source": "raw[64] -> QNAME (length-prefixed labels walked in userspace)", "stability": "semconv", "condition": "always (see the channel's drop_when: a record whose QNAME does not parse produces no span at all, so on a span that exists this attribute is present)", "present": "always", "present_ast": {"pred": "always"}, "note": "E295: the in-kernel label walk blows up verifier state, so the raw payload is copied bounded" },
+          { "key": "process.executable.name", "source": "comm[16] (bpf_get_current_comm)", "stability": "semconv", "condition": "comm non-empty", "present": "nonempty(comm)", "present_ast": {"pred": "nonempty", "of": {"field": "comm"}}, "note": "E295: the resolving process, not the resolver library (socket-layer hook)" },
+          { "key": "spnl.dns.latency_ns", "source": "duration_ns", "stability": "spinel", "condition": "duration_ns != 0", "present": "nonzero(duration_ns)", "present_ast": {"pred": "nonzero", "of": {"field": "duration_ns"}}, "note": "E311: dns_emit's txid-correlated RTT; emit_dns is query-only so the attribute is absent" }
+        ],
+        "enrichers": ["k8s", "cri"]
+      },
+      "consumer": {
+        "form": "on_emit :dns do |ev| ... end",
+        "drain_fn": "spnl_rec_dns_drain",
+        "to_span_fn": "spnl_rec_dns_to_span",
+        "send_fn": "spnl_otlp_span_send",
+        "flush_fn": "spnl_otlp_span_flush",
+        "properties": [
+          { "name": "pid", "kind": "field", "expose": "int", "ffi_ret": ":long", "ffi": "spnl_rec_dns_pid", "source": "pid", "kfilter": "pid", "note": "producer tgid (init-ns)" },
+          { "name": "comm", "kind": "field", "expose": "str", "ffi_ret": ":str", "ffi": "spnl_rec_dns_comm", "source": "comm", "kfilter": "comm", "note": "bpf_get_current_comm -> process.executable.name" },
+          { "name": "cgid", "kind": "field", "expose": "int", "ffi_ret": ":long", "ffi": "spnl_rec_dns_cgid", "source": "cgid", "kfilter": "cgroup_id", "note": "E304: cgroup id -> k8s.* pod attribution" },
+          { "name": "duration_ns", "kind": "field", "expose": "int", "ffi_ret": ":long", "ffi": "spnl_rec_dns_duration_ns", "source": "duration_ns", "kfilter": "", "note": "E311: resolution RTT; 0 = query-only (E295)" },
+          { "name": "qname", "kind": "derived", "expose": "str", "ffi_ret": ":str", "ffi": "spnl_rec_dns_qname", "source": "raw -> spnl_dns_qname()", "kfilter": "", "cap": 256, "residue": "parse", "residue_means": "a variable-length walk over wire bytes the record carries; a consumer must implement it, and everything it reads is in the record", "note": "E295: length-prefixed DNS labels walked in userspace (an in-kernel walk blows up verifier state); empty when the record is not a parseable query. cap 256 = the domain bound: a DNS name is at most 255 bytes (RFC 1035 2.3.4), +1 for the NUL. Today's source bounds it far tighter -- the walk reads raw[12..60) and each label costs its length byte back as the dot, so the output cannot exceed 52 characters -- but the cap is stated against the protocol, so widening `raw` does not silently start truncating names" }
+        ]
+      }
+    },
+    {
+      "id": "conn",
+      "record_struct": "<unit>_conn_event",
+      "ringbuf_map": "<unit>_conn_events",
+      "ringbuf_size": "256 * 1024",
+      "record_bytes": 88,
+      "record_min_bytes": 88,
+      "required_through": "",
+      "producers": ["emit_connect"],
+      "fields": [
+        { "name": "hdr", "ctype": "struct spnl_event_hdr", "count": 0, "offset": 0, "bytes": 16, "expose": "", "note": "ADR-002 16B common header (type/version/reserved/timestamp)" },
+        { "name": "pid", "ctype": "__u32", "count": 0, "offset": 16, "bytes": 4, "expose": "int", "note": "producer tgid; E296 sock_owner_set restores it when the ESTABLISHED transition fires in softirq" },
+        { "name": "comm", "ctype": "char", "count": 16, "offset": 20, "bytes": 16, "expose": "str", "note": "bpf_get_current_comm (E296: the connecting process, not swapper/0)" },
+        { "name": "daddr", "ctype": "__u32", "count": 0, "offset": 36, "bytes": 4, "expose": "", "note": "remote IPv4 address, network byte order (valid when family == AF_INET)" },
+        { "name": "dport", "ctype": "__u16", "count": 0, "offset": 40, "bytes": 2, "expose": "int", "note": "remote port, host byte order" },
+        { "name": "family", "ctype": "__u16", "count": 0, "offset": 42, "bytes": 2, "expose": "", "note": "address family (2 = AF_INET, 10 = AF_INET6)" },
+        { "name": "srtt_us", "ctype": "__s64", "count": 0, "offset": 48, "bytes": 8, "expose": "", "note": "tcp_sock->srtt_us via CO-RE, on the wire in the kernel's 1/8 us scale. Not exposed raw (E376): the us value is the derived property ev.srtt_us, which is the same function's output as the span attribute net.peer.srtt_us" },
+        { "name": "cgid", "ctype": "__u64", "count": 0, "offset": 56, "bytes": 8, "expose": "int", "note": "E304: cgroup id -> k8s.* pod attribution" },
+        { "name": "oldstate", "ctype": "__u32", "count": 0, "offset": 64, "bytes": 4, "expose": "", "note": "E306: TCP state before ESTABLISHED (2 = SYN_SENT -> active, 3 = SYN_RECV -> passive)" },
+        { "name": "daddr6_hi", "ctype": "__u64", "count": 0, "offset": 72, "bytes": 8, "expose": "", "note": "E306: remote IPv6 address, bytes 0..7 (network order)" },
+        { "name": "daddr6_lo", "ctype": "__u64", "count": 0, "offset": 80, "bytes": 8, "expose": "", "note": "E306: remote IPv6 address, bytes 8..15 (network order)" }
+      ],
+      "egress": {
+        "push_fn": "spnl_otlp_conn_span_push",
+        "span_name": "connect {network.peer.address}:{network.peer.port}",
+        "span_kind": "INTERNAL",
+        "timing": "start = end = hdr.timestamp (ktime -> unix); a connect is a point event, so duration is 0",
+        "timing_form": { "start": "record_ktime:hdr.timestamp", "clock": "monotonic", "end": "start" },
+        "drop_when": "never",
+        "drop_when_ast": {"pred": "never"},
+        "note": "E312's request-tree push consumes the same record and the same attribute keys, but nests it under a request span as a CLIENT child (and drops network.transport / network.type there)",
+        "attributes": [
+          { "key": "network.peer.address", "source": "daddr (AF_INET) or daddr6_hi/lo (AF_INET6) -> inet_ntop", "stability": "semconv", "condition": "always", "present": "always", "present_ast": {"pred": "always"}, "note": "E294 / E306 (IPv6 halves rejoined in userspace)" },
+          { "key": "network.peer.port", "source": "dport", "stability": "semconv", "condition": "always", "present": "always", "present_ast": {"pred": "always"}, "note": "E294" },
+          { "key": "network.transport", "source": "constant \"tcp\"", "stability": "semconv", "condition": "always", "present": "always", "present_ast": {"pred": "always"}, "note": "E294: the channel only observes TCP state transitions" },
+          { "key": "network.type", "source": "family (AF_INET -> \"ipv4\", AF_INET6 -> \"ipv6\")", "stability": "semconv", "condition": "always", "present": "always", "present_ast": {"pred": "always"}, "note": "E294 / E306" },
+          { "key": "net.peer.srtt_us", "source": "srtt_us >> 3 (the declared int_expr derivation -- the same value as the property ev.srtt_us)", "stability": "spinel", "condition": "always", "present": "always", "present_ast": {"pred": "always"}, "note": "E294: semconv has no smoothed-RTT key, so this is a project key; the value is L4 srtt, not an L7 round trip. E376: the >>3 has one author, shared with the typed consumer. E434: that author is now the declaration itself (int_expr), not a C function" },
+          { "key": "spnl.conn.direction", "source": "oldstate (SYN_SENT -> active, SYN_RECV -> passive, else other)", "stability": "spinel", "condition": "always", "present": "always", "present_ast": {"pred": "always"}, "note": "E306: semconv has no connection-direction key. E397: the mapping is the declared value map `conn_direction`, shared with the typed consumer's ev.direction" },
+          { "key": "spnl.conn.tcp_state", "source": "oldstate -> value map `tcp_state` (the kernel's enum, by name)", "stability": "spinel", "condition": "always", "present": "always", "present_ast": {"pred": "always"}, "note": "E397: semconv has no TCP-state key. spnl.conn.direction answers who opened the connection and says \"other\" for every state that is neither SYN_SENT nor SYN_RECV -- which is most of them on a probe that emits transitions other than ESTABLISHED. This is the same byte read as the state it is, and it is the same function's output as the typed consumer's ev.tcp_state" },
+          { "key": "process.executable.name", "source": "comm[16]", "stability": "semconv", "condition": "comm non-empty", "present": "nonempty(comm)", "present_ast": {"pred": "nonempty", "of": {"field": "comm"}}, "note": "E296: recovered from the sock->owner map when the transition fires in softirq context" }
+        ],
+        "enrichers": ["k8s", "cri", "peer"]
+      },
+      "consumer": {
+        "form": "on_emit :conn do |ev| ... end",
+        "drain_fn": "spnl_rec_conn_drain",
+        "to_span_fn": "spnl_rec_conn_to_span",
+        "send_fn": "spnl_otlp_span_send",
+        "flush_fn": "spnl_otlp_span_flush",
+        "properties": [
+          { "name": "pid", "kind": "field", "expose": "int", "ffi_ret": ":long", "ffi": "spnl_rec_conn_pid", "source": "pid", "kfilter": "", "note": "producer tgid; E296 sock_owner_set restores it when the ESTABLISHED transition fires in softirq" },
+          { "name": "comm", "kind": "field", "expose": "str", "ffi_ret": ":str", "ffi": "spnl_rec_conn_comm", "source": "comm", "kfilter": "", "note": "bpf_get_current_comm (E296: the connecting process, not swapper/0)" },
+          { "name": "dport", "kind": "field", "expose": "int", "ffi_ret": ":long", "ffi": "spnl_rec_conn_dport", "source": "dport", "kfilter": "", "note": "remote port, host byte order" },
+          { "name": "cgid", "kind": "field", "expose": "int", "ffi_ret": ":long", "ffi": "spnl_rec_conn_cgid", "source": "cgid", "kfilter": "", "note": "E304: cgroup id -> k8s.* pod attribution" },
+          { "name": "peer", "kind": "derived", "expose": "str", "ffi_ret": ":str", "ffi": "spnl_rec_conn_peer", "source": "family + daddr / daddr6_hi,daddr6_lo + dport -> spnl_conn_peer()", "kfilter": "", "cap": 64, "residue": "render", "residue_means": "a standard rendering of record fields, with a branch chosen by another field; a consumer must implement it, and everything it reads is in the record", "note": "E294/E306: \"<address>:<port>\" with the v4/v6 choice already made. The address half is the same function's output as network.peer.address and the port half is network.peer.port, so ev.peer is exactly the span name's subject (\"connect <peer>\") -- including the fact that an IPv6 address is NOT bracketed (\"::1:19377\"), because that is how the span name has spelled it since E306. cap 64 >= the longest such string: inet_ntop writes at most INET6_ADDRSTRLEN-1 = 45 characters, plus \":\" and 5 port digits and the NUL = 52" },
+          { "name": "direction", "kind": "derived", "expose": "str", "ffi_ret": ":str", "ffi": "spnl_rec_conn_direction", "source": "oldstate -> value map `conn_direction`", "value_map": "conn_direction", "kfilter": "", "cap": 16, "residue": "declared", "residue_means": "generated from the declaration; no consumer implements it", "note": "E306: \"active\" (we initiated: SYN_SENT -> ESTABLISHED), \"passive\" (we accepted: SYN_RECV -> ESTABLISHED), \"other\". Byte-identical to the span attribute spnl.conn.direction (same function). cap 16 >= the longest of that closed set of literals (\"passive\", 7 + NUL). E397: the three-line switch this used to be is now the declared value map `conn_direction`, so the two state numbers it keys on are checked against the kernel's enum instead of trusted" },
+          { "name": "tcp_state", "kind": "derived", "expose": "str", "ffi_ret": ":str", "ffi": "spnl_rec_conn_tcp_state", "source": "oldstate -> value map `tcp_state`", "value_map": "tcp_state", "kfilter": "", "cap": 24, "residue": "declared", "residue_means": "generated from the declaration; no consumer implements it", "note": "E397: the pre-transition TCP state under its own name (\"SYN_SENT\", \"CLOSE\", ...) = the span attribute spnl.conn.tcp_state, from the declared value map `tcp_state` checked against the kernel's BTF enum. `direction` answers who opened the connection and collapses ten of the thirteen states into \"other\"; this keeps the state. A state this kernel has but the map does not name reads as \"unnamed(<n>)\" -- the number survives rather than borrowing a name. cap 24 >= both bounds, and unlike every other cap in this file the generator COMPUTES them rather than taking the note's word for it: the longest name (\"BOUND_INACTIVE\" = 14 + NUL) and the widest unnamed rendering of the source field (`oldstate` is a __u32, so \"unnamed(4294967295)\" = 19 + NUL). A closed set is the one derivation whose bound is a fact" },
+          { "name": "srtt_us", "kind": "derived", "expose": "int", "ffi_ret": ":long", "ffi": "spnl_rec_conn_srtt_us", "source": "declared expression `srtt_us >> 3`", "kfilter": "", "cap": 0, "expr": "srtt_us >> 3", "expr_ast": {"op": ">>", "args": [{"field": "srtt_us"}, {"lit": 3}]}, "residue": "declared", "residue_means": "generated from the declaration; no consumer implements it", "note": "E294/E376: smoothed RTT in MICROSECONDS -- the same value the span attribute net.peer.srtt_us carries, because both are this one declaration's output. The >>3 that turns the kernel's 1/8 us into us is layer 2's business, so a consumer never divides by 8. Note it is the L4 smoothed RTT (a property of the connection), not an L7 round trip. E434 D3: this was a three-line C function (spnl_conn_srtt_us) until the audit asked what those three lines DO -- one shift. As a declaration the scale reaches every reader of the contract and not just the C runtime, which is the half E376 could not fix: E376 put the span and the typed consumer on one FUNCTION, and a reader that has neither still had to learn \"1/8 us\" from a sentence" }
+        ]
+      },
+      "metrics": [
+        { "id": "count", "name": "spnl.conn.count", "kind": "counter", "unit": "{connection}", "value_from": "", "value_unit": "", "bounds": "", "series_bound": 3, "labels": [
+            { "key": "spnl.conn.direction", "from": "direction", "stability": "spinel", "bound": 3, "bound_from": "value_map", "value_map": "conn_direction", "fallback": "other", "note": "E306/E397: the same string the span attribute spnl.conn.direction carries (same value map, same function). Bound 3 = the map's two names plus its literal fallback \"other\", computed from `conn_direction` rather than declared here" }
+          ], "note": "E400: how many connect records the probe emitted, split by who opened the connection. A counter rather than a histogram because this channel has no duration -- a connect is a point event and its span duration is 0 (E294). semconv has no key for \"connections a probe observed\", so the name is a project key, for the same reason spnl.conn.direction is" }
+      ]
+    },
+    {
+      "id": "l7",
+      "record_struct": "<unit>_l7_event",
+      "ringbuf_map": "<unit>_l7_events",
+      "ringbuf_size": "256 * 1024",
+      "record_bytes": 72,
+      "record_min_bytes": 72,
+      "required_through": "",
+      "producers": ["emit_l7"],
+      "fields": [
+        { "name": "hdr", "ctype": "struct spnl_event_hdr", "count": 0, "offset": 0, "bytes": 16, "expose": "", "note": "ADR-002 16B common header (type/version/reserved/timestamp)" },
+        { "name": "pid", "ctype": "__u32", "count": 0, "offset": 16, "bytes": 4, "expose": "int", "note": "producer tgid (the process that sent the request)" },
+        { "name": "comm", "ctype": "char", "count": 16, "offset": 20, "bytes": 16, "expose": "str", "note": "bpf_get_current_comm -> process.executable.name" },
+        { "name": "daddr", "ctype": "__u32", "count": 0, "offset": 36, "bytes": 4, "expose": "", "note": "remote IPv4 address, network byte order" },
+        { "name": "dport", "ctype": "__u16", "count": 0, "offset": 40, "bytes": 2, "expose": "int", "note": "remote port, host byte order" },
+        { "name": "family", "ctype": "__u16", "count": 0, "offset": 42, "bytes": 2, "expose": "", "note": "address family (2 = AF_INET; IPv6 addresses are not carried on this channel)" },
+        { "name": "start_ktime", "ctype": "__u64", "count": 0, "offset": 48, "bytes": 8, "expose": "", "note": "E297: ktime of the first send on this socket (span start)" },
+        { "name": "duration_ns", "ctype": "__u64", "count": 0, "offset": 56, "bytes": 8, "expose": "int", "note": "E297: send -> response-visible round trip (tcp_cleanup_rbuf), = span duration" },
+        { "name": "cgid", "ctype": "__u64", "count": 0, "offset": 64, "bytes": 8, "expose": "int", "note": "E304: cgroup id -> k8s.* pod attribution" }
+      ],
+      "egress": {
+        "push_fn": "spnl_otlp_l7_span_push",
+        "span_name": "request {network.peer.address}:{network.peer.port}",
+        "span_kind": "CLIENT",
+        "timing": "start = start_ktime (ktime -> unix); end = start + duration_ns",
+        "timing_form": { "start": "record_ktime:start_ktime", "clock": "monotonic", "end": "start_plus:duration_ns" },
+        "drop_when": "never",
+        "drop_when_ast": {"pred": "never"},
+        "note": "E311's multiplexing guard suppresses records for sockets carrying overlapping requests, so a record on this channel is always one clean request/response pair",
+        "attributes": [
+          { "key": "network.peer.address", "source": "daddr -> inet_ntop", "stability": "semconv", "condition": "always", "present": "always", "present_ast": {"pred": "always"}, "note": "E297: AF_INET6 records render as \"(ipv6 not carried)\" -- this channel has no v6 field" },
+          { "key": "network.peer.port", "source": "dport", "stability": "semconv", "condition": "always", "present": "always", "present_ast": {"pred": "always"}, "note": "E297" },
+          { "key": "network.transport", "source": "constant \"tcp\"", "stability": "semconv", "condition": "always", "present": "always", "present_ast": {"pred": "always"}, "note": "E297" },
+          { "key": "network.type", "source": "family (AF_INET -> \"ipv4\", AF_INET6 -> \"ipv6\")", "stability": "semconv", "condition": "always", "present": "always", "present_ast": {"pred": "always"}, "note": "E297" },
+          { "key": "spnl.l7.latency_ns", "source": "duration_ns", "stability": "spinel", "condition": "always", "present": "always", "present_ast": {"pred": "always"}, "note": "E297: the span duration is authoritative; this attribute is the same number, for querying" },
+          { "key": "process.executable.name", "source": "comm[16]", "stability": "semconv", "condition": "comm non-empty", "present": "nonempty(comm)", "present_ast": {"pred": "nonempty", "of": {"field": "comm"}}, "note": "E297" }
+        ],
+        "enrichers": ["k8s", "cri"]
+      },
+      "consumer": {
+        "form": "on_emit :l7 do |ev| ... end",
+        "drain_fn": "spnl_rec_l7_drain",
+        "to_span_fn": "spnl_rec_l7_to_span",
+        "send_fn": "spnl_otlp_span_send",
+        "flush_fn": "spnl_otlp_span_flush",
+        "properties": [
+          { "name": "pid", "kind": "field", "expose": "int", "ffi_ret": ":long", "ffi": "spnl_rec_l7_pid", "source": "pid", "kfilter": "", "note": "producer tgid (the process that sent the request)" },
+          { "name": "comm", "kind": "field", "expose": "str", "ffi_ret": ":str", "ffi": "spnl_rec_l7_comm", "source": "comm", "kfilter": "", "note": "bpf_get_current_comm -> process.executable.name" },
+          { "name": "dport", "kind": "field", "expose": "int", "ffi_ret": ":long", "ffi": "spnl_rec_l7_dport", "source": "dport", "kfilter": "", "note": "remote port, host byte order" },
+          { "name": "duration_ns", "kind": "field", "expose": "int", "ffi_ret": ":long", "ffi": "spnl_rec_l7_duration_ns", "source": "duration_ns", "kfilter": "", "note": "E297: send -> response-visible round trip (tcp_cleanup_rbuf), = span duration" },
+          { "name": "cgid", "kind": "field", "expose": "int", "ffi_ret": ":long", "ffi": "spnl_rec_l7_cgid", "source": "cgid", "kfilter": "", "note": "E304: cgroup id -> k8s.* pod attribution" }
+        ]
+      }
+    },
+    {
+      "id": "http",
+      "record_struct": "<unit>_http_event",
+      "ringbuf_map": "<unit>_http_events",
+      "ringbuf_size": "256 * 1024",
+      "record_bytes": 152,
+      "record_min_bytes": 152,
+      "required_through": "",
+      "producers": ["http_emit", "ssl_emit"],
+      "fields": [
+        { "name": "hdr", "ctype": "struct spnl_event_hdr", "count": 0, "offset": 0, "bytes": 16, "expose": "", "note": "ADR-002 16B common header (type/version/reserved/timestamp)" },
+        { "name": "pid", "ctype": "__u32", "count": 0, "offset": 16, "bytes": 4, "expose": "int", "note": "producer tgid" },
+        { "name": "comm", "ctype": "char", "count": 16, "offset": 20, "bytes": 16, "expose": "str", "note": "bpf_get_current_comm -> process.executable.name" },
+        { "name": "daddr", "ctype": "__u32", "count": 0, "offset": 36, "bytes": 4, "expose": "", "note": "remote IPv4 address, network byte order; 0 on the E299 TLS path (no sock)" },
+        { "name": "dport", "ctype": "__u16", "count": 0, "offset": 40, "bytes": 2, "expose": "int", "note": "remote port, host byte order; 0 on the E299 TLS path" },
+        { "name": "family", "ctype": "__u16", "count": 0, "offset": 42, "bytes": 2, "expose": "", "note": "address family (2 = AF_INET)" },
+        { "name": "start_ktime", "ctype": "__u64", "count": 0, "offset": 48, "bytes": 8, "expose": "", "note": "E298: ktime of the request send (span start)" },
+        { "name": "duration_ns", "ctype": "__u64", "count": 0, "offset": 56, "bytes": 8, "expose": "int", "note": "E298: request -> response round trip, = span duration" },
+        { "name": "req", "ctype": "unsigned char", "count": 64, "offset": 64, "bytes": 64, "expose": "", "note": "first 64B of the request; \"METHOD path HTTP/x\" parsed in userspace" },
+        { "name": "resp", "ctype": "unsigned char", "count": 16, "offset": 128, "bytes": 16, "expose": "", "note": "first 16B of the response; \"HTTP/1.1 NNN\" status parsed in userspace" },
+        { "name": "cgid", "ctype": "__u64", "count": 0, "offset": 144, "bytes": 8, "expose": "int", "note": "E304: cgroup id -> k8s.* pod attribution" }
+      ],
+      "egress": {
+        "push_fn": "spnl_otlp_http_span_push",
+        "span_name": "{http.request.method} {url.path}",
+        "span_kind": "CLIENT",
+        "timing": "start = start_ktime (ktime -> unix); end = start + duration_ns",
+        "timing_form": { "start": "record_ktime:start_ktime", "clock": "monotonic", "end": "start_plus:duration_ns" },
+        "drop_when": "never",
+        "drop_when_ast": {"pred": "never"},
+        "note": "the span carries no request body or headers -- only method, path and status leave the process",
+        "attributes": [
+          { "key": "http.request.method", "source": "req[64] -> first token", "stability": "semconv", "condition": "the request head parses", "present": "nonempty(method)", "present_ast": {"pred": "nonempty", "of": {"derived": "method"}}, "note": "E298: the kernel-side method filter already rejected non-HTTP sends" },
+          { "key": "url.path", "source": "req[64] -> second token", "stability": "semconv", "condition": "the request head has a second token", "present": "nonempty(path)", "present_ast": {"pred": "nonempty", "of": {"derived": "path"}}, "note": "E298" },
+          { "key": "http.response.status_code", "source": "resp[16] -> status digits", "stability": "semconv", "condition": "the response head parses", "present": "nonzero(status)", "present_ast": {"pred": "nonzero", "of": {"derived": "status"}}, "note": "E298: status >= 500 also sets Span.status = ERROR (the RED error axis)" },
+          { "key": "url.scheme", "source": "constant \"https\"", "stability": "semconv", "condition": "daddr == 0 && dport == 0 (the E299 TLS path)", "present": "all(zero(daddr),zero(dport))", "present_ast": {"pred": "all", "args": [{"pred": "zero", "of": {"field": "daddr"}}, {"pred": "zero", "of": {"field": "dport"}}]}, "note": "E299: an SSL uprobe sees plaintext but no socket, so peer attributes are omitted instead" },
+          { "key": "network.peer.address", "source": "daddr -> inet_ntop", "stability": "semconv", "condition": "not the E299 TLS path (daddr and dport not both zero)", "present": "any(nonzero(daddr),nonzero(dport))", "present_ast": {"pred": "any", "args": [{"pred": "nonzero", "of": {"field": "daddr"}}, {"pred": "nonzero", "of": {"field": "dport"}}]}, "note": "E298" },
+          { "key": "network.peer.port", "source": "dport", "stability": "semconv", "condition": "not the E299 TLS path (daddr and dport not both zero)", "present": "any(nonzero(daddr),nonzero(dport))", "present_ast": {"pred": "any", "args": [{"pred": "nonzero", "of": {"field": "daddr"}}, {"pred": "nonzero", "of": {"field": "dport"}}]}, "note": "E298" },
+          { "key": "network.transport", "source": "constant \"tcp\"", "stability": "semconv", "condition": "always", "present": "always", "present_ast": {"pred": "always"}, "note": "E298" },
+          { "key": "spnl.http.latency_ns", "source": "duration_ns", "stability": "spinel", "condition": "always", "present": "always", "present_ast": {"pred": "always"}, "note": "E378: symmetric with spnl.l7.latency_ns (E297) -- the span duration is authoritative, this attribute is the same number, for querying. On the E299 TLS path it is still the SSL_write -> SSL_read round trip" },
+          { "key": "process.executable.name", "source": "comm[16]", "stability": "semconv", "condition": "comm non-empty", "present": "nonempty(comm)", "present_ast": {"pred": "nonempty", "of": {"field": "comm"}}, "note": "E298" }
+        ],
+        "enrichers": ["k8s", "cri"]
+      },
+      "consumer": {
+        "form": "on_emit :http do |ev| ... end",
+        "drain_fn": "spnl_rec_http_drain",
+        "to_span_fn": "spnl_rec_http_to_span",
+        "send_fn": "spnl_otlp_span_send",
+        "flush_fn": "spnl_otlp_span_flush",
+        "properties": [
+          { "name": "pid", "kind": "field", "expose": "int", "ffi_ret": ":long", "ffi": "spnl_rec_http_pid", "source": "pid", "kfilter": "", "note": "producer tgid" },
+          { "name": "comm", "kind": "field", "expose": "str", "ffi_ret": ":str", "ffi": "spnl_rec_http_comm", "source": "comm", "kfilter": "", "note": "bpf_get_current_comm -> process.executable.name" },
+          { "name": "dport", "kind": "field", "expose": "int", "ffi_ret": ":long", "ffi": "spnl_rec_http_dport", "source": "dport", "kfilter": "", "note": "remote port, host byte order; 0 on the E299 TLS path" },
+          { "name": "duration_ns", "kind": "field", "expose": "int", "ffi_ret": ":long", "ffi": "spnl_rec_http_duration_ns", "source": "duration_ns", "kfilter": "", "note": "E298: request -> response round trip, = span duration" },
+          { "name": "cgid", "kind": "field", "expose": "int", "ffi_ret": ":long", "ffi": "spnl_rec_http_cgid", "source": "cgid", "kfilter": "", "note": "E304: cgroup id -> k8s.* pod attribution" },
+          { "name": "method", "kind": "derived", "expose": "str", "ffi_ret": ":str", "ffi": "spnl_rec_http_method", "source": "req -> spnl_http_method()", "kfilter": "", "cap": 65, "residue": "parse", "residue_means": "a variable-length walk over wire bytes the record carries; a consumer must implement it, and everything it reads is in the record", "note": "E298: first token of the request head; empty when the head does not parse. cap 65 = req[64] + NUL, the bound E377 had to reach for: the kernel-side filter only inspects the first 4 bytes, so a head with no space at all is reachable and the token is then the whole field" },
+          { "name": "path", "kind": "derived", "expose": "str", "ffi_ret": ":str", "ffi": "spnl_rec_http_path", "source": "req -> spnl_http_path()", "kfilter": "", "cap": 65, "residue": "parse", "residue_means": "a variable-length walk over wire bytes the record carries; a consumer must implement it, and everything it reads is in the record", "note": "E298: second token of the request head (path only -- no body, no headers). cap 65 = req[64] + NUL (same bound as `method`: the token cannot outgrow the field it is cut from)" },
+          { "name": "status", "kind": "derived", "expose": "int", "ffi_ret": ":long", "ffi": "spnl_rec_http_status", "source": "resp -> spnl_http_status()", "kfilter": "", "cap": 0, "residue": "parse", "residue_means": "a variable-length walk over wire bytes the record carries; a consumer must implement it, and everything it reads is in the record", "note": "E298: status digits of the response head; 0 when the head does not parse. >= 500 is what sets Span.status = ERROR on the egress side" }
+        ]
+      },
+      "metrics": [
+        { "id": "duration", "name": "spnl.http.client.request.duration", "kind": "histogram", "unit": "s", "value_from": "duration_ns", "value_unit": "ns", "bounds": "otel_duration_s", "boundaries": [0, 0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10], "bounds_authority": "OpenTelemetry eBPF Instrumentation (OBI, ex-Beyla) pkg/export/bucket.go -- the default duration buckets its HTTP/RPC duration metrics use. E272 adopted them for http.server.request.duration so that the two agents' histograms are comparable; E400 makes the array itself the declaration both sides read", "series_bound": 180, "labels": [
+            { "key": "http.request.method", "from": "method", "stability": "semconv", "bound": 10, "bound_from": "declared_set", "fallback": "_OTHER", "values": ["CONNECT", "DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT", "TRACE"], "note": "E400: the same token spnl_http_method() gives the span attribute http.request.method, but projected onto OTel's known-method set. A request whose method is not in that set still gets a span carrying the exact token; only the metric label collapses. Bound 10 = 9 methods + _OTHER" },
+            { "key": "http.response.status_code", "from": "status", "stability": "semconv", "bound": 18, "bound_from": "declared_set", "fallback": "_OTHER", "values": ["200", "201", "202", "204", "301", "302", "304", "400", "401", "403", "404", "409", "429", "500", "502", "503", "504"], "note": "E400: spnl_http_status() parses at most three digits, so the property alone admits 0..999 -- 180 000 series once multiplied by the method label. This declared set is what makes it a label: 17 codes worth a dashboard, everything else _OTHER. The RED error axis survives the collapse (500/502/503/504 are named), and the span still carries the exact code. Bound 18" }
+          ], "note": "E400: RED for the HTTP channel. The value is the SAME property the span's duration is built from (duration_ns), so a rate/latency dashboard and a trace waterfall cannot disagree about how long a request took; the data point's `count` is the rate axis, so no separate counter is declared. Buckets are the OBI-aligned `otel_duration_s` set (E272) and the record's nanoseconds are converted once, by the generator, against a checked unit pair" }
+      ]
+    },
+    {
+      "id": "redis",
+      "record_struct": "<unit>_redis_event",
+      "ringbuf_map": "<unit>_redis_events",
+      "ringbuf_size": "256 * 1024",
+      "record_bytes": 152,
+      "record_min_bytes": 152,
+      "required_through": "",
+      "producers": ["redis_emit"],
+      "fields": [
+        { "name": "hdr", "ctype": "struct spnl_event_hdr", "count": 0, "offset": 0, "bytes": 16, "expose": "", "note": "ADR-002 16B common header (type/version/reserved/timestamp)" },
+        { "name": "pid", "ctype": "__u32", "count": 0, "offset": 16, "bytes": 4, "expose": "", "note": "producer tgid" },
+        { "name": "comm", "ctype": "char", "count": 16, "offset": 20, "bytes": 16, "expose": "", "note": "bpf_get_current_comm -> process.executable.name" },
+        { "name": "daddr", "ctype": "__u32", "count": 0, "offset": 36, "bytes": 4, "expose": "", "note": "remote IPv4 address, network byte order" },
+        { "name": "dport", "ctype": "__u16", "count": 0, "offset": 40, "bytes": 2, "expose": "", "note": "remote port, host byte order" },
+        { "name": "family", "ctype": "__u16", "count": 0, "offset": 42, "bytes": 2, "expose": "", "note": "address family (2 = AF_INET)" },
+        { "name": "start_ktime", "ctype": "__u64", "count": 0, "offset": 48, "bytes": 8, "expose": "", "note": "E341: ktime of the command send (span start)" },
+        { "name": "duration_ns", "ctype": "__u64", "count": 0, "offset": 56, "bytes": 8, "expose": "", "note": "E341: command -> reply round trip, = span duration" },
+        { "name": "req", "ctype": "unsigned char", "count": 64, "offset": 64, "bytes": 64, "expose": "", "note": "first 64B of the RESP request; command + first key parsed in userspace (values never read)" },
+        { "name": "resp", "ctype": "unsigned char", "count": 16, "offset": 128, "bytes": 16, "expose": "", "note": "first 16B of the reply; a leading '-' marks a RESP error" },
+        { "name": "cgid", "ctype": "__u64", "count": 0, "offset": 144, "bytes": 8, "expose": "", "note": "E304: cgroup id -> k8s.* pod attribution" }
+      ],
+      "egress": {
+        "push_fn": "spnl_otlp_redis_span_push",
+        "span_name": "{db.operation.name}",
+        "span_kind": "CLIENT",
+        "timing": "start = start_ktime (ktime -> unix); end = start + duration_ns",
+        "timing_form": { "start": "record_ktime:start_ktime", "clock": "monotonic", "end": "start_plus:duration_ns" },
+        "drop_when": "never",
+        "drop_when_ast": {"pred": "never"},
+        "note": "the record layout is identical to the http channel, which is why one drain used to serve both; each now unpacks through its own generated mirror",
+        "attributes": [
+          { "key": "db.system", "source": "constant \"redis\"", "stability": "semconv", "condition": "always", "present": "always", "present_ast": {"pred": "always"}, "note": "E341" },
+          { "key": "db.operation.name", "source": "req[64] -> first RESP bulk string, upper-cased", "stability": "semconv", "condition": "the command parses", "present": "unexpressible(the gate is a RESP command parse of req[64] that this channel does not publish as a derived property -- redis has no typed consumer, so there is no property to name. Publishing the parse as a derivation would make this nonempty(<that property>))", "present_ast": {"pred": "unexpressible"}, "note": "E341" },
+          { "key": "db.query.text", "source": "req[64] -> command + first key", "stability": "semconv", "condition": "the command parses", "present": "unexpressible(same gate as db.operation.name: the RESP command parse is not a published property of this channel)", "present_ast": {"pred": "unexpressible"}, "note": "E341: deliberately command + key only -- RESP values are never copied into the span" },
+          { "key": "error.type", "source": "constant \"redis_error\"", "stability": "semconv", "condition": "resp[0] == '-' (RESP error reply)", "present": "byte_eq(resp,0,'-')", "present_ast": {"pred": "byte_eq", "of": {"field": "resp"}, "index": 0, "byte": 45}, "note": "E341: also sets Span.status = ERROR (the RED error axis)" },
+          { "key": "network.peer.address", "source": "daddr -> inet_ntop", "stability": "semconv", "condition": "always", "present": "always", "present_ast": {"pred": "always"}, "note": "E341" },
+          { "key": "network.peer.port", "source": "dport", "stability": "semconv", "condition": "always", "present": "always", "present_ast": {"pred": "always"}, "note": "E341" },
+          { "key": "network.transport", "source": "constant \"tcp\"", "stability": "semconv", "condition": "always", "present": "always", "present_ast": {"pred": "always"}, "note": "E341" },
+          { "key": "process.executable.name", "source": "comm[16]", "stability": "semconv", "condition": "comm non-empty", "present": "nonempty(comm)", "present_ast": {"pred": "nonempty", "of": {"field": "comm"}}, "note": "E341" }
+        ],
+        "enrichers": ["k8s", "cri"]
+      }
+    },
+    {
+      "id": "offcpu",
+      "record_struct": "<unit>_offcpu_event",
+      "ringbuf_map": "<unit>_offcpu_events",
+      "ringbuf_size": "256 * 1024",
+      "record_bytes": 288,
+      "record_min_bytes": 152,
+      "required_through": "cgid",
+      "producers": ["offcpu_emit"],
+      "fields": [
+        { "name": "hdr", "ctype": "struct spnl_event_hdr", "count": 0, "offset": 0, "bytes": 16, "expose": "", "note": "ADR-002 16B common header (type/version/reserved/timestamp)" },
+        { "name": "pid", "ctype": "__u32", "count": 0, "offset": 16, "bytes": 4, "expose": "int", "note": "producer tgid (the request handler)" },
+        { "name": "comm", "ctype": "char", "count": 16, "offset": 20, "bytes": 16, "expose": "str", "note": "bpf_get_current_comm -> process.executable.name" },
+        { "name": "duration_ns", "ctype": "__u64", "count": 0, "offset": 40, "bytes": 8, "expose": "int", "note": "E300: whole request window (recv -> send), = parent span duration" },
+        { "name": "offcpu_ns", "ctype": "__u64", "count": 0, "offset": 48, "bytes": 8, "expose": "", "note": "E300: voluntary off-CPU time accumulated inside the window. Not exposed raw (E379): what the span carries is min(offcpu_ns, duration_ns) -- the accumulation and the window are measured by different hooks, so a record where the sum overshoots the window is expressible. The clamped value is the derived property ev.offcpu_ns, the same function's output as spnl.offcpu_ns" },
+        { "name": "wait_stack", "ctype": "__s32", "count": 0, "offset": 56, "bytes": 4, "expose": "", "note": "E300: bpf_get_stackid of the last wait; -1 = none. Resolved against the unit's stack map and /proc/kallsyms in userspace. Not exposed (E379): a stack id is an index into a per-unit BPF map, meaningless as a number in Ruby -- what Ruby gets are its two READINGS, ev.wait_kind (what the wait was, E300) and ev.wait_stack_trace (where it was, E402). Both come from one fetch of the frames, so they cannot describe different stacks" },
+        { "name": "req", "ctype": "unsigned char", "count": 64, "offset": 60, "bytes": 64, "expose": "", "note": "first 64B of the request; \"METHOD path HTTP/x\" parsed in userspace" },
+        { "name": "resp", "ctype": "unsigned char", "count": 16, "offset": 124, "bytes": 16, "expose": "", "note": "first 16B of the response; \"HTTP/1.1 NNN\" status parsed in userspace" },
+        { "name": "cgid", "ctype": "__u64", "count": 0, "offset": 144, "bytes": 8, "expose": "int", "note": "E304: cgroup id -> k8s.* pod attribution" },
+        { "name": "start_ktime", "ctype": "__u64", "count": 0, "offset": 152, "bytes": 8, "expose": "", "note": "E312: real window start (span anchor + child correlation); 0 on a pre-E312 producer. Not exposed (E379): a raw ktime is an anchor for span assembly (layer 2), not something a consumer can judge on" },
+        { "name": "hdr_ext", "ctype": "unsigned char", "count": 128, "offset": 160, "bytes": 128, "expose": "", "note": "E312: first 128B of the request head, scanned for a W3C traceparent in userspace; zero on a pre-E312 producer. Not exposed (E379): raw header bytes, like dns `raw` -- what a consumer wants from them (the trace context) is layer 2's, and the request line is already ev.method / ev.path" }
+      ],
+      "egress": {
+        "push_fn": "spnl_otlp_offcpu_span_push",
+        "span_name": "{http.request.method} {url.path}",
+        "span_kind": "SERVER",
+        "timing": "start = now - duration_ns (the push path) or start_ktime (the E312 request-tree path); end = start + duration_ns",
+        "timing_form": { "start": "wall_now_minus:duration_ns", "clock": "", "end": "start_plus:duration_ns" },
+        "drop_when": "never",
+        "drop_when_ast": {"pred": "never"},
+        "note": "one record renders as TWO spans: the request window plus, when offcpu_ns > 0, a nested \"off-CPU wait (<kind>)\" child carrying spnl.wait.kind and spnl.offcpu_ns. The typed consumer's to_span(ev) builds the request-window span (the parent, which carries all the attributes above); nesting the wait child is the concise push's rendering of the same values",
+        "attributes": [
+          { "key": "http.request.method", "source": "req[64] -> first token", "stability": "semconv", "condition": "the request head parses", "present": "nonempty(method)", "present_ast": {"pred": "nonempty", "of": {"derived": "method"}}, "note": "E300" },
+          { "key": "url.path", "source": "req[64] -> second token", "stability": "semconv", "condition": "the request head has a second token", "present": "nonempty(path)", "present_ast": {"pred": "nonempty", "of": {"derived": "path"}}, "note": "E300" },
+          { "key": "http.response.status_code", "source": "resp[16] -> status digits", "stability": "semconv", "condition": "the response head parses", "present": "nonzero(status)", "present_ast": {"pred": "nonzero", "of": {"derived": "status"}}, "note": "E300: status >= 500 also sets Span.status = ERROR" },
+          { "key": "spnl.offcpu_ns", "source": "min(offcpu_ns, duration_ns)", "stability": "spinel", "condition": "always", "present": "always", "present_ast": {"pred": "always"}, "note": "E300: eBPF-specific -- how much of the request was spent not running" },
+          { "key": "spnl.oncpu_ns", "source": "duration_ns - offcpu_ns", "stability": "spinel", "condition": "always", "present": "always", "present_ast": {"pred": "always"}, "note": "E300" },
+          { "key": "spnl.wait.kind", "source": "wait_stack -> kallsyms scan (io / lock / sleep / net / other / none / unknown)", "stability": "spinel", "condition": "always", "present": "always", "present_ast": {"pred": "always"}, "note": "E300: best-effort classification of the last wait's top frames. \"none\" = no voluntary off-CPU in the window (wait_stack < 0); \"unknown\" = the stack map or /proc/kallsyms could not be read. Same function as the typed consumer's ev.wait_kind (E379)" },
+          { "key": "spnl.wait.stack", "source": "wait_stack -> the same frames spnl.wait.kind classifies, symbolised (\";\"-joined, innermost first, at most SPNL_STACK_FRAMES of them)", "stability": "spinel", "condition": "SPNL_STACK_FRAMES > 0 and the frames could be read (default 0 = attribute absent)", "present": "nonempty(wait_stack_trace)", "present_ast": {"pred": "nonempty", "of": {"derived": "wait_stack_trace"}}, "note": "E402: WHERE the request waited, beside WHAT it waited on. Same function's output as the typed consumer's ev.wait_stack_trace, and the same frame fetch spnl.wait.kind classifies -- so the kind is always explained by a frame in this value. Why not semconv `code.stacktrace`: that key is the stack of the INSTRUMENTED code, and the instrumented code here is the Ruby probe -- these frames belong to the OBSERVED task, in the kernel. Naming them spnl.wait.* keeps them beside spnl.wait.kind (their sibling reading) and leaves code.stacktrace free for the case it actually describes, a user-space stack, which no record carries today. Opt-in because it is the one attribute here whose size is unbounded by the record: up to 448 bytes per span, on both the request-window span and its off-CPU wait child, inside batches of up to SPNL_OTLP_BATCH_MAX spans (E308)" },
+          { "key": "process.executable.name", "source": "comm[16]", "stability": "semconv", "condition": "comm non-empty", "present": "nonempty(comm)", "present_ast": {"pred": "nonempty", "of": {"field": "comm"}}, "note": "E300" }
+        ],
+        "enrichers": ["k8s", "cri"]
+      },
+      "consumer": {
+        "form": "on_emit :offcpu do |ev| ... end",
+        "drain_fn": "spnl_rec_offcpu_drain",
+        "to_span_fn": "spnl_rec_offcpu_to_span",
+        "send_fn": "spnl_otlp_span_send",
+        "flush_fn": "spnl_otlp_span_flush",
+        "properties": [
+          { "name": "pid", "kind": "field", "expose": "int", "ffi_ret": ":long", "ffi": "spnl_rec_offcpu_pid", "source": "pid", "kfilter": "", "note": "producer tgid (the request handler)" },
+          { "name": "comm", "kind": "field", "expose": "str", "ffi_ret": ":str", "ffi": "spnl_rec_offcpu_comm", "source": "comm", "kfilter": "", "note": "bpf_get_current_comm -> process.executable.name" },
+          { "name": "duration_ns", "kind": "field", "expose": "int", "ffi_ret": ":long", "ffi": "spnl_rec_offcpu_duration_ns", "source": "duration_ns", "kfilter": "", "note": "E300: whole request window (recv -> send), = parent span duration" },
+          { "name": "cgid", "kind": "field", "expose": "int", "ffi_ret": ":long", "ffi": "spnl_rec_offcpu_cgid", "source": "cgid", "kfilter": "", "note": "E304: cgroup id -> k8s.* pod attribution" },
+          { "name": "method", "kind": "derived", "expose": "str", "ffi_ret": ":str", "ffi": "spnl_rec_offcpu_method", "source": "req -> spnl_http_method()", "kfilter": "", "cap": 65, "residue": "parse", "residue_means": "a variable-length walk over wire bytes the record carries; a consumer must implement it, and everything it reads is in the record", "note": "E300/E378: first token of the request head -- the http channel's derivation, verbatim (offcpu.req is the same bounded copy of the same wire, pinned by a _Static_assert). cap 65 = req[64] + NUL, the same bound as http.method for the same reason" },
+          { "name": "path", "kind": "derived", "expose": "str", "ffi_ret": ":str", "ffi": "spnl_rec_offcpu_path", "source": "req -> spnl_http_path()", "kfilter": "", "cap": 65, "residue": "parse", "residue_means": "a variable-length walk over wire bytes the record carries; a consumer must implement it, and everything it reads is in the record", "note": "E300/E378: second token of the request head (path only). Shares http's derivation and bound" },
+          { "name": "status", "kind": "derived", "expose": "int", "ffi_ret": ":long", "ffi": "spnl_rec_offcpu_status", "source": "resp -> spnl_http_status()", "kfilter": "", "cap": 0, "residue": "parse", "residue_means": "a variable-length walk over wire bytes the record carries; a consumer must implement it, and everything it reads is in the record", "note": "E300/E378: status digits of the response head; 0 when it does not parse. >= 500 is what sets Span.status = ERROR on the egress side" },
+          { "name": "offcpu_ns", "kind": "derived", "expose": "int", "ffi_ret": ":long", "ffi": "spnl_rec_offcpu_offcpu_ns", "source": "declared expression `min(offcpu_ns, duration_ns)`", "kfilter": "", "cap": 0, "expr": "min(offcpu_ns, duration_ns)", "expr_ast": {"op": "min", "args": [{"field": "offcpu_ns"}, {"field": "duration_ns"}]}, "residue": "declared", "residue_means": "generated from the declaration; no consumer implements it", "note": "E300/E379: nanoseconds of the request window spent NOT running -- the same value the span attribute spnl.offcpu_ns carries, because both are this one declaration's output. The clamp is not cosmetic: offcpu_ns is accumulated by sched_switch while duration_ns is measured by the recv/send pair, so a record whose sum exceeds its window is expressible, and the span has always reported the clamped number. A consumer filtering on `ev.offcpu_ns > x` therefore filters on exactly what it would see on the span" },
+          { "name": "oncpu_ns", "kind": "derived", "expose": "int", "ffi_ret": ":long", "ffi": "spnl_rec_offcpu_oncpu_ns", "source": "declared expression `duration_ns - derived(offcpu_ns)`", "kfilter": "", "cap": 0, "expr": "duration_ns - derived(offcpu_ns)", "expr_ast": {"op": "-", "args": [{"field": "duration_ns"}, {"derived": "offcpu_ns"}]}, "residue": "declared", "residue_means": "generated from the declaration; no consumer implements it", "note": "E300/E379: nanoseconds of the window spent running = the span attribute spnl.oncpu_ns. Not a field: the record carries the window and the wait, and this is their difference (so ev.oncpu_ns + ev.offcpu_ns == ev.duration_ns by construction). E434 D3: declared rather than hand-written, and it reads `derived(offcpu_ns)` -- the CLAMPED value, not the field of the same name. That spelling exists so that the clamp keeps having exactly one author (E379's invariant): re-spelling min(offcpu_ns, duration_ns) here would put it in two places, which is the shape E376 removed from srtt" },
+          { "name": "wait_kind", "kind": "derived", "expose": "str", "ffi_ret": ":str", "ffi": "spnl_rec_offcpu_wait_kind", "source": "wait_stack -> kallsyms scan of the captured frames -> spnl_offcpu_wait_kind()", "kfilter": "", "cap": 16, "residue": "ambient", "residue_means": "NOT derivable from the record: the input is outside it (the loaded object's BPF stack map and the running kernel's symbols), so a consumer that does not hold that state cannot produce this property at all", "note": "E300/E379: what the request was waiting ON, byte-identical to the span attribute spnl.wait.kind (same function): \"io\" / \"lock\" / \"sleep\" / \"net\" / \"other\" (a wait whose frames match no signature) / \"none\" (wait_stack < 0, i.e. the window contained no voluntary off-CPU) / \"unknown\" (the stack map or /proc/kallsyms could not be read). Best-effort by construction: E300 classifies the LAST wait's top frames, not every wait in the window. cap 16 >= the longest of that closed set of literals (\"unknown\", 7 + NUL)" },
+          { "name": "wait_stack_trace", "kind": "derived", "expose": "str", "ffi_ret": ":str", "ffi": "spnl_rec_offcpu_wait_stack_trace", "source": "wait_stack -> the same frames wait_kind classifies, symbolised -> spnl_offcpu_wait_stack()", "kfilter": "", "cap": 448, "residue": "ambient", "residue_means": "NOT derivable from the record: the input is outside it (the loaded object's BPF stack map and the running kernel's symbols), so a consumer that does not hold that state cannot produce this property at all", "note": "E402: WHERE the wait happened -- the frames themselves, \";\"-joined, INNERMOST FIRST, as kallsyms names without offsets. Named for the field it reads (`wait_stack` is a stack id and stays unexposed; this is the reading of it) but deliberately not the same word, because an index and a call stack are not the same value. Same-source guarantee (E397): wait_kind and this property are two readings of ONE frame fetch -- spnl_offcpu_wait_stack() and spnl_offcpu_wait_kind() both call the same _oc_frames(), so a kind of \"io\" is always explained by a frame that is actually in this string. Innermost-first is that guarantee made visible: the classifier scans frames in this order and stops at the first match, so the reason is the leftmost matching frame. (E092's folded output is the other way round -- outermost first -- because a flame graph is drawn from the root. This is not paste-compatible with it.) Empty unless the operator sets SPNL_STACK_FRAMES > 0 (default 0): a stack is the one property here that costs real bytes on every span, so it is off until somebody asks. The SAME number bounds both this string and the span attribute, so the two never differ in depth. cap 448 = the declared maximum depth, exactly: 8 frames x 55 characters (the symbol width the userspace kallsyms table stores, _oc_sym.n[56]) + 7 separators + NUL. A declared derivation never truncates, so the depth cap and the byte cap are one statement" }
+        ]
+      }
+    },
+    {
+      "id": "l7stream",
+      "record_struct": "<unit>_l7stream_event",
+      "ringbuf_map": "<unit>_l7stream_events",
+      "ringbuf_size": "256 * 1024",
+      "record_bytes": 160,
+      "record_min_bytes": 160,
+      "required_through": "",
+      "producers": ["emit_tcp_stream", "emit_tcp_payload"],
+      "fields": [
+        { "name": "hdr", "ctype": "struct spnl_event_hdr", "count": 0, "offset": 0, "bytes": 16, "expose": "", "note": "ADR-002 16B common header (type/version/reserved/timestamp)" },
+        { "name": "sock", "ctype": "__u64", "count": 0, "offset": 16, "bytes": 8, "expose": "", "note": "E339: sock pointer -- the reassembly key (one stream per connection)" },
+        { "name": "len", "ctype": "__u32", "count": 0, "offset": 24, "bytes": 4, "expose": "", "note": "E339: valid bytes in raw (raw is length-bounded, NOT NUL-terminated)" },
+        { "name": "raw", "ctype": "char", "count": 128, "offset": 28, "bytes": 128, "expose": "", "note": "E339: up to 128B of stream payload; the consumer reads exactly len bytes" }
+      ]
+    }
+  ]
+}

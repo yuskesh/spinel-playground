@@ -1,0 +1,14 @@
+/* generated from tools/app/templates/channel_xcore.h.erb: channel
+ * `<%= c.name %>` (decision 0014 §5), a udp: :out channel whose consumer is
+ * the other core, through the OCRAM ring (channel_<%= c.name %>_put.c).
+ * CORE puts; the M33 takes. */
+#ifndef SPC_CHANNEL_<%= c.name.upcase %>_H
+#define SPC_CHANNEL_<%= c.name.upcase %>_H
+#include <stdint.h>
+
+#define SPC_CHANNEL_<%= c.name.upcase %>_SIZE <%= c.size %>u
+#define SPC_CHANNEL_<%= c.name.upcase %>_DEPTH <%= c.depth %>u
+
+int32_t spc_channel_<%= c.name %>_put(const uint8_t *data, uint32_t data_len, uint32_t n);
+int32_t spc_channel_<%= c.name %>_check(void);
+#endif

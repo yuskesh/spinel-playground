@@ -1,0 +1,6 @@
+core-contract 1
+root unreserved.rb
+entry uf_many
+result i64
+param x scalar i64
+param y scalar i64

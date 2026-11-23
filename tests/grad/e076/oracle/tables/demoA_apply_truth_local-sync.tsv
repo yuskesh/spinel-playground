@@ -1,0 +1,17 @@
+device	local-sync
+image	64x64
+pixels	4096
+ky	0.25	0.5	0.25
+kx	0.25	0.5	0.25
+hash	17694367483062141900
+h2d	5
+d2h_before_readback	0
+invoke	2
+alloc	7
+readback_bytes	4096
+ndiff_vs_f64ref	0
+nd_near	0
+nd_far	0
+max_abs_diff	0
+ties	226
+min_margin	0.0

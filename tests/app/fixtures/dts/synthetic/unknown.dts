@@ -1,0 +1,48 @@
+/dts-v1/;
+
+/ {
+	compatible = "synthetic,unknown-board";
+	#address-cells = < 0x1 >;
+	#size-cells = < 0x1 >;
+
+	soc {
+		#address-cells = < 0x1 >;
+		#size-cells = < 0x1 >;
+
+		systick: timer@e000e010 {
+			compatible = "arm,armv8m-systick";
+			reg = < 0xe000e010 0x10 >;
+			status = "okay";
+		};
+
+		gpio0: gpio@40000000 {
+			compatible = "arm,mmio32-gpio";
+			reg = < 0x40000000 0x1000 >;
+			gpio-controller;
+			#gpio-cells = < 0x2 >;
+			status = "okay";
+		};
+
+		gpiox: gpio@40020000 {
+			compatible = "vendor,new-gpio";
+			reg = < 0x40020000 0x1000 >;
+			gpio-controller;
+			#gpio-cells = < 0x2 >;
+			status = "okay";
+		};
+	};
+
+	leds {
+		compatible = "gpio-leds";
+
+		led_0: led_0 {
+			gpios = < &gpio0 0x0 0x0 >;
+			label = "LED0";
+		};
+
+		led_new: led_new {
+			gpios = < &gpiox 0x0 0x0 >;
+			label = "NEWLED";
+		};
+	};
+};

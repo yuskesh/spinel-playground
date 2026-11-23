@@ -1,0 +1,38 @@
+#include <zephyr/dt-bindings/adc/adc.h>
+#include <zephyr/dt-bindings/adc/mcux-lpadc.h>
+/* The board overlay of the acceptance sample on FRDM-MCXN947 (decision
+ * 0014, Task 10): the board's own LEDs and buttons (aliases led0, sw0, sw1)
+ * serve Led and Button; Adc needs the two `zephyr,user` channels on the
+ * LPADC that the board's devicetree does not declare, in the shape of
+ * Zephyr's tests/drivers/adc/adc_api overlay for this board. */
+/ {
+	zephyr,user {
+		io-channels = <&lpadc0 0>, <&lpadc0 1>;
+		io-channel-names = "ch0", "ch1";
+	};
+};
+
+&lpadc0 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	channel@0 {
+		reg = <0>;
+		zephyr,gain = "ADC_GAIN_1";
+		zephyr,reference = "ADC_REF_EXTERNAL1";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,resolution = <12>;
+		zephyr,vref-mv = <1800>;
+		zephyr,input-positive = <MCUX_LPADC_CH1A>;
+	};
+
+	channel@1 {
+		reg = <1>;
+		zephyr,gain = "ADC_GAIN_1";
+		zephyr,reference = "ADC_REF_EXTERNAL1";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,resolution = <12>;
+		zephyr,vref-mv = <1800>;
+		zephyr,input-positive = <MCUX_LPADC_CH2A>;
+	};
+};

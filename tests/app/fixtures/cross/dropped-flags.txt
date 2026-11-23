@@ -1,0 +1,6 @@
+-fno-printf-return-value
+-fno-reorder-functions
+-mfp16-format=ieee
+-fno-defer-pop
+--param=min-pagesize=0
+-specs=picolibc.specs

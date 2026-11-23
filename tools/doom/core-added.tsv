@@ -1,0 +1,45 @@
+# tools/doom/core-added.tsv — fields the entries need that no ivar of the original holds.
+#
+# Decision 0008 lets the schema's `origin` "explain an added traversal stack":
+# storage the port needs because it replaced something the original did without
+# storage -- recursion, a call argument, a return value. tools/doom/emit-schema.rb
+# emits each row as a schema field with origin `added:KEY` and initial 0, and one
+# access row per `entry:mode` it names. A row naming a field the inventory
+# already emits is refused, and so is a count outside 0008's grammar.
+#
+# A HAND-OFF ROW (key `handoff`) adds no field: it names a field the schema
+# already has and an entry that receives it as a CALL ARGUMENT in the loop --
+# StatusBar#draw is handed the player's arrays by bin/doom.rb -- which the audit
+# measures as an argument, not as a read in that entry's closure. The access row
+# is written with the rest, and access.tsv carries a `#handoff` line with this
+# reason so the row is not read as an access the audit missed.
+#
+# THE CAPACITY CELLS ARE NOT PREPARED. `core_step_caps` and `core_render_caps`
+# are scratch: each entry writes them at its start from the counts of the
+# allocations it was handed, so a capacity cannot disagree with the storage it
+# bounds.
+#
+# THE KNOT STACK'S COUNT IS A CONFIGURED CAPACITY, NOT A CLAIMED MAXIMUM.
+# `knotcells` is 256 frames of 21 cells. Decision 0008's clarification of
+# 2026-09-18 (applying 0010's finite-capacity rule) states the contract: the
+# machine agrees with the reference while the required depth stays within the
+# capacity, and refuses deterministically before writing past it otherwise, so
+# the number is a deployment configuration rather than a correctness claim.
+# tools/doom/knot-cps.rb refuses to write a push without its capacity check,
+# and tests/doom-core/capacity.sh runs the demo at capacities it exceeds.
+# The deepest depth observed over DEMO1-3 and the 19 scenarios was 21, in
+# 4,509,048 pushes; that motivates the configuration and bounds nothing.
+#
+#key	name	role	element	count	entries	reason
+knot-stack	core_knot_stack	scratch	i64	limit:knotcells	step:inout	The frames of the 62-member recursive knot's state machine (tools/doom/knot-cps.rb), 21 cells each. COUNT IS A CONFIGURED CAPACITY: see the header.
+sight-stack	core_sight_stack	scratch	i64	level:sightcells	step:inout	Game#cross_bsp_node's work stack: the node tree is acyclic, so a path holds at most num_nodes + 1 frames of 3 cells (examples/doom/core/src/stepspec.rb).
+sound-stack	core_sound_stack	scratch	i64	level:soundcells	step:inout	Game#recursive_sound's work stack: a sector is pushed again only at a lower soundblocks/traversed state, so num_sectors + 1 frames of 6 cells.
+step-caps	core_step_caps	scratch	i64	fixed:3	step:inout	The sight stack's, the sound stack's and the switch list's capacities, written by doom_core_step at its start from the counts it was handed (KN_CAP_*).
+bsp-stack	core_bsp_stack	scratch	i64	level:bspcells	render:inout	Renderer#render_bsp_node's work stack: num_nodes + 2 frames of 3 cells (examples/doom/core/src/rview.rb).
+render-caps	core_render_caps	scratch	i64	fixed:4	render:inout	The WAD's byte count, the lump count, the reset table's length and the BSP stack's capacity, written by doom_core_render at its start from the counts it was handed (RV_CAP_*).
+command	core_command	persistent	i32	fixed:5	input:inout,step:in	0008's command buffer: forward move, side move, angle turn, buttons and the encoded angle byte. doom_core_input writes it; for demo playback Full stores the decoded command; doom_core_step reads it. It replaces the loop's call arguments to Game#g_ticker.
+frame	core_frame	persistent	i64	fixed:1	render:inout	The frame sequence number doom_core_render counts and returns on success (0008). The original loop's frame is its tic variable, which no object holds.
+sb-shadow	core_sb_shadow	scratch	u8	screen:sbshadowpixels	render:inout	The status bar's 320x200 surface when the screen is scaled (bin/doom.rb's sbshadow: StatusBar#draw draws into it and Hires.blit_scale copies its bottom rows); one byte when it is not.
+handoff	game_pl_ammo	-	-	-	render:in	Hand-off, not a closure read: bin/doom.rb passes g.pl_ammo to StatusBar#draw, which the render entry runs.
+handoff	game_pl_maxammo	-	-	-	render:in	Hand-off, not a closure read: bin/doom.rb passes g.pl_maxammo to StatusBar#draw, which the render entry runs.
+handoff	game_pl_weaponowned	-	-	-	render:in	Hand-off, not a closure read: bin/doom.rb passes g.pl_weaponowned to StatusBar#draw, which the render entry runs.

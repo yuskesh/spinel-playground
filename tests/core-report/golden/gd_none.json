@@ -1,0 +1,127 @@
+{
+  "format": "spinel-core-report",
+  "version": 1,
+  "entry": "gd_none",
+  "target": "normalized-target",
+  "profile": "hosted-stage2",
+  "inputs": {
+    "contract": {
+      "file": "none.contract",
+      "sha256": "f92ee06179f3293254cb6931b6b9c9ce1116155e98721466ae650aa0605fcb31"
+    },
+    "source": {
+      "file": "golden/none.rb",
+      "revision": null,
+      "sha256": "b5fb52f972b835b464d3067bbe3cadbc722e23403184f5019df15c4ad658d3b7"
+    }
+  },
+  "object": {
+    "file": "normalized.o",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "tools": {
+    "kernel": {
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "reader": {
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "clang": {
+      "version": "normalized",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  },
+  "properties": {
+    "recursion": {
+      "mode": "enforce",
+      "evaluated": false
+    },
+    "allocation": {
+      "mode": "enforce",
+      "evaluated": false
+    },
+    "loop_bound": {
+      "mode": "observe",
+      "evaluated": true,
+      "verdict": "pass",
+      "evidence": [
+        {
+          "kind": "static_proof",
+          "subject": "work gd_none",
+          "value": {
+            "kind": "iterations",
+            "expression": "0"
+          },
+          "artifact": {
+            "file": "golden/none.rb",
+            "revision": null,
+            "sha256": "b5fb52f972b835b464d3067bbe3cadbc722e23403184f5019df15c4ad658d3b7"
+          }
+        }
+      ],
+      "work_bound": {
+        "expression": "0",
+        "limit": null,
+        "terms": []
+      },
+      "loops": []
+    },
+    "stack_budget": {
+      "mode": "observe",
+      "evaluated": true,
+      "verdict": "unknown",
+      "reason": "profile 'hosted-stage2' declares no provisioned_stack and no interrupt_reserve, so the inequality has no right-hand side",
+      "kernel_stack": 0,
+      "call_overhead": {
+        "bytes": 0,
+        "target": "normalized-target",
+        "evidence": "normalized"
+      },
+      "evidence": [
+        {
+          "kind": "measurement",
+          "subject": "frame sizes",
+          "method": "warn-stack-size=0 on a side compile of the IR the object was generated from, with that object's codegen line",
+          "artifact": {
+            "file": "golden/none.rb",
+            "revision": null,
+            "sha256": "b5fb52f972b835b464d3067bbe3cadbc722e23403184f5019df15c4ad658d3b7"
+          }
+        },
+        {
+          "kind": "static_proof",
+          "subject": "worst path",
+          "frame_total": 0,
+          "call_edges": 0,
+          "artifact": {
+            "file": "golden/none.rb",
+            "revision": null,
+            "sha256": "b5fb52f972b835b464d3067bbe3cadbc722e23403184f5019df15c4ad658d3b7"
+          }
+        },
+        {
+          "kind": "declaration",
+          "subject": "per-call stack overhead",
+          "detail": "normalized"
+        }
+      ],
+      "worst_path": [
+        "normalized"
+      ],
+      "frames": [
+        {
+          "function": "normalized",
+          "bytes": 0
+        }
+      ]
+    },
+    "extern_effects": {
+      "mode": "enforce",
+      "evaluated": false
+    },
+    "undefined_symbols": {
+      "mode": "enforce",
+      "evaluated": false
+    }
+  }
+}

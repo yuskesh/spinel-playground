@@ -1,0 +1,894 @@
+diff --git a/doomgeneric/Makefile.headless b/doomgeneric/Makefile.headless
+index a3c5c5e..fa3e755 100644
+--- a/doomgeneric/Makefile.headless
++++ b/doomgeneric/Makefile.headless
+@@ -18,6 +18,7 @@ CFLAGS+=-Wall -DNORMALUNIX -DLINUX -D_DEFAULT_SOURCE
+ CFLAGS+=-DDG_FRAME_HOOK
+ CFLAGS+=-DDG_DUMP_HOOK
+ CFLAGS+=-DDG_E047_HOOK
++CFLAGS+=-DDG_E051_HOOK
+ # NOTE (macOS/arm64, Apple clang 21): the doomgeneric sources at dcb7a8d compile
+ # clean under -Wall with *no* -Wno-* suppressions and *no* source edits.
+ # The only macOS frictions are in the stock Makefile, and both are link flags
+@@ -30,7 +31,7 @@ LIBS+=-lm
+ OBJDIR=build_headless
+ OUTPUT=doomgeneric_headless
+ 
+-SRC_DOOM = dummy.o am_map.o doomdef.o doomstat.o dstrings.o d_event.o d_items.o d_iwad.o d_loop.o d_main.o d_mode.o d_net.o f_finale.o f_wipe.o g_game.o hu_lib.o hu_stuff.o info.o i_cdmus.o i_endoom.o i_joystick.o i_scale.o i_sound.o i_system.o i_timer.o memio.o m_argv.o m_bbox.o m_cheat.o m_config.o m_controls.o m_fixed.o m_menu.o m_misc.o m_random.o p_ceilng.o p_doors.o p_enemy.o p_floor.o p_inter.o p_lights.o p_map.o p_maputl.o p_mobj.o p_plats.o p_pspr.o p_saveg.o p_setup.o p_sight.o p_spec.o p_switch.o p_telept.o p_tick.o p_user.o r_bsp.o r_data.o r_draw.o r_main.o r_plane.o r_segs.o r_sky.o r_things.o sha1.o sounds.o statdump.o st_lib.o st_stuff.o s_sound.o tables.o v_video.o wi_stuff.o w_checksum.o w_file.o w_main.o w_wad.o z_zone.o w_file_stdc.o i_input.o i_video.o doomgeneric.o doomgeneric_headless.o doomgeneric_dump.o doomgeneric_e047.o
++SRC_DOOM = dummy.o am_map.o doomdef.o doomstat.o dstrings.o d_event.o d_items.o d_iwad.o d_loop.o d_main.o d_mode.o d_net.o f_finale.o f_wipe.o g_game.o hu_lib.o hu_stuff.o info.o i_cdmus.o i_endoom.o i_joystick.o i_scale.o i_sound.o i_system.o i_timer.o memio.o m_argv.o m_bbox.o m_cheat.o m_config.o m_controls.o m_fixed.o m_menu.o m_misc.o m_random.o p_ceilng.o p_doors.o p_enemy.o p_floor.o p_inter.o p_lights.o p_map.o p_maputl.o p_mobj.o p_plats.o p_pspr.o p_saveg.o p_setup.o p_sight.o p_spec.o p_switch.o p_telept.o p_tick.o p_user.o r_bsp.o r_data.o r_draw.o r_main.o r_plane.o r_segs.o r_sky.o r_things.o sha1.o sounds.o statdump.o st_lib.o st_stuff.o s_sound.o tables.o v_video.o wi_stuff.o w_checksum.o w_file.o w_main.o w_wad.o z_zone.o w_file_stdc.o i_input.o i_video.o doomgeneric.o doomgeneric_headless.o doomgeneric_dump.o doomgeneric_e047.o doomgeneric_e051.o
+ OBJS += $(addprefix $(OBJDIR)/, $(SRC_DOOM))
+ 
+ all: $(OUTPUT)
+diff --git a/doomgeneric/d_main.c b/doomgeneric/d_main.c
+index 63aa12d..ac7eeeb 100644
+--- a/doomgeneric/d_main.c
++++ b/doomgeneric/d_main.c
+@@ -1166,6 +1166,9 @@ void DG_DumpHook(void);   // doomgeneric_dump.c
+ #ifdef DG_E047_HOOK
+ void DG_E047Hook(void);   // doomgeneric_e047.c
+ #endif
++#ifdef DG_E051_HOOK
++void DG_E051Hook(void);   // doomgeneric_e051.c
++#endif
+ 
+ void D_DoomMain (void)
+ {
+@@ -1861,6 +1864,12 @@ void D_DoomMain (void)
+     // when it is. Placed here because R_Init() and P_Init() are done but no
+     // level is loaded and no tic has run.
+     DG_E047Hook();
++#endif
++#ifdef DG_E051_HOOK
++    // spinel-llvm E051 (P004 Phase 3): reference oracle dumps for the
++    // texture/flat/sprite layers and one complete frame. No-op unless
++    // DG_E051_DIR is set; exits when it is.
++    DG_E051Hook();
+ #endif
+     D_DoomLoop ();
+ }
+diff --git a/doomgeneric/doomgeneric_e051.c b/doomgeneric/doomgeneric_e051.c
+new file mode 100644
+index 0000000..110c23c
+--- /dev/null
++++ b/doomgeneric/doomgeneric_e051.c
+@@ -0,0 +1,721 @@
++//
++// doomgeneric_e051.c
++//
++// spinel-llvm / E051 (P004 Phase 3) reference oracle hooks.
++//
++// Additive on top of the R007 headless harness + the E044 and E047 dump hooks.
++// Same shape as both: one new .c file plus a handful of #ifdef'd call sites,
++// and a hook that is a complete no-op unless DG_E051_DIR is set.
++//
++// What it dumps, all straight out of the reference implementation's own state:
++//
++//   1. the texture layer as R_InitTextures / R_GenerateLookup left it, and the
++//      fully materialised column bytes that R_GetColumn hands to R_DrawColumn
++//   2. the flat lumps and the PNAMES resolution
++//   3. the sprite layer: R_InitSpriteDefs's rotation/flip tables, the sprite
++//      lump offsets, and every mobj P_SetupLevel spawned, in sector thinglist
++//      order (that order *is* the vissprite generation order)
++//   4. one complete frame from the player 1 start: status bar + walls +
++//      visplanes + spans + sky + sprites + player sprites, with a trace of
++//      every span, every wall column and every masked column, and the
++//      320x200 8bit index framebuffer
++//   5. the same frame from 8 viewing directions (k*ANG45)
++//
++// Environment variables:
++//
++//   DG_E051_DIR     output directory. Unset -> the hook does nothing.
++//   DG_E051_WHAT    comma separated subset of "tex,sprite,render,dirs"
++//   DG_E051_EP      episode (default 1)
++//   DG_E051_MAP     map (default 1)
++//   DG_E051_SKILL   skill_t 0..4 (default 2 = sk_medium)
++//
++// The view is defined exactly as in E047 (player 1 start, angle from the map
++// thing, viewz = mo->z + VIEWHEIGHT clamped to ceilingz - 4*FRACUNIT) so that
++// the Ruby side, which still has no game logic, can derive it from the WAD.
++//
++// NOTE on the status bar: no tic has run at the hook point, so ST_Ticker() has
++// never executed and st_notdeathmatch is still false. ST_Drawer(false, true)
++// therefore paints the bar background and every widget except STARMS. That is
++// the state both sides reproduce; see the E051 Honest boundary.
++//
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <stdint.h>
++#include <limits.h>
++
++#include "doomtype.h"
++#include "doomdef.h"
++#include "doomdata.h"
++#include "i_swap.h"
++#include "doomstat.h"
++#include "d_player.h"
++#include "i_system.h"
++#include "m_bbox.h"
++#include "m_fixed.h"
++#include "p_local.h"
++#include "r_defs.h"
++#include "r_sky.h"
++#include "r_state.h"
++#include "r_main.h"
++#include "r_plane.h"
++#include "r_things.h"
++#include "st_stuff.h"
++#include "tables.h"
++#include "v_video.h"
++#include "w_wad.h"
++#include "z_zone.h"
++#include "info.h"
++
++void G_InitNew(skill_t skill, int episode, int map);
++void R_RenderPlayerView(player_t *player);
++void R_ExecuteSetViewSize(void);
++byte *R_GetColumn(int tex, int col);
++
++extern byte *I_VideoBuffer;
++
++// r_data.c globals (plain globals in vanilla)
++extern int numtextures;
++extern int *texturewidthmask;
++extern fixed_t *textureheight;
++extern int *texturecompositesize;
++extern short **texturecolumnlump;
++extern unsigned short **texturecolumnofs;
++extern byte **texturecomposite;
++extern int *flattranslation;
++extern int *texturetranslation;
++extern int firstflat, lastflat, numflats;
++
++// r_things.c globals
++extern vissprite_t vissprites[];
++extern vissprite_t *vissprite_p;
++extern vissprite_t vsprsortedhead;
++extern fixed_t pspritescale;
++extern fixed_t pspriteiscale;
++
++// r_draw.c globals
++extern fixed_t ds_xfrac, ds_yfrac, ds_xstep, ds_ystep;
++extern int ds_y, ds_x1, ds_x2;
++extern byte *ds_source;
++extern lighttable_t *ds_colormap;
++extern lighttable_t *dc_colormap;
++extern fixed_t dc_iscale, dc_texturemid;
++extern int dc_x, dc_yl, dc_yh;
++
++// r_segs.c globals
++extern int rw_x, rw_stopx;
++extern fixed_t rw_distance, rw_scale, rw_scalestep, rw_offset;
++extern angle_t rw_normalangle, rw_centerangle;
++extern int rw_angle1;
++extern fixed_t rw_midtexturemid, rw_toptexturemid, rw_bottomtexturemid;
++extern int midtexture, toptexture, bottomtexture;
++extern boolean segtextured;
++
++// r_plane.c globals
++extern visplane_t visplanes[];
++extern visplane_t *lastvisplane;
++extern fixed_t planeheight;
++extern fixed_t yslope[];
++extern fixed_t distscale[];
++extern fixed_t basexscale, baseyscale;
++
++// texture_t is opaque in r_data.c; mirror the layout (r_data.c:86-100).
++typedef struct
++{
++    short originx;
++    short originy;
++    int patch;
++} e051_texpatch_t;
++
++typedef struct
++{
++    char name[8];
++    short width;
++    short height;
++    int index;
++    void *next;
++    short patchcount;
++    e051_texpatch_t patches[1];
++} e051_texture_t;
++
++extern e051_texture_t **textures;
++
++// ---------------------------------------------------------------- plumbing
++
++static FILE *e051_open(const char *dir, const char *name)
++{
++    char path[1024];
++    FILE *fp;
++
++    snprintf(path, sizeof(path), "%s/%s", dir, name);
++    fp = fopen(path, "wb");
++    if (fp == NULL)
++        I_Error("DG_E051: cannot open %s", path);
++    return fp;
++}
++
++static void e051_name8(const char *src, char *dst)
++{
++    int i;
++
++    for (i = 0; i < 8 && src[i]; i++)
++        dst[i] = src[i];
++    dst[i] = '\0';
++}
++
++// ---------------------------------------------------------------- tracing
++
++#define E051_MAXWALL 4096
++#define E051_MAXCOL 262144
++#define E051_MAXSPAN 65536
++
++static int s_trace = 0;
++static int s_phase = 0; // 0 walls, 1 planes, 2 sprites, 3 psprites
++
++typedef struct
++{
++    int seg, x1, x2;
++    fixed_t offset;
++    angle_t centerangle;
++    fixed_t midmid, topmid, botmid;
++    int silhouette;
++    fixed_t bsil, tsil;
++    int masked;
++} e051_wall_t;
++
++static e051_wall_t s_wall[E051_MAXWALL];
++static int s_nwall = 0;
++
++typedef struct
++{
++    int phase, tier, x, yl, yh;
++    int texnum, texcol;
++    fixed_t iscale, texmid;
++    int cmap;
++} e051_col_t;
++
++static e051_col_t s_col[E051_MAXCOL];
++static int s_ncol = 0;
++
++typedef struct
++{
++    int y, x1, x2;
++    fixed_t xfrac, yfrac, xstep, ystep;
++    int cmap, picnum;
++} e051_span_t;
++
++static e051_span_t s_span[E051_MAXSPAN];
++static int s_nspan = 0;
++
++static int s_curpicnum = 0;
++
++void DG_E051_Phase(int phase)
++{
++    s_phase = phase;
++}
++
++void DG_E051_Wall(void)
++{
++    e051_wall_t *w;
++
++    if (!s_trace)
++        return;
++    if (s_nwall >= E051_MAXWALL)
++        I_Error("DG_E051: wall overflow");
++    w = &s_wall[s_nwall++];
++    w->seg = (int)(curline - segs);
++    w->x1 = rw_x;
++    w->x2 = rw_stopx - 1;
++    w->offset = rw_offset;
++    w->centerangle = rw_centerangle;
++    w->midmid = rw_midtexturemid;
++    w->topmid = rw_toptexturemid;
++    w->botmid = rw_bottomtexturemid;
++    w->silhouette = ds_p->silhouette;
++    w->bsil = ds_p->bsilheight;
++    w->tsil = ds_p->tsilheight;
++    w->masked = ds_p->maskedtexturecol != NULL;
++}
++
++void DG_E051_Col(int tier, int texnum, int texcol)
++{
++    e051_col_t *c;
++
++    if (!s_trace)
++        return;
++    if (s_ncol >= E051_MAXCOL)
++        I_Error("DG_E051: column overflow");
++    c = &s_col[s_ncol++];
++    c->phase = s_phase;
++    c->tier = tier;
++    c->x = dc_x;
++    c->yl = dc_yl;
++    c->yh = dc_yh;
++    c->texnum = texnum;
++    c->texcol = texcol;
++    c->iscale = dc_iscale;
++    c->texmid = dc_texturemid;
++    c->cmap = dc_colormap == NULL ? -1 : (int)((dc_colormap - colormaps) / 256);
++}
++
++void DG_E051_Span(int y, int x1, int x2)
++{
++    e051_span_t *s;
++
++    if (!s_trace)
++        return;
++    if (s_nspan >= E051_MAXSPAN)
++        I_Error("DG_E051: span overflow");
++    s = &s_span[s_nspan++];
++    s->y = y;
++    s->x1 = x1;
++    s->x2 = x2;
++    s->xfrac = ds_xfrac;
++    s->yfrac = ds_yfrac;
++    s->xstep = ds_xstep;
++    s->ystep = ds_ystep;
++    s->cmap = (int)((ds_colormap - colormaps) / 256);
++    s->picnum = s_curpicnum;
++}
++
++void DG_E051_Picnum(int picnum)
++{
++    s_curpicnum = picnum;
++}
++
++// ---------------------------------------------------------------- 1. texture
++
++static void dump_textures(const char *dir)
++{
++    FILE *fp, *fb, *fs;
++    int i, j, x, h, w;
++    char name[9];
++    long total = 0;
++
++    fp = e051_open(dir, "textures.tsv");
++    fprintf(fp, "#i\tname\twidth\theight\tpatchcount\twidthmask\ttextureheight\tcompositesize\ttranslation\n");
++    for (i = 0; i < numtextures; i++)
++    {
++        e051_name8(textures[i]->name, name);
++        fprintf(fp, "%d\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n", i, name,
++                textures[i]->width, textures[i]->height,
++                textures[i]->patchcount, texturewidthmask[i],
++                (int)textureheight[i], texturecompositesize[i],
++                texturetranslation[i]);
++    }
++    fclose(fp);
++
++    fp = e051_open(dir, "texpatches.tsv");
++    fprintf(fp, "#tex\tk\toriginx\toriginy\tpatchlump\n");
++    for (i = 0; i < numtextures; i++)
++        for (j = 0; j < textures[i]->patchcount; j++)
++            fprintf(fp, "%d\t%d\t%d\t%d\t%d\n", i, j,
++                    textures[i]->patches[j].originx,
++                    textures[i]->patches[j].originy,
++                    textures[i]->patches[j].patch);
++    fclose(fp);
++
++    fp = e051_open(dir, "texcols.tsv");
++    fprintf(fp, "#tex\tcol\tcollump\tcolofs\n");
++    for (i = 0; i < numtextures; i++)
++    {
++        w = textures[i]->width;
++        for (x = 0; x < w; x++)
++            fprintf(fp, "%d\t%d\t%d\t%d\n", i, x,
++                    texturecolumnlump[i][x], texturecolumnofs[i][x]);
++    }
++    fclose(fp);
++
++    // Every column every wall tier can ever ask for, materialised exactly the
++    // way R_DrawColumn sees it: R_GetColumn masks the column index itself, so
++    // this walks 0..width-1 and records what comes back.
++    fb = e051_open(dir, "texcolumns.bin");
++    fp = e051_open(dir, "texcolumns.tsv");
++    fs = e051_open(dir, "texshort.tsv");
++    fprintf(fp, "#tex\toffset\tbytes\n");
++    fprintf(fs, "#tex\tcol\tcollump\tcolofs\tlumpsize\tavail\theight\n");
++    for (i = 0; i < numtextures; i++)
++    {
++        w = textures[i]->width;
++        h = textureheight[i] >> FRACBITS;
++        fprintf(fp, "%d\t%ld\t%d\n", i, total, w * h);
++        for (x = 0; x < w; x++)
++        {
++            byte *src = R_GetColumn(i, x);
++            int lump = texturecolumnlump[i][x & texturewidthmask[i]];
++            int n = h;
++
++            // A single-patch column whose post is short and near the end of the
++            // patch lump makes vanilla read *past the lump* -- zone heap bytes,
++            // i.e. undefined. Dump only the defined prefix, zero-fill the rest,
++            // and record the column. (E051 texture gate T-d.)
++            if (lump > 0)
++            {
++                int avail = W_LumpLength(lump) - texturecolumnofs[i][x & texturewidthmask[i]];
++                if (avail < 0)
++                    avail = 0;
++                if (avail < n)
++                {
++                    fprintf(fs, "%d\t%d\t%d\t%d\t%d\t%d\t%d\n", i, x, lump,
++                            texturecolumnofs[i][x & texturewidthmask[i]],
++                            W_LumpLength(lump), avail, h);
++                    n = avail;
++                }
++            }
++            fwrite(src, 1, n, fb);
++            for (j = n; j < h; j++)
++                fputc(0, fb);
++            total += h;
++        }
++    }
++    fclose(fp);
++    fclose(fb);
++    fclose(fs);
++
++    fp = e051_open(dir, "flats.tsv");
++    fprintf(fp, "#i\tname\tlumpnum\ttranslation\n");
++    for (i = 0; i < numflats; i++)
++    {
++        e051_name8(lumpinfo[firstflat + i].name, name);
++        fprintf(fp, "%d\t%s\t%d\t%d\n", i, name, firstflat + i, flattranslation[i]);
++    }
++    fclose(fp);
++
++    // F_START..F_END also holds the 0-byte markers F1_START and F1_END.
++    // Vanilla gives them flat numbers too (they count in numflats) but they
++    // have no contents, so they are written as 4096 zero bytes (both sides agree).
++    fb = e051_open(dir, "flats.bin");
++    for (i = 0; i < numflats; i++)
++    {
++        if (W_LumpLength(firstflat + i) == 4096)
++        {
++            byte *src = W_CacheLumpNum(firstflat + i, PU_STATIC);
++            fwrite(src, 1, 4096, fb);
++            W_ReleaseLumpNum(firstflat + i);
++        }
++        else
++        {
++            for (j = 0; j < 4096; j++)
++                fputc(0, fb);
++        }
++    }
++    fclose(fb);
++
++    fprintf(stderr, "DG_E051: wrote %d textures (%ld column bytes), %d flats\n",
++            numtextures, total, numflats);
++}
++
++// ---------------------------------------------------------------- 2. sprites
++
++static void dump_sprites(const char *dir)
++{
++    FILE *fp;
++    int i, j, k, n;
++    char name[9];
++    sector_t *sec;
++    mobj_t *mo;
++
++    fp = e051_open(dir, "spritedefs.tsv");
++    fprintf(fp, "#sprite\tname\tframe\trotate\tlump0\tlump1\tlump2\tlump3\tlump4"
++                "\tlump5\tlump6\tlump7\tflipbits\n");
++    for (i = 0; i < numsprites; i++)
++    {
++        for (j = 0; j < sprites[i].numframes; j++)
++        {
++            spriteframe_t *sf = &sprites[i].spriteframes[j];
++            int flipbits = 0;
++            for (k = 0; k < 8; k++)
++                if (sf->flip[k])
++                    flipbits |= 1 << k;
++            fprintf(fp, "%d\t%s\t%d\t%d", i, sprnames[i], j, sf->rotate);
++            for (k = 0; k < 8; k++)
++                fprintf(fp, "\t%d", sf->lump[k]);
++            fprintf(fp, "\t%d\n", flipbits);
++        }
++    }
++    fclose(fp);
++
++    fp = e051_open(dir, "spritelumps.tsv");
++    fprintf(fp, "#i\tlumpnum\tname\twidth\toffset\ttopoffset\n");
++    for (i = 0; i < numspritelumps; i++)
++    {
++        e051_name8(lumpinfo[firstspritelump + i].name, name);
++        fprintf(fp, "%d\t%d\t%s\t%d\t%d\t%d\n", i, firstspritelump + i, name,
++                (int)spritewidth[i], (int)spriteoffset[i], (int)spritetopoffset[i]);
++    }
++    fclose(fp);
++
++    // The spawned mobjs, walked in exactly the order R_AddSprites walks them.
++    fp = e051_open(dir, "things.tsv");
++    fprintf(fp, "#sector\torder\tx\ty\tz\tangle\ttype\tsprite\tframe\tflags"
++                "\tradius\theight\tfloorz\tceilingz\tsubsector\n");
++    n = 0;
++    for (i = 0; i < numsectors; i++)
++    {
++        sec = &sectors[i];
++        k = 0;
++        for (mo = sec->thinglist; mo; mo = mo->snext)
++        {
++            fprintf(fp, "%d\t%d\t%d\t%d\t%d\t%u\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n",
++                    i, k, mo->x, mo->y, mo->z, (unsigned)mo->angle, mo->type,
++                    mo->sprite, mo->frame, mo->flags, mo->radius, mo->height,
++                    mo->floorz, mo->ceilingz, (int)(mo->subsector - subsectors));
++            k++;
++            n++;
++        }
++    }
++    fclose(fp);
++
++    fprintf(stderr, "DG_E051: wrote %d sprites, %d sprite lumps, %d mobjs\n",
++            numsprites, numspritelumps, n);
++}
++
++// ---------------------------------------------------------------- 3. render
++
++static void e051_setview(player_t *p)
++{
++    p->viewheight = VIEWHEIGHT;
++    p->viewz = p->mo->z + VIEWHEIGHT;
++    if (p->viewz > p->mo->ceilingz - 4 * FRACUNIT)
++        p->viewz = p->mo->ceilingz - 4 * FRACUNIT;
++}
++
++static void e051_dump_traces(const char *dir)
++{
++    FILE *fp;
++    int i;
++    visplane_t *pl;
++
++    fp = e051_open(dir, "walls.tsv");
++    fprintf(fp, "#order\tseg\tx1\tx2\trw_offset\trw_centerangle\tmidmid\ttopmid"
++                "\tbotmid\tsilhouette\tbsilheight\ttsilheight\tmasked\n");
++    for (i = 0; i < s_nwall; i++)
++        fprintf(fp, "%d\t%d\t%d\t%d\t%d\t%u\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n", i,
++                s_wall[i].seg, s_wall[i].x1, s_wall[i].x2, s_wall[i].offset,
++                (unsigned)s_wall[i].centerangle, s_wall[i].midmid,
++                s_wall[i].topmid, s_wall[i].botmid, s_wall[i].silhouette,
++                s_wall[i].bsil, s_wall[i].tsil, s_wall[i].masked);
++    fclose(fp);
++
++    fp = e051_open(dir, "columns.tsv");
++    fprintf(fp, "#order\tphase\ttier\tx\tyl\tyh\ttexnum\ttexcol\tiscale\ttexmid\tcmap\n");
++    for (i = 0; i < s_ncol; i++)
++        fprintf(fp, "%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%u\t%d\t%d\n", i,
++                s_col[i].phase, s_col[i].tier, s_col[i].x, s_col[i].yl,
++                s_col[i].yh, s_col[i].texnum, s_col[i].texcol,
++                (unsigned)s_col[i].iscale, s_col[i].texmid, s_col[i].cmap);
++    fclose(fp);
++
++    fp = e051_open(dir, "spans.tsv");
++    fprintf(fp, "#order\ty\tx1\tx2\txfrac\tyfrac\txstep\tystep\tcmap\tpicnum\n");
++    for (i = 0; i < s_nspan; i++)
++        fprintf(fp, "%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n", i, s_span[i].y,
++                s_span[i].x1, s_span[i].x2, s_span[i].xfrac, s_span[i].yfrac,
++                s_span[i].xstep, s_span[i].ystep, s_span[i].cmap,
++                s_span[i].picnum);
++    fclose(fp);
++
++    fp = e051_open(dir, "planes.tsv");
++    fprintf(fp, "#i\theight\tpicnum\tlightlevel\tminx\tmaxx\n");
++    for (pl = visplanes, i = 0; pl < lastvisplane; pl++, i++)
++        fprintf(fp, "%d\t%d\t%d\t%d\t%d\t%d\n", i, pl->height, pl->picnum,
++                pl->lightlevel, pl->minx, pl->maxx);
++    fclose(fp);
++
++    fp = e051_open(dir, "planecols.tsv");
++    fprintf(fp, "#plane\tx\ttop\tbottom\n");
++    for (pl = visplanes, i = 0; pl < lastvisplane; pl++, i++)
++    {
++        int x;
++        for (x = pl->minx; x <= pl->maxx; x++)
++            fprintf(fp, "%d\t%d\t%d\t%d\n", i, x, pl->top[x], pl->bottom[x]);
++    }
++    fclose(fp);
++
++    fp = e051_open(dir, "sprites.tsv");
++    fprintf(fp, "#order\tx1\tx2\tscale\tpatch\ttexturemid\txiscale\tstartfrac"
++                "\tcmap\tmobjflags\tgx\tgy\tgz\tgzt\n");
++    for (i = 0; i < (int)(vissprite_p - vissprites); i++)
++    {
++        vissprite_t *v = &vissprites[i];
++        fprintf(fp, "%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n",
++                i, v->x1, v->x2, v->scale, v->patch, v->texturemid,
++                v->xiscale, v->startfrac,
++                v->colormap == NULL ? -1 : (int)((v->colormap - colormaps) / 256),
++                v->mobjflags, v->gx, v->gy, v->gz, v->gzt);
++    }
++    fclose(fp);
++
++    fp = e051_open(dir, "spritesorted.tsv");
++    fprintf(fp, "#order\tvissprite\tscale\n");
++    if (vissprite_p > vissprites)
++    {
++        vissprite_t *spr;
++        i = 0;
++        for (spr = vsprsortedhead.next; spr != &vsprsortedhead; spr = spr->next)
++        {
++            fprintf(fp, "%d\t%d\t%d\n", i, (int)(spr - vissprites), spr->scale);
++            i++;
++        }
++    }
++    fclose(fp);
++}
++
++static void dump_render(const char *dir, int dirs)
++{
++    player_t *p = &players[consoleplayer];
++    FILE *fp;
++    int i, k;
++
++    if (p->mo == NULL)
++        I_Error("DG_E051: no player mobj");
++
++    if (I_VideoBuffer == NULL)
++        I_VideoBuffer = (byte *)Z_Malloc(SCREENWIDTH * SCREENHEIGHT, PU_STATIC, NULL);
++    R_ExecuteSetViewSize();
++    e051_setview(p);
++
++    fp = e051_open(dir, "view.tsv");
++    fprintf(fp, "#key\tvalue\n");
++    fprintf(fp, "viewx\t%d\n", p->mo->x);
++    fprintf(fp, "viewy\t%d\n", p->mo->y);
++    fprintf(fp, "viewz\t%d\n", p->viewz);
++    fprintf(fp, "viewangle\t%u\n", (unsigned)p->mo->angle);
++    fprintf(fp, "viewwidth\t%d\n", viewwidth);
++    fprintf(fp, "viewheight\t%d\n", viewheight);
++    fprintf(fp, "centerx\t%d\n", centerx);
++    fprintf(fp, "centery\t%d\n", centery);
++    fprintf(fp, "projection\t%d\n", projection);
++    fprintf(fp, "skytexture\t%d\n", skytexture);
++    fprintf(fp, "skytexturemid\t%d\n", skytexturemid);
++    fprintf(fp, "pspritescale\t%d\n", pspritescale);
++    fprintf(fp, "pspriteiscale\t%d\n", pspriteiscale);
++    fprintf(fp, "psprite0state\t%d\n",
++            p->psprites[0].state == NULL ? -1 : (int)(p->psprites[0].state - states));
++    fprintf(fp, "psprite0sx\t%d\n", p->psprites[0].sx);
++    fprintf(fp, "psprite0sy\t%d\n", p->psprites[0].sy);
++    fprintf(fp, "psprite1state\t%d\n",
++            p->psprites[1].state == NULL ? -1 : (int)(p->psprites[1].state - states));
++    fprintf(fp, "readyweapon\t%d\n", p->readyweapon);
++    fprintf(fp, "health\t%d\n", p->health);
++    fprintf(fp, "armorpoints\t%d\n", p->armorpoints);
++    for (i = 0; i < 4; i++)
++        fprintf(fp, "ammo%d\t%d\n", i, p->ammo[i]);
++    for (i = 0; i < 4; i++)
++        fprintf(fp, "maxammo%d\t%d\n", i, p->maxammo[i]);
++    for (i = 0; i < NUMWEAPONS; i++)
++        fprintf(fp, "weaponowned%d\t%d\n", i, p->weaponowned[i]);
++    fclose(fp);
++
++    fp = e051_open(dir, "yslope.tsv");
++    fprintf(fp, "#i\tyslope\n");
++    for (i = 0; i < viewheight; i++)
++        fprintf(fp, "%d\t%d\n", i, yslope[i]);
++    fclose(fp);
++
++    fp = e051_open(dir, "distscale.tsv");
++    fprintf(fp, "#i\tdistscale\n");
++    for (i = 0; i < viewwidth; i++)
++        fprintf(fp, "%d\t%d\n", i, distscale[i]);
++    fclose(fp);
++
++    // The status bar on its own, so a divergence there is attributable
++    // without disentangling it from the 3D view.
++    memset(I_VideoBuffer, 0, SCREENWIDTH * SCREENHEIGHT);
++    ST_Drawer(false, true);
++    fp = e051_open(dir, "statusbar.bin");
++    fwrite(I_VideoBuffer + 168 * SCREENWIDTH, 1, 32 * SCREENWIDTH, fp);
++    fclose(fp);
++
++    // The 3D view on its own.
++    memset(I_VideoBuffer, 0, SCREENWIDTH * SCREENHEIGHT);
++    s_trace = 1;
++    s_nwall = s_ncol = s_nspan = 0;
++    s_phase = 0;
++    R_RenderPlayerView(p);
++    s_trace = 0;
++    fp = e051_open(dir, "view.bin");
++    fwrite(I_VideoBuffer, 1, SCREENWIDTH * SCREENHEIGHT, fp);
++    fclose(fp);
++
++    e051_dump_traces(dir);
++
++    // The whole frame the way D_Display builds it: status bar first (it is
++    // "buffered drawing"), then the view straight into the same buffer.
++    memset(I_VideoBuffer, 0, SCREENWIDTH * SCREENHEIGHT);
++    ST_Drawer(false, true);
++    R_RenderPlayerView(p);
++    fp = e051_open(dir, "frame.bin");
++    fwrite(I_VideoBuffer, 1, SCREENWIDTH * SCREENHEIGHT, fp);
++    fclose(fp);
++
++    fprintf(stderr, "DG_E051: frame: %d walls, %d columns, %d spans, %d visplanes, %d vissprites\n",
++            s_nwall, s_ncol, s_nspan, (int)(lastvisplane - visplanes),
++            (int)(vissprite_p - vissprites));
++
++    if (!dirs)
++        return;
++
++    // Eight directions. Rendered in one process, in this order, because the
++    // renderer carries state across frames on purpose (rw_scalestep and the
++    // rw_*texturemid trio are file-scope in vanilla). The Ruby side renders
++    // the same sequence.
++    fp = e051_open(dir, "dirstats.tsv");
++    fprintf(fp, "#k\tangle\twalls\tcolumns\tspans\tvisplanes\tvissprites\n");
++    for (k = 0; k < 8; k++)
++    {
++        FILE *fb;
++        char nm[64];
++
++        p->mo->angle = (angle_t)(ANG45 * k);
++        memset(I_VideoBuffer, 0, SCREENWIDTH * SCREENHEIGHT);
++        s_trace = 1;
++        s_nwall = s_ncol = s_nspan = 0;
++        s_phase = 0;
++        ST_Drawer(false, true);
++        R_RenderPlayerView(p);
++        s_trace = 0;
++        snprintf(nm, sizeof(nm), "frame_dir%d.bin", k);
++        fb = e051_open(dir, nm);
++        fwrite(I_VideoBuffer, 1, SCREENWIDTH * SCREENHEIGHT, fb);
++        fclose(fb);
++        fprintf(fp, "%d\t%u\t%d\t%d\t%d\t%d\t%d\n", k, (unsigned)(ANG45 * k),
++                s_nwall, s_ncol, s_nspan, (int)(lastvisplane - visplanes),
++                (int)(vissprite_p - vissprites));
++    }
++    fclose(fp);
++}
++
++// ---------------------------------------------------------------- entry
++
++static int e051_want(const char *what, const char *name)
++{
++    return what == NULL || what[0] == '\0' || strstr(what, name) != NULL;
++}
++
++void DG_E051Hook(void)
++{
++    const char *dir = getenv("DG_E051_DIR");
++    const char *what = getenv("DG_E051_WHAT");
++    const char *ep = getenv("DG_E051_EP");
++    const char *map = getenv("DG_E051_MAP");
++    const char *skill = getenv("DG_E051_SKILL");
++
++    if (dir == NULL || dir[0] == '\0')
++        return;
++
++    if (e051_want(what, "tex"))
++        dump_textures(dir);
++
++    G_InitNew(skill == NULL ? sk_medium : (skill_t)atoi(skill),
++              ep == NULL ? 1 : atoi(ep),
++              map == NULL ? 1 : atoi(map));
++
++    if (e051_want(what, "sprite"))
++        dump_sprites(dir);
++    if (e051_want(what, "render"))
++        dump_render(dir, e051_want(what, "dirs"));
++
++    exit(0);
++}
+diff --git a/doomgeneric/r_plane.c b/doomgeneric/r_plane.c
+index ea1611c..efdac35 100644
+--- a/doomgeneric/r_plane.c
++++ b/doomgeneric/r_plane.c
+@@ -166,6 +166,9 @@ R_MapPlane
+     ds_x1 = x1;
+     ds_x2 = x2;
+ 
++#ifdef DG_E051_HOOK
++    { void DG_E051_Span(int,int,int); DG_E051_Span(y,x1,x2); }
++#endif
+     // high or low detail
+     spanfunc ();	
+ }
+@@ -380,10 +383,16 @@ void R_DrawPlanes (void)
+ 		 lastopening - openings);
+ #endif
+ 
++#ifdef DG_E051_HOOK
++    { void DG_E051_Phase(int); DG_E051_Phase(1); }
++#endif
+     for (pl = visplanes ; pl < lastvisplane ; pl++)
+     {
+ 	if (pl->minx > pl->maxx)
+ 	    continue;
++#ifdef DG_E051_HOOK
++	{ void DG_E051_Picnum(int); DG_E051_Picnum(pl->picnum); }
++#endif
+ 
+ 	
+ 	// sky flat
+@@ -407,6 +416,9 @@ void R_DrawPlanes (void)
+ 		    angle = (viewangle + xtoviewangle[x])>>ANGLETOSKYSHIFT;
+ 		    dc_x = x;
+ 		    dc_source = R_GetColumn(skytexture, angle);
++#ifdef DG_E051_HOOK
++		    { void DG_E051_Col(int,int,int); DG_E051_Col(4,skytexture,angle); }
++#endif
+ 		    colfunc ();
+ 		}
+ 	    }
+diff --git a/doomgeneric/r_segs.c b/doomgeneric/r_segs.c
+index 124d430..9fa6822 100644
+--- a/doomgeneric/r_segs.c
++++ b/doomgeneric/r_segs.c
+@@ -283,6 +283,9 @@ void R_RenderSegLoop (void)
+ 	    dc_source = R_GetColumn(midtexture,texturecolumn);
+ #ifdef DG_E047_HOOK
+ 	    { void DG_E047_Column(int,int,int,int); DG_E047_Column(0,rw_x,dc_yl,dc_yh); }
++#endif
++#ifdef DG_E051_HOOK
++	    { void DG_E051_Col(int,int,int); DG_E051_Col(0,midtexture,texturecolumn); }
+ #endif
+ 	    colfunc ();
+ 	    ceilingclip[rw_x] = viewheight;
+@@ -308,6 +311,9 @@ void R_RenderSegLoop (void)
+ 		    dc_source = R_GetColumn(toptexture,texturecolumn);
+ #ifdef DG_E047_HOOK
+ 		    { void DG_E047_Column(int,int,int,int); DG_E047_Column(1,rw_x,dc_yl,dc_yh); }
++#endif
++#ifdef DG_E051_HOOK
++		    { void DG_E051_Col(int,int,int); DG_E051_Col(1,toptexture,texturecolumn); }
+ #endif
+ 		    colfunc ();
+ 		    ceilingclip[rw_x] = mid;
+@@ -341,6 +347,9 @@ void R_RenderSegLoop (void)
+ 					    texturecolumn);
+ #ifdef DG_E047_HOOK
+ 		    { void DG_E047_Column(int,int,int,int); DG_E047_Column(2,rw_x,dc_yl,dc_yh); }
++#endif
++#ifdef DG_E051_HOOK
++		    { void DG_E051_Col(int,int,int); DG_E051_Col(2,bottomtexture,texturecolumn); }
+ #endif
+ 		    colfunc ();
+ 		    floorclip[rw_x] = mid;
+@@ -712,6 +721,9 @@ R_StoreWallRange
+     
+ #ifdef DG_E047_HOOK
+     { void DG_E047_Wall(void); DG_E047_Wall(); }
++#endif
++#ifdef DG_E051_HOOK
++    { void DG_E051_Wall(void); DG_E051_Wall(); }
+ #endif
+     // render it
+     if (markceiling)
+diff --git a/doomgeneric/r_things.c b/doomgeneric/r_things.c
+index 74e7369..1a178a1 100644
+--- a/doomgeneric/r_things.c
++++ b/doomgeneric/r_things.c
+@@ -367,6 +367,9 @@ void R_DrawMaskedColumn (column_t* column)
+ 	{
+ 	    dc_source = (byte *)column + 3;
+ 	    dc_texturemid = basetexturemid - (column->topdelta<<FRACBITS);
++#ifdef DG_E051_HOOK
++	    { void DG_E051_Col(int,int,int); DG_E051_Col(3,-1,column->topdelta); }
++#endif
+ 	    // dc_source = (byte *)column + 3 - column->topdelta;
+ 
+ 	    // Drawn by either R_DrawColumn
+@@ -753,6 +756,9 @@ void R_DrawPlayerSprites (void)
+     else
+ 	spritelights = scalelight[lightnum];
+     
++#ifdef DG_E051_HOOK
++    { void DG_E051_Phase(int); DG_E051_Phase(3); }
++#endif
+     // clip to screen bounds
+     mfloorclip = screenheightarray;
+     mceilingclip = negonearray;
+@@ -955,6 +961,9 @@ void R_DrawMasked (void)
+ 	
+     R_SortVisSprites ();
+ 
++#ifdef DG_E051_HOOK
++    { void DG_E051_Phase(int); DG_E051_Phase(2); }
++#endif
+     if (vissprite_p > vissprites)
+     {
+ 	// draw all vissprites back to front

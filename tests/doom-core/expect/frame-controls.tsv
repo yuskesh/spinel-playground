@@ -1,0 +1,41 @@
+# what each frame-lane control is for: its one intended fault kind, and that
+# kind's first failure, taken from the frozen pin named in the line column.
+# collateral names the other kinds that pin raises: the same defect arriving
+# again further down.
+# A CONTROL CASE ASSERTS THREE ROWS FROM EACH ROW HERE: the intended kind gt0,
+# that kind's first-failure text eq, and faults.raised set -- the intended kind
+# TOGETHER WITH its collateral kinds, by name and with no counts. The collateral
+# kinds are asserted as members of that set, never by count.
+# The set is not droppable: clear-skip and clear-drop-counters share their
+# intended kind and their first-failure text byte for byte, so on the first two
+# rows alone each would pass the other's expectation. They differ only in what
+# else they raise. clear-drop-counters is the 7a1df0b vacuity guard, so without
+# the set it is exactly the case a wrong implementation passes.
+# A ROW WHOSE line IS - HAS NO PIN: the control is newer than the frozen
+# revision, so its intended kind and its raised set are DECLARED in controls.rb
+# from what the control changes, and its first failure is TBD until a run gives
+# it, through harness/fills.rb and expect.rb --fills.
+# frame-lane pins of tests/doom-core/tick.sh, extracted by tests/doom-core/harness/pins.rb
+# revision	e2f5676	e2f5676aea6f2f842aa263af582fec18d7383278
+# blob	622db93ac43433f2fec7b7a9cfd077252952f0a3
+# pins	64
+#control	kind	first	collateral	line	why
+frame-order	frame-disagree	frame 0 pixel 28015 (x 175 y 87) port 6 original 108	screen-disagree	808	the schedule is walked backwards, so every push, mark and check still agrees and only the screen the executor draws can differ
+frame-fuzz-phase	frame-disagree	frame 137 pixel 27054 (x 174 y 84) port 2 original 1	screen-disagree	811	the fuzz phase is one later, which changes drawn pixels and nothing else; the first failure is the first frame with a fuzz column
+frame-wrong-bank	frame-disagree	frame 6 pixel 223 (x 223 y 0) port 109 original 108	screen-disagree	814	the executor is given the previous frame's span bank, so the banks the pushes filled still agree and only the screen differs
+push-skip-sched	push-disagree	frame 0 wall push 1 schedule 1 port 262,72,100,164369,2031616,175872,17,0,0,2,2 original 262,72,100,164369,2031616,175872,17,0,1,2,2	plane-disagree,frame-disagree,screen-disagree	817	the schedule entry is written where nothing reads it, which the push comparison sees at the second push; the planes and the screen follow from it
+push-kind	native-status	cspan status 3 BOUNDS masked tic 0 frame 0	push-disagree,phase-disagree,plane-disagree,check-disagree,frame-disagree,fuzz-count-disagree,screen-disagree	820	wall pushes are issued as span pushes, whose records name rows past the screen. What the control is for is that a COMPILED entry refuses them -- the span check answers BOUNDS -- which is why it cannot run on the Ruby route at all
+push-phase-counter	phase-disagree	frame 0 mark 1 port 0 original 640	check-disagree	823	phase 1 is marked from the span counter instead of the wall counter, so the mark differs; the check tables built to that mark differ in turn
+push-cap-low	native-status	pwall status 4 CAPACITY wall tic 0 frame 0	push-disagree,phase-disagree,plane-disagree,check-disagree,frame-disagree,screen-disagree	826	the wall bank is given a capacity of 100, and what the control is for is the refusal at the 101st push. With a compiled entry that is a CAPACITY status, not the port's own push-capacity, which stays 0 there
+check-lo-one	check-disagree	frame 0 after check_disjoint xcount[261] port 1 original 2	-	829	the phase-0 wall table is built from the second job, so the interval table differs and nothing upstream of it does
+check-skip-span	check-disagree	frame 1 span_max_kx port 0 original 7	-	832	the span table is left unbuilt on odd frames, so its statistics differ; the first failure is the first odd frame
+plane-skip	plane-disagree	frame 0 plane 1 curpicnum/planeheight/planezlight port 6,2686976,1152 original 32,2031616,1152	push-disagree,check-disagree,frame-disagree,screen-disagree	835	every plane 1 more than a multiple of 3 is left undrawn, which the per-plane comparison sees; the missing spans then move the pushes, checks and screen
+plane-wrong	plane-disagree	frame 0 plane 1 curpicnum/planeheight/planezlight port 53,3735552,1152 original 32,2031616,1152	push-disagree,check-disagree,frame-disagree,screen-disagree	838	the next plane's arrays are drawn in this plane's place, which the per-plane comparison sees as a different picnum, height and light
+plane-wrong-height	plane-disagree	frame 0 plane 0 curpicnum/planeheight/planezlight port 6,2621440,1152 original 6,2686976,1152	frame-disagree,screen-disagree	841	every plane's height is loaded 1.0 high, which the per-plane comparison sees; the spans it emits then differ and the screen with them
+clear-skip	clear-disagree	frame 1 after clear_planes lastvisplane port 10 original 0	plane-disagree,frame-disagree,screen-disagree,leaf-disagree	844	clear_planes is left out on odd frames, so the cells it should have written keep the values the frame before left
+clear-drop-counters	clear-disagree	frame 1 after clear_planes lastvisplane port 10 original 0	leaf-disagree	847	the four counter writes are undone after the port's clear. It is the 7a1df0b vacuity guard: before that commit the port started from the written value, so deleting the writes changed nothing observable
+clear-drop-clips	clear-disagree	frame 0 after clear_planes floorclip[0] port 0 original 168	-	850	the clip writes are undone after the port's clear, which the per-field clear comparison sees at floorclip[0] in frame 0
+sky-skip	plane-disagree	TBD	push-disagree,check-disagree,frame-disagree,screen-disagree	-	the walk is handed a private skyflatnum buffer holding -1, which no plane's picnum equals, so the walk recognizes no plane as sky and draws every sky plane as an ordinary flat. What the control is for is that the walk's own sky-plane count then disagrees with the original's, which the comparison after the walk sees; the spans it emits where the original pushed columns move the pushes, the check tables and the screen
+sky-texmid	plane-disagree	TBD	frame-disagree,screen-disagree	-	the walk is handed a private skytexturemid buffer 1.0 high, so every sky column is pushed with a wrong texturemid and nothing else moves: the same planes are drawn and the same number of columns pushed. The wall-bank comparison of the sky columns is what sees it, and only the screen the executor draws from those jobs follows
+sky-iscale	plane-disagree	TBD	frame-disagree,screen-disagree	-	the walk is handed a private pspriteiscale buffer 1 higher, so every sky column is pushed with a wrong iscale, one field over from sky-texmid's and with the same shape: the wall-bank comparison of the sky columns sees it, and only the screen follows
+planes-bound-short	plane-disagree	TBD	push-disagree,check-disagree,frame-disagree,screen-disagree	-	the walk's lastvisplane cell is loaded one lower than the original's, so the walk stops one plane short of the visplanes the original drew. What the control is for is that the missing plane leaves the counters the walk reports short of the original's, which the comparison after the walk sees; the spans and schedule entries it never pushed move the pushes, the check tables and the screen

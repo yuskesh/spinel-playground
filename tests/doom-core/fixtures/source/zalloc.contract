@@ -1,0 +1,9 @@
+core-contract 1
+root src/packed.rb
+entry dc_sp_zalloc
+result i64
+param state buffer i64 inout count n_state
+param n_state scalar u64
+param zone_slots buffer u16 in count n_zone_slots
+param n_zone_slots scalar u64
+param i_nzone scalar i64

@@ -1,0 +1,6 @@
+core-contract 1
+root src/walk_links.rb
+entry walk_links
+result i64
+param link buffer i32 in count n_link
+param n_link scalar u64

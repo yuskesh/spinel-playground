@@ -1,0 +1,9 @@
+verdict	object	symbol	reason
+ALLOW	grad.cortex-m33-zephyr.o	__aeabi_dadd	compiler-rt builtin
+ALLOW	grad.cortex-m33-zephyr.o	__aeabi_dcmpgt	compiler-rt builtin
+ALLOW	grad.cortex-m33-zephyr.o	__aeabi_ddiv	compiler-rt builtin
+ALLOW	grad.cortex-m33-zephyr.o	__aeabi_dmul	compiler-rt builtin
+ALLOW	grad.cortex-m33-zephyr.o	__aeabi_dsub	compiler-rt builtin
+ALLOW	grad.cortex-m33-zephyr.o	__aeabi_ui2d	compiler-rt builtin
+ALLOW	grad.cortex-m33-zephyr.o	__aeabi_ul2d	compiler-rt builtin
+ALLOW	grad.cortex-m33-zephyr.o	spinel_trap	platform extern declared by the profile

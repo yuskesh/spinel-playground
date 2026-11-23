@@ -1,0 +1,124 @@
+# tools/test/tests.tsv -- the tests tools/test/affected.rb can select, and those it names to exclude.
+#
+# COLUMNS
+#   id       what affected.tsv and affected.rb name
+#   kind     run       a short check: run it
+#            long      run it, but it takes hours (the note says how long)
+#            board     the board check; without RT1186_HOST its board-free
+#                      parts run and the board part is a named skip
+#            excluded  never selected to run: an oracle or a comparison with
+#                      CRuby or its recordings, which the owner holds back
+#                      until the 32-bit build runs on the board (2026-10-21),
+#                      or a lane that runs only on such a comparison's build
+#   command  how to run it from the repository root; DIR is a fresh directory
+#            outside the checkout, BASE the base revision. The tools come
+#            from the environment, as each suite's header says
+#   note     why this test, or why it is excluded
+#
+# A selected test's own oracle sections stay gated: affected.rb lists them
+# from tests/ORACLES.tsv under "excluded" too.
+#
+#id	kind	command	note
+core-run	run	SPINEL_CORE_BUILD=tools/mlir/native/build sh tests/core/run.sh	the core slice's acceptance; Debian only, as docs/native-core/reproducing.md says (it selects the x86_64-linux freestanding profile, and macOS links no ELF object)
+core-report	run	sh tests/core-report/run.sh	the kernel's build report against its rules and goldens
+core-blocks	run	sh tests/core-blocks/run.sh	decision 0041 stage 1: loops with a literal block on the status lane and the freestanding route, their values against hand-written expectations and each refusal by its words
+core-bitwise	run	sh tests/core-bitwise/run.sh	decision 0042 stage 1: & | ^ ~ on the freestanding route, their values at a 64-bit and a 32-bit body width against hand-written expectations, and each refusal by its words
+fs-helper-buffers	run	sh tests/fs-helper-buffers/run.sh	decision 0044: a freestanding helper indexes a buffer its caller lent it; the values at a 64-bit and a 32-bit body width against hand-written expectations, the embedded profiles compile, U1 in the IR, and each refusal by its words
+contract-rewrites	run	sh tests/contract/rewrites.sh	the contract reader's analysis rewrites from the 2026-11-14 upstream synchronisation (pruned methods, peeled parentheses), each shown made by the analysis first, and the near misses it still refuses
+core-stack	run	sh tests/core-stack/run.sh	the stack budget: frame sizes, the worst path, the unreserved call frames
+core-intrinsics	run	sh tests/core-boundary/intrinsics.sh	decision 0022's word intrinsics on this host: the table's 64-bit cases, the refusals, the CRuby prelude, the thumb lowering
+core-intrinsics-board	board	sh tests/core-boundary/intrinsics-board.sh DIR	decision 0022's word intrinsics at 32 bits, on the FRDM-IMXRT1186 (RT1186_HOST)
+core-boundary	run	sh tests/core-boundary/run.sh	the status boundary's suites (its oracle sections stay gated)
+freestanding	run	sh tests/freestanding/run.sh	every freestanding lane: the device lanes under QEMU and node, the gradient lanes, the target-width controls; a board lane is NOT RUN without its board, and the oracle/ directories are not run
+freestanding-stamps	run	sh tests/freestanding/stamp-controls.sh DIR	the freestanding lanes refuse native tools that are not this tree's build, before any lane runs; a planted stale stamp fails by name; needs the native build
+native-core-driver	run	sh tests/native-core/driver.sh	tools/core/spinel-core-build's whole path and its refusals (its CRuby section stays gated)
+native-core-ledger	run	sh tests/native-core/ledger.sh	the input ledger at spinel-core-check and spinel-core-emit
+native-core-run	run	sh tests/native-core/run.sh	a checked closure lowered to a core object and linked into the hosted program; Debian only, as docs/native-core/reproducing.md says (its CRuby section stays gated)
+core-eligibility	run	ruby tests/core-eligibility/run.rb	spinel-core-check's source eligibility: admitted closures and each refusal, by exit status, verdict and reason
+core-upstream-fields	run	sh tests/core-eligibility/upstream-fields.sh	the CORE checker and reader on upstream fields since the 2026-11-14 synchronisation (DefNode.locals, ignore_visibility, block slot names from the nodes face, --keep-method), each with the near miss it still refuses
+oracle-check	run	sh tests/oracle/check.sh	tests/ORACLES.tsv against the tree: every gate call has its row, every gated row its call
+native-core-arith	run	sh tests/native-core/arith.sh	decision 0015's checked arithmetic through the driver, against hand-derived expectations
+app-board	run	sh tests/app/board.sh	the board package from the devicetree
+app-contract	run	sh tests/app/contract.sh	the application's declarations and contracts
+app-effects	run	sh tests/app/effects.sh	the effects of externs and providers
+app-host	run	sh tests/app/host.sh	the application on the host
+app-build	run	sh tests/app/build.sh	the eleven build steps, firmware for each board
+app-reserves	run	sh tests/app/reserves.sh	the attested reserves against a fresh Zephyr build
+app-cross	run	sh tests/app/cross.sh	the kernel's thumbv8m cross build
+app-udp	run	sh tests/app/udp.sh	the udp: channel transport: its declaration, the network file, the transport on the host
+app-core-channel	run	sh tests/app/core-channel.sh	decision 0027: the .channel contract file between the RT1186 cores, its layout and its refusals
+doom-audit	long	sh tests/doom-core/audit.sh	the audit of Full's closure and its counter-examples; about 12 min (748 s measured 2026-10-21)
+doom-source-pack	run	sh tests/doom-core/source-pack.sh	the packer, and the units, manifest, README and NOTICE agreeing
+doom-entries	run	sh tests/doom-core/entries.sh	the three entries are what tools/doom/core-entries.rb writes
+doom-state	run	sh tests/doom-core/state.sh	Full's session and resources against the schema
+doom-session-image	run	sh tests/doom-core/session-image.sh DIR	tools/doom/session-image.rb on a synthetic session
+doom-control-flow	run	sh tests/doom-core/control-flow.sh	the control-flow shapes the kernel admits
+doom-borrowed-calls	run	sh tests/doom-core/borrowed-calls.sh	calls into borrowed buffers, against the objects
+doom-capacity	long	sh tests/doom-core/capacity.sh DIR	the knot stack's capacity contract; about 16 min (953 s measured 2026-10-21)
+doom-object-relocs	run	sh tests/doom-core/object-relocs.sh DIR	the link rule on objects built here
+doom-run-controls	run	sh tests/doom-core/run-controls.sh	what tests/doom-core/run.sh refuses
+doom-abort-controls	run	sh tests/doom-core/abort-controls.sh	an interrupted audit.sh or source-pack.sh reports an abort, not a finding
+doom-fork-compat-controls	run	sh tests/doom-core/fork-compat-controls.sh	the forked compiler's rows (fork-compat.sh is its subject)
+doom-profile	run	SESSION_IMAGE=DIR/image-DEMO1 sh tests/doom-core/profile.sh DIR	the stage-timing variant without a board (DEMO1's session image from an rt1186.sh run)
+doom-sources	run	sh tools/doom/verify-sources.sh	the imported DOOM sources against tests/doom/manifest.tsv's digests
+app-int-width	run	sh tests/app/int-width.sh	decision 0019's body widths
+app-lowering	run	sh tests/app/lowering.sh	the application's lowering
+app-stress	run	sh tests/app/stress.sh	the production primitives under preemption
+app-platform-facts	run	sh tests/app/platform-facts.sh	the platform facts against Zephyr (needs ZEPHYR_BASE)
+doom-rt1186-profile	board	sh tests/doom-core/rt1186-profile.sh LANE_DIR DIR	the stage times on the board, from a finished rt1186.sh run's entries and image
+doom-play-board	board	sh tests/doom-core/rt1186-play.sh LANE_DIR DIR	decision 0025: play.rb from a finished rt1186.sh run's entries and image -- tests/app/play.sh, its build, and with PLAY_ADDR and RT1186_HOST the keys sent from this host on the board
+doom-pair-controls	board	sh tests/doom-core/rt1186-pair-controls.sh LANE_DIR DIR	decision 0027: the pair channel's board controls 4 to 6, each planted by the build, from a finished RT1186_PAIR=1 rt1186.sh run's entries and image
+doom-board-controls	run	sh tests/doom-core/board-controls.sh DIR	the board lane's part 5 without a board: planted writes and consoles through rt1186-board.sh, with TICS and without
+doom-net-viewer	run	sh tests/doom-core/net-viewer.sh DIR	decision 0024's host viewer on planted datagrams and a planted console: reassembly, the digests against the board's provider, the drop counts, and its failing controls
+doom-net-view	run	sh tests/doom-core/net-view.sh DIR	decision 0024's SDL2 viewer (examples/doom/net_view) built and run on planted datagrams with SDL's dummy driver: replay, loopback UDP, the recording net-viewer.rb reads, the BMP of the frame shown, and its failing controls
+doom-objects-kernel	run	sh tests/doom-core/objects-kernel.sh DIR	reused entry objects (THUMB_BUILD, CORE_BUILD, a profile's LANE_DIR) refused unless this kernel built them, on planted reports
+doom-host-frames	run	sh tests/doom-core/host-frames.sh DIR	DOOM's entries built for this host, DEMO1's first 500 tics against the recorded frames; native, like doom-native, which the owner ruled no comparison (tests/ORACLES.tsv, exempt, 2026-10-18); about ten minutes with its own kernel build; a 64-bit body, so it cannot see the board's 32-bit ARITHMETIC
+doom-board	board	DEMOS=DEMO1 TICS=500 sh tests/doom-core/rt1186.sh DIR	the board lane over DEMO1's first 500 tics: the entries for thumbv8m, the session lane, the NOR image, and with RT1186_HOST the frames on the board
+doom-loop-reports	long	sh tests/doom-core/loop-reports.sh DIR	every DOOM entry's build report; about 3 h (11804 s measured)
+shader	run	sh tests/shader/run.sh	the shader lane against its own contract: generation, refusals, the textured output's marker; Metal and wgpu-native drawing where those exist; needs LLVM_PREFIX, naga and spirv-val
+compute	run	sh tests/compute/run.sh	Ruby compute kernels through MLIR to WebGPU, CUDA and Metal: refusals, every exit, hand-written results on each host (needs CUDA_PATH, WASI_*, PLAYWRIGHT_*; on macOS CC)
+raster	run	sh tests/raster/run.sh	DOOM's 3D view drawn on the GPU through IREE, by Metal on macOS or CUDA where IREE_BUILD has the CUDA driver (tools/raster); without either the screenshot controls run and the rest is one named skip, "SKIP raster: no GPU runtime", exit 2 (a failure under REQUIRE_ALL=1)
+raster-string-borrow	run	sh tests/raster/string-borrow.sh	the GPU raster path's mutable FFI string borrows (screen, zone) in DOOM's generated C; needs no Metal
+tensor	run	sh tests/tensor/run.sh	the tensor and image examples through IREE: CPU (local-sync) everywhere, Metal on macOS or CUDA where IREE_BUILD has the CUDA driver (otherwise each GPU check is a named n/a); needs IREE_SRC, IREE_BUILD, IREE_COMPILE and the native build, and mnist downloads its test set (checked by sha256)
+npu	run	sh tests/npu/run.sh	Ruby to IREE to the Neutron NPU: the refusals, an image build; the board's console capture from NPU_CONSOLE_LOG; skips without ZEPHYR_WORKSPACE (decision 0032)
+npu-stm32mp2	run	ruby tests/npu/stm32mp2/run.rb	Ruby to IREE to the VX delegate on the STM32MP257: the refusals, a build; the board's capture from NPU_STM32_CONSOLE_LOG; skips without the cross tools (decision 0034)
+docs-check	run	git diff --check BASE -- docs	documentation: whitespace; check local links by reading
+affected-controls	run	sh tests/affected/run.sh DIR	this preprocessor's own controls
+imports	run	sh tests/imports/run.sh DIR	every tracked file under exactly one row of docs/imports.tsv, and the checker's planted controls; selected by every change, since any new file can break it
+spinel-bpf-mlir	run	sh tests/spinel-bpf-mlir/run.sh DIR	spinel-bpf-mlir's routine Go tests (tests/spinel-bpf-mlir/tests.tsv), with sudo refused; its CRuby section stays gated
+bcc-facts	run	sh tests/bcc-facts/run.sh DIR	the 28 bcc tools' spinel_facts v2 modules from this pin, held to the contract (with CONSUMER, spinel-mlir's consumer too), and the check's planted refusals
+ebpf	run	sh tests/ebpf/run.sh	spinel-ebpf's checks that need no privilege (tools/ebpf): its minitest files, except the three that need spinel-llvm, and the runtime harnesses that need neither Python, macOS, spinel-llvm, AMP firmware nor protoc; needs vendor/spinel built, LLVM clang, libbpf and libelf, and NANOPB_DIR naming nanopb-0.4.9.1 (docs/toolchains/spinel-ebpf-deps), without which it stops before any check; the live checks need privilege and are tests/ebpf/live.sh, run by hand
+ebpf-go	run	sh tests/ebpf-go/run.sh	the Go path to eBPF without privilege (tools/ebpf/go, examples/ebpf-go/xdp-counter): the builder's and bindgen's Go tests, the builder's .mlir through spbpf-opt, the example generated end to end (spbpf-compile) and held byte for byte to the committed files; needs GO (Go 1.25.14, docs/toolchains/go-1.25.14) and the native build; the live check needs privilege and is tests/ebpf-go/live.sh, run by hand
+spinel-mlir	run	sh tests/spinel-mlir/run.sh DIR	spinel-mlir's consumer: its routine ctest entries and lit files (tests/spinel-mlir/tests.tsv), the RUN lines read without lit, sudo refused
+subset-map	run	sh tests/subset/map.sh DIR	decision 0026 steps 2 and 5: every entry of the subset refusal tables has a row in tests/subset/coverage.tsv, a fixture or unverified-inherited with its reason, and is in the file its row says (SubsetRefusals.cpp or SubsetTables.cpp); the check's planted controls; no build
+subset-reasons	run	sh tests/subset/reasons.sh DIR	decision 0026 step 2: each fixture row refused by spinel-fs-emit with its own entry's reason text, with an accepting control and a wrong-entry control; needs the native build and the reader
+lowering-locations	run	sh tests/lowering/locations.sh DIR	the lowering locates a required file's nodes in that file (docs/core/lowering-inputs.md, defect (i)); needs the native build and the reader
+lowering-reopened	run	sh tests/lowering/reopened.sh DIR	a builtin class changed at the top level is refused on the freestanding route, as CORE refuses it (docs/core/lowering-inputs.md, defect (ii)); needs the native build and the reader
+lowering-split	run	sh tests/lowering/split.sh DIR	a construct that crosses from a required file into the file that requires it is refused on the freestanding route (docs/core/lowering-inputs.md, section 5); needs the native build and the reader
+lowering-duplicate	run	sh tests/lowering/duplicate.sh DIR	a method defined twice at the top level is refused on the freestanding route with its category, duplicate-method (docs/core/lowering-inputs.md, section 4); needs the native build and the reader
+source-stamp	run	sh tests/source-stamp/run.sh	a kernel or reader built from other source than the tree's is refused, by name; under a second
+spinel-fork-argv-fill	run	sh tests/spinel-fork/argv-fill.sh	the fork's argv-fill-order patch: ARGV copied under GC stress and perturbed malloc answers, and the old fill order planted as a control crashes; glibc only
+subset-tables	run	sh tests/subset-tables/run.sh	decision 0026 steps 1 and 5: the keys, CORE heap-operation rows and reasons of SubsetRefusals.cpp and SubsetTables.cpp together against their pin, read from the source (no build), and its planted controls
+ghostty-terminal	run	sh tests/ghostty-terminal/run.sh	spinel-wasm's --link, and the terminal example built and drawn in headless Chromium; needs a built Ghostty and Playwright for the second part
+edge	run	bash tests/edge/run.sh	the edge examples, built with tools/wasm/spinel-wasm and run locally (workerd, Viceroy, QEMU), each against the contract its own source documents; the tools come from the environment, as its header says
+edge-arena	run	bash tests/edge/arena.sh	the arena wasm build (spinel-wasm --request-arena): hello-http on local workerd, Ruby's values across setjmp/longjmp, the page bound with its SPINEL_GC_SLAB=1 control, spinel-capcheck's GC refusal, and instance reuse (decision 0039)
+edge-isolation	run	bash tests/edge/isolation.sh	one request carries nothing into the next through the pooled WASI shim and worker.mjs, on a new instance per request (ordinary build) and on one reused instance written back before each request (arena build, decision 0039)
+fiber	run	bash tests/fiber/run.sh	the stackless Fiber of decision 0035 on the wasm route: programs rewritten by tools/fiber/spinel-fiber-rewrite, built with spinel-wasm and run on node and wasmtime against hand-written output, and each stage-1 refusal at its position
+fiber-core	run	sh tests/fiber/core.sh	the stackless Fiber of decision 0035 under CORE (stage 2) and the slot pool of decision 0041 stage 3: spinel-fiber-core's refusals at their positions, admission through the kernel, the host reference against hand-written values and the declared BOUNDS and CAPACITY failures, and, with the Zephyr environment, the same values and the BOUNDS and CAPACITY sites on mps2_an521 under QEMU
+scratch	run	sh tests/scratch/run.sh	the data stack of decision 0041 stage 2: the kernel driven from C on the host (hand-written values, CAPACITY past the region, BOUNDS, the region free after each failure, the bytes after it unchanged, ARGUMENT for a null region), a thumbv8m object with no undefined symbol, the report's static_proof and runtime_guard and the scratch-capacity refusal, every refusal at its position, admission and the host reference, and, with the Zephyr environment, the same values, two contexts' regions at once and the CAPACITY site on mps2_an521 under QEMU
+gc-arena	run	sh tests/gc-arena/run.sh	the collector and --gc=none builds of each fixture, compared with each other; the reference-interpreter half is gated (tests/ORACLES.tsv reference, owner) and is NOT RUN without ALLOW_ORACLE=1
+gcviz	run	sh tests/gcviz/run.sh	decision 0036's event record: the regular build ignores it, the events build replays cleanly, and planted defects fail the replay check; needs make events-runtime
+bare-full	run	sh tests/bare-full/run.sh	full with no RTOS on QEMU's mps2-an521 (decision 0037): programs print their hand-written output, out of memory stops cleanly, the links take only the runtime, picolibc and the builtins; skips without LLVM_PREFIX, BAREMETAL_PICOLIBC, BAREMETAL_BUILTINS or qemu-system-arm
+zephyr-full	run	sh tests/zephyr-full/run.sh	full on Zephyr's POSIX layer for the FRDM-MCXN947 (decision 0038): seven programs build, Zephyr's fdopen and fileno are not linked, the host constructor runs first, floating-point printf is on, the user-mode build places the globals, the board-log check accepts and rejects; skips without ZEPHYR_BASE, ZEPHYR_SDK_INSTALL_DIR or west
+doom-verify	excluded	sh tests/doom-core/verify.sh	CRuby: input-diff, step-diff and render-diff run the entries against the original, and the route compares its screens with the original's recordings
+doom-screens	excluded	sh tests/doom-core/screens.sh	every route's frames against the original's recordings
+doom-tick	excluded	sh tests/doom-core/tick.sh	the frame lane: every route over the original's recorded frames
+doom-native	excluded	sh tests/doom-core/native.sh	runs under verify.sh, on its build, against the recordings
+doom-native-scenario-diff	excluded	sh tests/doom-core/native-scenario-diff.sh	runs under verify.sh: the scenario corpus against the original
+doom-bound-resources	excluded	sh tests/doom-core/bound-resources.sh	runs under verify.sh, on its build, against the recordings
+doom-widths	excluded	sh tests/doom-core/widths.sh	runs on verify.sh's build and store ranges (DEMO1-3 played in full)
+app-channel	excluded	sh tests/app/channel.sh	CRuby: the channel bytes against CRuby's (tests/ORACLES.tsv bytes)
+app-verify	excluded	sh tests/app/verify.sh	CRuby: spinel-core-app verify's replay (tests/ORACLES.tsv replay-fixture, replay-qemu)
+app-doom-admission	excluded	sh tests/app/doom-admission.sh	the DOOM entries against a baseline kernel's (tests/ORACLES.tsv baseline-kernel)
+app-run	excluded	sh tests/app/run.sh	the aggregate: it runs channel.sh and verify.sh, which are oracles; run the selected suites one by one
+doom-reference	excluded	sh tests/doom/run.sh	CRuby: the reference run (tests/ORACLES.tsv reference-ruby)

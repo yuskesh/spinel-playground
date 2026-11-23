@@ -1,0 +1,155 @@
+row	layer	native	host	verdict
+Vr 0	hvp	bfe0854de7ea5f84	bfe0854de7ea5f84	SAME
+V 0 0	hvp	3fe4a98676a7264a	3fe4a98676a7264a	SAME
+V 0 1	hvp	bfad67fd3f5b5fa6	bfad67fd3f5b5fa6	SAME
+V 0 2	hvp	bfb14e2b063e07a3	bfb14e2b063e07a3	SAME
+V 0 3	hvp	bfc524aada33bd9f	bfc524aada33bd9f	SAME
+V 0 4	hvp	3fb89374bc6a7efa	3fb89374bc6a7efa	SAME
+Vr 1	hvp	bfd9b2a355dafde9	bfd9b2a355dafde9	SAME
+V 1 0	hvp	bfad67fd3f5b5fa6	bfad67fd3f5b5fa6	SAME
+V 1 1	hvp	3fe5731d2e0e3044	3fe5731d2e0e3044	SAME
+V 1 2	hvp	3f9ee525892684cc	3f9ee525892684cc	SAME
+V 1 3	hvp	3f55a4acf312b1c8	3f55a4acf312b1c8	SAME
+V 1 4	hvp	3f916872b020c49a	3f916872b020c49a	SAME
+Vr 2	hvp	3fe4a534a29efbd9	3fe4a534a29efbd9	SAME
+V 2 0	hvp	bfb14e2b063e07a3	bfb14e2b063e07a3	SAME
+V 2 1	hvp	3f9ee525892684cc	3f9ee525892684cc	SAME
+V 2 2	hvp	3fe49bbf0dc768e2	3fe49bbf0dc768e2	SAME
+V 2 3	hvp	3fbf39b8887229ea	3fbf39b8887229ea	SAME
+V 2 4	hvp	bf9cac083126e979	bf9cac083126e979	SAME
+Vr 3	hvp	3fd126b0a3a15a58	3fd126b0a3a15a57	DIFFER
+V 3 0	hvp	bfc524aada33bd9f	bfc524aada33bd9f	SAME
+V 3 1	hvp	3f55a4acf312b1c8	3f55a4acf312b1c8	SAME
+V 3 2	hvp	3fbf39b8887229ea	3fbf39b8887229ea	SAME
+V 3 3	hvp	3fe60b1feeb2d0a2	3fe60b1feeb2d0a2	SAME
+V 3 4	hvp	3fb76c8b43958103	3fb76c8b43958103	SAME
+Vr 4	hvp	3ff525460aa64c31	3ff525460aa64c31	SAME
+V 4 0	hvp	3fb89374bc6a7efa	3fb89374bc6a7efa	SAME
+V 4 1	hvp	3f916872b020c49a	3f916872b020c49a	SAME
+V 4 2	hvp	bf9cac083126e979	bf9cac083126e979	SAME
+V 4 3	hvp	3fb76c8b43958103	3fb76c8b43958103	SAME
+V 4 4	hvp	4000000000000000	4000000000000000	SAME
+G0 0	gradient	bfe0854de7ea5f87	bfe0854de7ea5f87	SAME
+G0 1	gradient	bfd9b2a355dafde6	bfd9b2a355dafde6	SAME
+G0 2	gradient	3fe4a534a29efbd7	3fe4a534a29efbd7	SAME
+G0 3	gradient	3fd126b0a3a15a57	3fd126b0a3a15a57	SAME
+G0 4	gradient	3ff525460aa64c2e	3ff525460aa64c2e	SAME
+U 0	hvp	3fca8fcf80dc3371	3fca8fcf80dc3371	SAME
+U 1	hvp	3fd05f4b1ee24355	3fd05f4b1ee24355	SAME
+U 2	hvp	3fadeadd590c0acb	3fadeadd590c0acb	SAME
+U 3	hvp	3ff1758f92af9a8d	3ff1758f92af9a8d	SAME
+U 4	hvp	bffb49ba5e353f7f	bffb49ba5e353f7f	SAME
+Z 0	hvp	bfc460ed80a17b0e	bfc460ed80a17b0e	SAME
+Z 1	hvp	3fe72a515ce9e5e2	3fe72a515ce9e5e2	SAME
+Z 2	hvp	3fd6d960fa15db33	3fd6d960fa15db33	SAME
+Z 3	hvp	bfeab87a8d64d7f1	bfeab87a8d64d7f1	SAME
+Z 4	hvp	3fd3e353f7ced919	3fd3e353f7ced919	SAME
+L 0	primal	3ff7ec9ac5be909f	3ff7ec9ac5be90a0	DIFFER
+N 0	gradient	40054cb041b1e036	40054cb041b1e036	SAME
+K 1	trajectory	1	1	SAME
+L 1	trajectory	3fd1bc68d7198ad0	3fd1bc68d7198acd	DIFFER
+N 1	trajectory	3fa3f09a5a2427c2	3fa3f09a5a2427be	DIFFER
+S 1 0	trajectory	3ff182585fc56e20	3ff182585fc56e22	DIFFER
+S 1 1	trajectory	3fe46f79290c64e3	3fe46f79290c64e3	SAME
+S 1 2	trajectory	bfe628a2d809423a	bfe628a2d809423a	SAME
+S 1 3	trajectory	3fb8b2b8362de132	3fb8b2b8362de131	DIFFER
+S 1 4	trajectory	bfcd3963f6d6509c	bfcd3963f6d6509c	SAME
+K 2	trajectory	1	1	SAME
+L 2	trajectory	3fc5c57bb5d13dc5	3fc5c57bb5d13dc8	DIFFER
+N 2	trajectory	3f87d8e067b3be58	3f87d8e067b3be4a	DIFFER
+S 2 0	trajectory	3ffaa87d52eb2805	3ffaa87d52eb2804	DIFFER
+S 2 1	trajectory	3ff0d0ee0e14fd64	3ff0d0ee0e14fd63	DIFFER
+S 2 2	trajectory	bff2a63dfd7df28a	bff2a63dfd7df289	DIFFER
+S 2 3	trajectory	3fc85685ae15942b	3fc85685ae15942a	DIFFER
+S 2 4	trajectory	bfd8583f58414b52	bfd8583f58414b54	DIFFER
+K 3	trajectory	1	1	SAME
+L 3	trajectory	3fb738f0dd57ee00	3fb738f0dd57ee03	DIFFER
+N 3	trajectory	3f58f164fa3b7703	3f58f164fa3b772a	DIFFER
+S 3 0	trajectory	4004e8353b6df971	4004e8353b6df970	DIFFER
+S 3 1	trajectory	3ffa6a43c773501d	3ffa6a43c773501b	DIFFER
+S 3 2	trajectory	c00013704880a951	c00013704880a950	DIFFER
+S 3 3	trajectory	3fd2e5ba71cdc0b9	3fd2e5ba71cdc0b6	DIFFER
+S 3 4	trajectory	bfe5ad92d1a943d7	bfe5ad92d1a943d4	DIFFER
+K 4	trajectory	1	1	SAME
+L 4	trajectory	3fac8b4afffb8cbb	3fac8b4afffb8cc1	DIFFER
+N 4	trajectory	3f412d9853bfd7ac	3f412d9853bfd7a2	DIFFER
+S 4 0	trajectory	400d89534b147a12	400d89534b147a10	DIFFER
+S 4 1	trajectory	400357fe51213991	400357fe5121398f	DIFFER
+S 4 2	trajectory	c007c010446b633f	c007c010446b633e	DIFFER
+S 4 3	trajectory	3fe157dbae0b977c	3fe157dbae0b977d	DIFFER
+S 4 4	trajectory	bff10be1bb3aa1be	bff10be1bb3aa1bb	DIFFER
+K 5	trajectory	1	1	SAME
+L 5	trajectory	3f9c97e0a345b0b1	3f9c97e0a345b0b3	DIFFER
+N 5	trajectory	3f35e04bbeddcd15	3f35e04bbeddcd9f	DIFFER
+S 5 0	trajectory	4016d0d516e98367	4016d0d516e98368	DIFFER
+S 5 1	trajectory	400c75ed0213c87b	400c75ed0213c87b	SAME
+S 5 2	trajectory	c01164c7447b9b1c	c01164c7447b9b1d	DIFFER
+S 5 3	trajectory	3fe8548ff8be8387	3fe8548ff8be8389	DIFFER
+S 5 4	trajectory	bffa10d871f3193b	bffa10d871f31938	DIFFER
+K 6	trajectory	1	1	SAME
+L 6	trajectory	3f8372a4dd7c390a	3f8372a4dd7c38da	DIFFER
+N 6	trajectory	3f16d0a12b76869b	3f16d0a12b768042	DIFFER
+S 6 0	trajectory	40212f0ca98ddb97	40212f0ca98ddb9c	DIFFER
+S 6 1	trajectory	401504890dfdafbb	401504890dfdafb9	DIFFER
+S 6 2	trajectory	c01a4351ccf0731d	c01a4351ccf0731e	DIFFER
+S 6 3	trajectory	3fedd28c8aa911cf	3fedd28c8aa91218	DIFFER
+S 6 4	trajectory	c0040bb021063dad	c0040bb021063d73	DIFFER
+K 7	trajectory	1	1	SAME
+L 7	trajectory	39c6800000000000	3a06da0000000000	DIFFER
+N 7	trajectory	39a1c98cef672b88	39e395d6858793dd	DIFFER
+S 7 0	trajectory	402a50daf89dd73e	402a50daf89dd740	DIFFER
+S 7 1	trajectory	40207e178ac86427	40207e178ac8642b	DIFFER
+S 7 2	trajectory	c022e1d89280d53c	c022e1d89280d53b	DIFFER
+S 7 3	trajectory	3ff9280665a2b014	3ff9280665a2afde	DIFFER
+S 7 4	trajectory	c00e99c1e384ba0b	c00e99c1e384ba52	DIFFER
+K 8	trajectory	0	0	SAME
+L 8	trajectory	39c6800000000000	3a06da0000000000	DIFFER
+N 8	trajectory	39a1c98cef672b88	39e395d6858793dd	DIFFER
+S 8 0	trajectory	402a50daf89dd73e	402a50daf89dd740	DIFFER
+S 8 1	trajectory	40207e178ac86427	40207e178ac8642b	DIFFER
+S 8 2	trajectory	c022e1d89280d53c	c022e1d89280d53b	DIFFER
+S 8 3	trajectory	3ff9280665a2b014	3ff9280665a2afde	DIFFER
+S 8 4	trajectory	c00e99c1e384ba0b	c00e99c1e384ba52	DIFFER
+K 9	trajectory	0	0	SAME
+L 9	trajectory	39c6800000000000	3a06da0000000000	DIFFER
+N 9	trajectory	39a1c98cef672b88	39e395d6858793dd	DIFFER
+S 9 0	trajectory	402a50daf89dd73e	402a50daf89dd740	DIFFER
+S 9 1	trajectory	40207e178ac86427	40207e178ac8642b	DIFFER
+S 9 2	trajectory	c022e1d89280d53c	c022e1d89280d53b	DIFFER
+S 9 3	trajectory	3ff9280665a2b014	3ff9280665a2afde	DIFFER
+S 9 4	trajectory	c00e99c1e384ba0b	c00e99c1e384ba52	DIFFER
+K 10	trajectory	0	0	SAME
+L 10	trajectory	39c6800000000000	3a06da0000000000	DIFFER
+N 10	trajectory	39a1c98cef672b88	39e395d6858793dd	DIFFER
+S 10 0	trajectory	402a50daf89dd73e	402a50daf89dd740	DIFFER
+S 10 1	trajectory	40207e178ac86427	40207e178ac8642b	DIFFER
+S 10 2	trajectory	c022e1d89280d53c	c022e1d89280d53b	DIFFER
+S 10 3	trajectory	3ff9280665a2b014	3ff9280665a2afde	DIFFER
+S 10 4	trajectory	c00e99c1e384ba0b	c00e99c1e384ba52	DIFFER
+K 11	trajectory	0	0	SAME
+L 11	trajectory	39c6800000000000	3a06da0000000000	DIFFER
+N 11	trajectory	39a1c98cef672b88	39e395d6858793dd	DIFFER
+S 11 0	trajectory	402a50daf89dd73e	402a50daf89dd740	DIFFER
+S 11 1	trajectory	40207e178ac86427	40207e178ac8642b	DIFFER
+S 11 2	trajectory	c022e1d89280d53c	c022e1d89280d53b	DIFFER
+S 11 3	trajectory	3ff9280665a2b014	3ff9280665a2afde	DIFFER
+S 11 4	trajectory	c00e99c1e384ba0b	c00e99c1e384ba52	DIFFER
+K 12	trajectory	0	0	SAME
+L 12	trajectory	39c6800000000000	3a06da0000000000	DIFFER
+N 12	trajectory	39a1c98cef672b88	39e395d6858793dd	DIFFER
+S 12 0	trajectory	402a50daf89dd73e	402a50daf89dd740	DIFFER
+S 12 1	trajectory	40207e178ac86427	40207e178ac8642b	DIFFER
+S 12 2	trajectory	c022e1d89280d53c	c022e1d89280d53b	DIFFER
+S 12 3	trajectory	3ff9280665a2b014	3ff9280665a2afde	DIFFER
+S 12 4	trajectory	c00e99c1e384ba0b	c00e99c1e384ba52	DIFFER
+B	trajectory	7	7	SAME
+F 0 0	trajectory	402a50daf89dd73e	402a50daf89dd740	DIFFER
+F 0 1	trajectory	40207e178ac86427	40207e178ac8642b	DIFFER
+F 0 2	trajectory	c022e1d89280d53c	c022e1d89280d53b	DIFFER
+F 0 3	trajectory	3ff9280665a2b014	3ff9280665a2afde	DIFFER
+F 0 4	trajectory	c00e99c1e384ba0b	c00e99c1e384ba52	DIFFER
+#layer.primal	0 same	1 differ	first=L 0
+#layer.gradient	6 same	0 differ	first=-
+#layer.hvp	39 same	1 differ	first=Vr 3
+#layer.trajectory	17 same	85 differ	first=L 1
+#summary	FIRST-SPLIT-LAYER=primal (87 differing rows)

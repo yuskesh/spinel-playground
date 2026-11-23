@@ -1,0 +1,65 @@
+# E081 (P003 Phase 4): the shipped cortex-m33-zephyr.yaml plus a CALLABLE
+# platform-extern surface.  Everything above `platform.externs` is byte-for-byte
+# the shipped profile (tools/freestanding/profiles/cortex-m33-zephyr.yaml);
+# the shipped profiles are deliberately untouched, so E040/E063/E067/E077's
+# recorded artefacts keep reproducing against the exact yaml they were made
+# with (the same reason E077 kept arm64-none.yaml in results/).
+#
+# An externs entry with a SIGNATURE does two things a bare symbol name does not:
+#   1. the kernel may CALL it (spinel-mlirgen emits an llvm.call against the
+#      declared signature, narrowing/widening at the boundary -- E081 D-8);
+#   2. extern-check.py can hold the platform's wrapper TU against it.
+# The bare-string form (E040/E063) is still just a link-time allowance.
+#
+# `symbol:` is omitted here on purpose: the default is
+# spinel_<platform.type>_<name>, which bakes the P003 s8 naming convention
+# (`spinel_zephyr_*`) into the mechanism instead of into a comment.
+
+target:
+  triple: thumbv8m.main-none-eabi
+  cpu: cortex-m33
+  data_layout: "e-m:e-p:32:32-Fi8-i64:64-v128:64:128-a:0:32-n32-S64"
+  cflags:
+    - -mcpu=cortex-m33+nodsp
+    - -mfloat-abi=soft
+    - -fshort-enums
+    - -Os
+
+abi:
+  boundary: c-abi
+  int_width: i32-internal
+  overflow: trap
+  trap_hook: spinel_trap
+
+runtime:
+  libc: none
+  libm: none
+  compiler_rt: allow
+
+platform:
+  type: zephyr
+  externs:
+    # -- the Zephyr platform intrinsics (P003 Phase 4's named four) ---------
+    - name: uptime_ms          # k_uptime_get()
+      params: []
+      returns: i64
+    - name: sleep_ms           # k_msleep(); returns 0 when the full sleep ran
+      params: [i32]
+      returns: i32
+    - name: print_i64          # printk(); returns 0 (v1 has no void -- D-9)
+      params: [i64]
+      returns: i32
+    - name: gpio_set           # (pin, val) -> val, or -1 outside pins 0..7 / val 0..1
+      params: [i32, i32]
+      returns: i32
+    - name: gpio_get           # (pin) -> current value, or -1 outside pins 0..7
+      params: [i32]
+      returns: i32
+    # -- type-coverage probes (not Zephyr intrinsics; they exercise the
+    #    remaining v1 extern types: f32/f64 and u32) ------------------------
+    - name: sense_scale        # (double)a * 2.0 + b
+      params: [f32, f64]
+      returns: f64
+    - name: checksum32         # v ^ 0xA5A5A5A5
+      params: [u32]
+      returns: u32

@@ -1,0 +1,54 @@
+core-contract 1
+root src/packed.rb
+entry dc_sp_sbdraw
+result i64
+param screen buffer u8 inout count n_screen
+param n_screen scalar u64
+param backing buffer u8 inout count n_backing
+param n_backing scalar u64
+param wad buffer u8 in count n_wad
+param n_wad scalar u64
+param lump_pos buffer u32 in count n_lump_pos
+param n_lump_pos scalar u64
+param state buffer i64 inout count n_state
+param n_state scalar u64
+param old_arms buffer i8 inout count n_old_arms
+param n_old_arms scalar u64
+param old_keybox buffer i8 inout count n_old_keybox
+param n_old_keybox scalar u64
+param keyboxes buffer i8 in count n_keyboxes
+param n_keyboxes scalar u64
+param tallnum buffer u16 in count n_tallnum
+param n_tallnum scalar u64
+param shortnum buffer u16 in count n_shortnum
+param n_shortnum scalar u64
+param armsgray buffer u8 in count n_armsgray
+param n_armsgray scalar u64
+param faces buffer u16 in count n_faces
+param n_faces scalar u64
+param keys buffer u16 in count n_keys
+param n_keys scalar u64
+param tallw buffer u8 in count n_tallw
+param n_tallw scalar u64
+param shortw buffer u8 in count n_shortw
+param n_shortw scalar u64
+param sbar buffer u8 in count n_sbar
+param n_sbar scalar u64
+param tallpercent buffer u16 in count n_tallpercent
+param n_tallpercent scalar u64
+param armsbg buffer u16 in count n_armsbg
+param n_armsbg scalar u64
+param ammo buffer i64 in count n_ammo
+param n_ammo scalar u64
+param maxammo buffer i64 in count n_maxammo
+param n_maxammo scalar u64
+param weaponowned buffer i64 in count n_weaponowned
+param n_weaponowned scalar u64
+param i_firsttime scalar i64
+param i_old_armsbg scalar i64
+param i_old_face scalar i64
+param i_faceindex scalar i64
+param i_notdeathmatch scalar i64
+param health scalar i64
+param armorpoints scalar i64
+param ammokind scalar i64

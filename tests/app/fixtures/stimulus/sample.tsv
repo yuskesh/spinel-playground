@@ -1,0 +1,21 @@
+# The acceptance sample's stimulus for the verification run on mps2/an521
+# (decision 0014 §10): a 50 ms horizon, 20 ms to drain; the emulated ADC
+# steps through three levels, the button is pressed and released, three
+# commands arrive on the inbound channel (the third with a payload above
+# the channel's 8 bytes, dropped as oversize) early enough for the 10 ms
+# command_poll to consume the two that queue before the horizon -- the
+# transport thread, lowest in priority and slowed by the recorder, delivers
+# a frame a few milliseconds after it is sent, and an inbound message still
+# queued at H fails the run (§10) -- and the nesting source runs every 700 us
+# with 150 us of busy work so the 1 ms system-clock expiries land inside it.
+horizon_us 50000
+drain_us 20000
+nest_timer 700 150
+adc 2000 0 1200
+inbound 3000 commands 07
+gpio 6000 0 1
+adc 9000 0 2500
+inbound 13000 commands 0102030405
+gpio 14000 0 0
+inbound 18000 commands 0102030405060708090a
+adc 22000 0 300

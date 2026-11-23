@@ -1,0 +1,61 @@
+# Cortex-M33 (ARMv8-M mainline, soft-float) on Zephyr.
+#
+# The三層 of P003: architecture / ABI / platform.  The SAME file is read by
+# `spinel-mlirgen --freestanding` and by `undef-check.py`, which is what stops a
+# build from telling the generator one thing and the gate another (R006 H7).
+#
+# The values under `target:` are not invented -- they are what Zephyr's own
+# compile_commands.json uses for `mps2/an521/cpu0` (R006 s1.3):
+#     -mcpu=cortex-m33+nodsp -mthumb -mabi=aapcs -mfp16-format=ieee -mtp=soft -mcmse
+# with CONFIG_FPU unset (soft-float) and the final link done by GNU ld with
+# CONFIG_LIBGCC_RTLIB=y, i.e. libgcc supplies the compiler runtime.
+
+target:
+  triple: thumbv8m.main-none-eabi
+  cpu: cortex-m33
+  # Pinned rather than probed so that a `results/` record reproduces without
+  # running clang.  It is exactly what llvm@22's clang answers for this triple;
+  # omit the key and the generator asks its target machine.
+  data_layout: "e-m:e-p:32:32-Fi8-i64:64-v128:64:128-a:0:32-n32-S64"
+  cflags:
+    # Match the DSP-less variant Zephyr builds for this board.
+    - -mcpu=cortex-m33+nodsp
+    - -mfloat-abi=soft
+    # R006 s2.3: without this, clang stamps Tag_ABI_enum_size=int and GNU ld
+    # warns when linking against SDK gcc objects (which use `small`).  A module
+    # that came from MLIR has no enums at all, so this is belt and braces -- but
+    # it is free and it keeps the link log clean.
+    - -fshort-enums
+    # Code size is the only quantity P003 lets us claim on an MCU, so optimise
+    # for it rather than for speed we are not allowed to measure.
+    - -Os
+
+abi:
+  boundary: c-abi
+  # Decision 0019: Integer bodies follow the target pointer width.
+  # A first-line # spinel: int64 is refused here unless tools/core/int64-allow.tsv lists the source (0019).
+  int_width: i32-internal
+  # P003 decision record D-2: trap by default, `overflow: :wrap` per declaration,
+  # `raise` refused (it needs longjmp and the string heap).
+  overflow: trap
+  trap_hook: spinel_trap
+
+runtime:
+  # No libc.  The one leak is the mem* family, which LLVM emits on its own
+  # initiative (R006 s3.3 measured __aeabi_memclr8 escaping -ffreestanding
+  # -fno-builtin); the undefined-symbol gate is what catches it.
+  libc: none
+  libm: none
+  # R006 s3.2: the builtins come from the Zephyr SDK's libgcc
+  # (thumb/v8-m.main/nofp/space), not from LLVM -- Homebrew llvm@22 ships no
+  # baremetal compiler-rt at all.  i64 division is the usual customer
+  # (__aeabi_ldivmod), which is the standing cost of decision D-1.
+  compiler_rt: allow
+
+platform:
+  type: zephyr
+  # The complete platform surface.  P003 s8: platform API is explicit externs,
+  # never a header the generator reads.  The trap hook is implied and does not
+  # have to be repeated here.
+  externs:
+    - spinel_trap

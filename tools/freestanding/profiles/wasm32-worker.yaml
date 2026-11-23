@@ -1,0 +1,64 @@
+# wasm32-wasip1, aimed at an edge worker (Cloudflare Workers / workerd, node).
+#
+# THE POINT OF THIS FILE is that it is only the ARCHITECTURE layer that changed.
+# `abi:` and `platform:` are copied from riscv32-zephyr.yaml verbatim except for
+# `platform.type`, and the generator was not modified at all (E063 s2): a wasm
+# target is a target like any other, which is the claim P003 s"三層分離" makes
+# and this profile is the third data point for it.
+#
+# WHY `platform: none` AND NOT A NEW `wasm` TYPE.  Layer 3 is "who links the
+# object and who supplies the platform API".  On a worker that is the JS host
+# (worker.mjs / index.mjs) plus wasm-ld, exactly as on bare metal it is the
+# user's own startup and linker script -- P003 Phase 7's `platform = none`.  The
+# generator has nothing target-specific to do for either, so inventing a
+# `wasm` value would add a name without adding a behaviour.
+#
+# WHAT THE HOST HAS TO PROVIDE, in full: one import, `env.spinel_trap`.  It is
+# undefined in the object, wasm-ld turns undefined symbols into imports with
+# `--allow-undefined`, and the module's import section then names it and nothing
+# else -- which is the wasm spelling of "a freestanding object may only import
+# what the profile allows" (E063 s4).
+
+target:
+  triple: wasm32-wasip1
+  cpu:
+  # Pinned so the record reproduces without running clang; it is what llvm@22's
+  # clang answers for --target=wasm32-wasip1 (which it normalises to
+  # wasm32-unknown-wasip1).  p10/p20 are the WebAssembly address spaces for
+  # funcref/externref tables and are never used by an integer kernel.
+  data_layout: "e-m:e-p:32:32-p10:8:8-p20:8:8-i64:64-i128:128-n32:64-S128-ni:1:10:20"
+  cflags:
+    # Size is the only quantity this profile lets us claim (P003: no timing on a
+    # target whose clock we do not control), and for a worker module it is the
+    # quantity that matters -- it is the cold-start cost.  -Os here overrides the
+    # -O2 fs_lower passes, the same way the two MCU profiles do it.
+    - -Os
+
+abi:
+  boundary: c-abi
+  # Decision 0019: default Integer bodies are wasm32's pointer width.
+  # A first-line # spinel: int64 is refused here unless tools/core/int64-allow.tsv lists the source (0019).
+  int_width: i32-internal
+  # P003 decision record D-2.  On wasm `trap` does NOT mean `unreachable`: the
+  # hook is an imported function, so the HOST decides what a fault is (a JS
+  # exception, a 500 response, a log line).  E063 s6 records why the hook is
+  # kept as an import rather than lowered to wasm's own `unreachable`.
+  overflow: trap
+  trap_hook: spinel_trap
+
+runtime:
+  libc: none
+  libm: none
+  # Kept `allow` for symmetry, but measured to be unnecessary: an integer kernel
+  # imports no builtin at all on wasm32 (E063 s4 -- the undefined-symbol table
+  # has exactly one row).  `deny` would also pass today; `allow` is the honest
+  # setting because i128 helpers (__multi3 and friends) are a plain
+  # compiler-runtime dependency that a wider kernel could reach.
+  compiler_rt: allow
+
+platform:
+  # See the header comment: the JS/workerd host is layer 3 and it supplies the
+  # link, so this is the same `none` P003 Phase 7 defines for bare metal.
+  type: none
+  # The complete platform surface.  The trap hook is implied and not repeated.
+  externs: []

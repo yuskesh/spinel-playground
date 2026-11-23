@@ -1,0 +1,262 @@
+{
+  "format": "spinel-core-report",
+  "version": 1,
+  "entry": "gd_unknown",
+  "target": "normalized-target",
+  "profile": "hosted-stage2",
+  "inputs": {
+    "contract": {
+      "file": "unknown.contract",
+      "sha256": "a9ad1c435fef04f53fb397c320ae4f319d9a97b643c61673482f133abaaf2887"
+    },
+    "source": {
+      "file": "golden/unknown.rb",
+      "revision": null,
+      "sha256": "dc06332468ebd69e0156a7beb88de6a54100279dcc14ed613e4a4e862f0e581c"
+    }
+  },
+  "object": {
+    "file": "normalized.o",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "tools": {
+    "kernel": {
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "reader": {
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "clang": {
+      "version": "normalized",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  },
+  "properties": {
+    "recursion": {
+      "mode": "enforce",
+      "evaluated": false
+    },
+    "allocation": {
+      "mode": "enforce",
+      "evaluated": false
+    },
+    "loop_bound": {
+      "mode": "observe",
+      "evaluated": true,
+      "verdict": "unknown",
+      "evidence": [],
+      "work_bound": {
+        "expression": null,
+        "limit": null,
+        "terms": [
+          {
+            "loop": "gd_unknown#0",
+            "context": [],
+            "iterations": null,
+            "reason": "bound-from-buffer-element",
+            "detail": "the bound reads a buffer element"
+          },
+          {
+            "loop": "gd_unknown#1",
+            "context": [
+              "loop:gd_unknown#0"
+            ],
+            "iterations": null,
+            "reason": "enclosing-unknown",
+            "detail": "enclosing loop gd_unknown#0 is bound-from-buffer-element"
+          },
+          {
+            "loop": "gd_unknown#2",
+            "context": [],
+            "iterations": "max(0, n)",
+            "reason": null,
+            "detail": null
+          },
+          {
+            "loop": "gd_unknown#3",
+            "context": [
+              "loop:gd_unknown#2"
+            ],
+            "iterations": null,
+            "reason": "start-not-expressible",
+            "detail": "enclosing-induction: expressible over the induction variable of an enclosing loop (a of gd_unknown#2)"
+          },
+          {
+            "loop": "gd_unknown#4",
+            "context": [],
+            "iterations": null,
+            "reason": "step-skipped-by-next",
+            "detail": "a `next` reaches the next iteration before t is changed"
+          }
+        ]
+      },
+      "loops": [
+        {
+          "id": "gd_unknown#0",
+          "method": "gd_unknown",
+          "ordinal": 0,
+          "digest": "1f29796b85ffe09357be817e29664f4fbcfdab064486525e48540e3735eaee25",
+          "digest_version": 1,
+          "label": null,
+          "header": "while (call < (lvar i) (call [] (lvar buf) 0))",
+          "location": "golden/unknown.rb:6:2",
+          "parent": null,
+          "verdict": "unknown",
+          "reason": "bound-from-buffer-element",
+          "detail": "the bound reads a buffer element",
+          "conjunct": null,
+          "evidence": []
+        },
+        {
+          "id": "gd_unknown#1",
+          "method": "gd_unknown",
+          "ordinal": 1,
+          "digest": "df3dcc4ac491339eff0531a267935b533afbb3200a8f28a1209a1e7f931c29cb",
+          "digest_version": 1,
+          "label": null,
+          "header": "while (call < (lvar j) (lvar n))",
+          "location": "golden/unknown.rb:9:4",
+          "parent": "gd_unknown#0",
+          "verdict": "pass",
+          "reason": null,
+          "detail": null,
+          "conjunct": null,
+          "evidence": [
+            {
+              "kind": "static_proof",
+              "subject": "loop gd_unknown#1",
+              "value": {
+                "kind": "iterations",
+                "expression": "max(0, n)"
+              },
+              "artifact": {
+                "file": "golden/unknown.rb",
+                "revision": null,
+                "sha256": "dc06332468ebd69e0156a7beb88de6a54100279dcc14ed613e4a4e862f0e581c"
+              }
+            }
+          ]
+        },
+        {
+          "id": "gd_unknown#2",
+          "method": "gd_unknown",
+          "ordinal": 2,
+          "digest": "ec4ef07834f388e11b148140a48bee87f1273a37ee8974c93c6b4c98c6e20569",
+          "digest_version": 1,
+          "label": null,
+          "header": "while (call < (lvar a) (lvar n))",
+          "location": "golden/unknown.rb:16:2",
+          "parent": null,
+          "verdict": "pass",
+          "reason": null,
+          "detail": null,
+          "conjunct": null,
+          "evidence": [
+            {
+              "kind": "static_proof",
+              "subject": "loop gd_unknown#2",
+              "value": {
+                "kind": "iterations",
+                "expression": "max(0, n)"
+              },
+              "artifact": {
+                "file": "golden/unknown.rb",
+                "revision": null,
+                "sha256": "dc06332468ebd69e0156a7beb88de6a54100279dcc14ed613e4a4e862f0e581c"
+              }
+            }
+          ]
+        },
+        {
+          "id": "gd_unknown#3",
+          "method": "gd_unknown",
+          "ordinal": 3,
+          "digest": "6a1a4e3e41de1749a7a1c3f96a0f30a75d7a22ca8bc44fe266ca37f4b01aa60d",
+          "digest_version": 1,
+          "label": null,
+          "header": "while (call < (lvar b) (lvar n))",
+          "location": "golden/unknown.rb:19:4",
+          "parent": "gd_unknown#2",
+          "verdict": "unknown",
+          "reason": "start-not-expressible",
+          "detail": "enclosing-induction: expressible over the induction variable of an enclosing loop (a of gd_unknown#2)",
+          "conjunct": null,
+          "evidence": []
+        },
+        {
+          "id": "gd_unknown#4",
+          "method": "gd_unknown",
+          "ordinal": 4,
+          "digest": "9f2ab1d688b51b25ebc01a6fb18e9e59d6cf80dce154ebfaf42b21c981426506",
+          "digest_version": 1,
+          "label": null,
+          "header": "while (call < (lvar t) (lvar n))",
+          "location": "golden/unknown.rb:27:2",
+          "parent": null,
+          "verdict": "unknown",
+          "reason": "step-skipped-by-next",
+          "detail": "a `next` reaches the next iteration before t is changed",
+          "conjunct": null,
+          "evidence": []
+        }
+      ]
+    },
+    "stack_budget": {
+      "mode": "observe",
+      "evaluated": true,
+      "verdict": "unknown",
+      "reason": "profile 'hosted-stage2' declares no provisioned_stack and no interrupt_reserve, so the inequality has no right-hand side",
+      "kernel_stack": 0,
+      "call_overhead": {
+        "bytes": 0,
+        "target": "normalized-target",
+        "evidence": "normalized"
+      },
+      "evidence": [
+        {
+          "kind": "measurement",
+          "subject": "frame sizes",
+          "method": "warn-stack-size=0 on a side compile of the IR the object was generated from, with that object's codegen line",
+          "artifact": {
+            "file": "golden/unknown.rb",
+            "revision": null,
+            "sha256": "dc06332468ebd69e0156a7beb88de6a54100279dcc14ed613e4a4e862f0e581c"
+          }
+        },
+        {
+          "kind": "static_proof",
+          "subject": "worst path",
+          "frame_total": 0,
+          "call_edges": 0,
+          "artifact": {
+            "file": "golden/unknown.rb",
+            "revision": null,
+            "sha256": "dc06332468ebd69e0156a7beb88de6a54100279dcc14ed613e4a4e862f0e581c"
+          }
+        },
+        {
+          "kind": "declaration",
+          "subject": "per-call stack overhead",
+          "detail": "normalized"
+        }
+      ],
+      "worst_path": [
+        "normalized"
+      ],
+      "frames": [
+        {
+          "function": "normalized",
+          "bytes": 0
+        }
+      ]
+    },
+    "extern_effects": {
+      "mode": "enforce",
+      "evaluated": false
+    },
+    "undefined_symbols": {
+      "mode": "enforce",
+      "evaluated": false
+    }
+  }
+}

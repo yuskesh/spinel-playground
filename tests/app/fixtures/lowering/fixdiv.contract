@@ -1,0 +1,6 @@
+core-contract 2
+root app.rb
+entry fixdiv
+context thread
+result none
+param w32 buffer i32 inout count const 2

@@ -1,0 +1,13 @@
+load ok unmet=0
+attach_socket sf ok
+attach_socket xp err=SpinelBPF::State
+attach_socket nope err=SpinelBPF::State
+attach_socket stdin err=SpinelBPF::Other
+attach_xdp sf err=SpinelBPF::State
+attach_tcx sf err=SpinelBPF::State
+run78 ret=-1 out=64
+run79 ret=0 out=65
+run13 err=SpinelBPF::Other
+run xp err=SpinelBPF::State
+xdp run sf err=SpinelBPF::State
+run byte 256 err=SpinelBPF::ValueRange

@@ -1,0 +1,10 @@
+# Two parameters are named after typedefs that LATER parameters use as types.
+# Accepted: the generated prototype puts no contract name into C's namespace.
+core-contract 1
+root fixtures/schema/src/typedefs.rb
+entry blend
+result i64
+param uint8_t scalar i32
+param src buffer u8 in count n_src
+param n_src scalar u64
+param int64_t scalar i64

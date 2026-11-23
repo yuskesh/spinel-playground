@@ -1,0 +1,175 @@
+# The slot and link trace for decision 0007 task 5, bullet 3.
+#
+# Tab-separated. The first column is the record kind.
+#
+#   cap      how many slots the main trace runs over. Small on purpose: the
+#            original names MAXTHINKERS only in its overflow guard, so it runs
+#            happily over shorter arrays as long as the trace never reaches
+#            the end of them, and the whole state then fits in a comparison
+#            that prints when it fails.
+#   exhaust  the capacity the exhaustion run uses. This one has to be the
+#            original's own number, because exhaustion is the one place the
+#            two capacities must be the same.
+#   op       kind and two arguments (`-` where an operation takes fewer):
+#              tadd     func data   -- P_AddThinker
+#              tremove  t    -      -- P_RemoveThinker, a mark, not an unlink
+#              tcollect -    -      -- the sweep in P_RunThinkers
+#              malloc   -    -      -- the mobj slot allocator
+#              mfree    m    -      -- and its free
+#            The rows are the trace, executed top to bottom, and all three
+#            worlds run every one of them.
+#   check    id, world (T or M), preloaded cells, the kernel, its scalar
+#            arguments, an array to shorten, the status the CORE kernel must
+#            return, how many cells the call changes, and why. These are NOT
+#            part of the trace: each runs against a world of its own. A
+#            preload is `array:index=value`, comma separated, or `-`.
+#
+#            SHORTENING names one array whose declared COUNT is one less than
+#            the others' while the storage is the same size. Every kernel here
+#            takes five counts and compares against the one it was given, and
+#            without this they are five names for one number: `a >= n_func`
+#            and `a >= n_next` would be the same program. `state` shortens to
+#            one element, which puts the bump outside its own buffer.
+#
+#            HOW MANY CELLS THE CALL CHANGES is measured, not derived, and it
+#            is here to be pinned rather than to be argued from. The ABI does
+#            not promise that a refusal leaves the buffers as it found them --
+#            a kernel may have written some of them before the access that
+#            failed, and tadd-tail-past writes three. Declaring the number
+#            makes that an observation instead of something nobody looked at,
+#            and makes a change to it something to notice.
+
+# THE THREE WAYS FULL AND CORE PART COMPANY, all pinned by pairs below.
+#
+#   Off the end of an array. A Ruby Array grows or reads nil; here it is
+#   SPINEL_CORE_BOUNDS. Every declared buffer face of every kernel has a pair,
+#   and each pair is the exact last index and the one after it.
+#
+#   BELOW the start of an array. This is the direction where the ORIGINAL is
+#   not merely different but wrong: `remove_thinker(-1)` counts from the end in
+#   Ruby and silently marks the LAST slot, which the next sweep then frees.
+#   The kernel answers SPINEL_CORE_BOUNDS and writes nothing.
+#
+#   Outside what an i32 cell holds. `func` and `data` arrive as i64 because
+#   that is what the ABI passes scalars in, and land in i32 arrays. CRuby
+#   stores 2147483648 in `@th_func` without comment; the kernel answers
+#   SPINEL_CORE_ARITHMETIC. The pairs below pin both ends of both fields.
+#
+# Status 1 (ARGUMENT) does not appear and cannot: it is about the pointers and
+# counts the harness passes, which tests/core-boundary/buffers.sh covers.
+#
+# WHY `func` COUNTS UP FROM 10. The original's sweep distinguishes TH_REMOVED
+# from everything else and nothing finer; its ten dispatch branches cover 0 to
+# 9, so a live slot given 10 or more falls through all of them and the sweep
+# runs with no thinker function called. That is what lets the ORIGINAL
+# run_thinkers be driven here at all. Giving every slot TH_NULL would do it
+# too, and would also let a kernel that ignored its `func` argument pass, so
+# the values differ from each other instead. free_thinker puts a freed slot
+# back to TH_NULL, which is 10, and that is the original's own behaviour.
+#
+# WHY THESE OPERATIONS. Slots 1, 2 and 3 are allocated by the bump allocator;
+# 2 is marked and swept, and the next allocation gets 2 back AT THE TAIL of
+# the list rather than where it was -- reuse is observable in the order, not
+# only in the number. Then two slots are marked and swept together, and the
+# next two allocations return them in the REVERSE of the order they were
+# freed, because the free list is a stack and not a queue: a reference model
+# that used a queue would disagree exactly here. Later the head, an interior
+# slot and the tail are swept in one pass. The mobj side does the same without
+# a list to link into.
+#
+# WHAT IS NOT HERE. Freeing one slot twice. The original permits it and so
+# does the extraction -- both thread the slot to itself and hand it out twice
+# -- but the model cannot represent it, because its free list is an Array and
+# the second push is a second entry rather than an alias. It is a caller's
+# error in all three; model.rb records it beside the other shapes it has no
+# image for.
+#
+cap	64
+exhaust	4096
+op	tadd	10	100
+op	tadd	11	200
+op	tadd	12	300
+op	malloc	-	-
+op	tremove	2	-
+op	malloc	-	-
+op	tcollect	-	-
+op	tadd	13	400
+op	tadd	14	500
+op	malloc	-	-
+op	mfree	1	-
+op	mfree	0	-
+op	tremove	1	-
+op	tremove	4	-
+op	malloc	-	-
+op	tcollect	-	-
+op	malloc	-	-
+op	tadd	15	600
+op	tadd	16	700
+op	malloc	-	-
+op	tadd	17	800
+op	tcollect	-	-
+op	mfree	3	-
+op	tremove	3	-
+op	tremove	2	-
+op	tremove	5	-
+op	tcollect	-	-
+op	malloc	-	-
+op	tadd	18	900
+op	mfree	4	-
+op	tcollect	-	-
+op	tadd	19	1000
+op	tadd	20	1100
+op	tadd	21	1200
+op	tadd	22	1300
+op	tadd	23	1400
+op	tadd	24	1500
+op	tadd	25	1600
+op	tadd	26	1700
+op	tadd	27	1800
+op	tadd	28	1900
+op	malloc	-	-
+op	tremove	7	-
+op	tremove	11	-
+op	tcollect	-	-
+op	tadd	29	2000
+op	mfree	5	-
+op	malloc	-	-
+check	tremove-first	T	-	thinker_remove	0	-	0	1	the first slot of the array
+check	tremove-below	T	-	thinker_remove	-1	-	3	0	one slot before it -- where the ORIGINAL marks the last slot instead
+check	tremove-last	T	-	thinker_remove	63	-	0	1	the last slot of the array
+check	tremove-past	T	-	thinker_remove	64	-	3	0	one slot past it
+check	mfree-first	M	-	mobj_free	0	-	0	1	the first slot of the array
+check	mfree-below	M	-	mobj_free	-1	-	3	0	one slot before it
+check	mfree-last	M	-	mobj_free	63	-	0	1	the last slot of the array
+check	mfree-past	M	-	mobj_free	64	-	3	0	one slot past it
+check	tadd-last	T	state:1=63	thinker_add	10,1	-	0	4	the last never-used slot
+check	tadd-full	T	state:1=64	thinker_add	10,1	-	4	0	the bump allocator exhausted
+check	malloc-last	M	state:1=63	mobj_alloc	-	-	0	1	the last never-used slot
+check	malloc-full	M	state:1=64	mobj_alloc	-	-	4	0	the bump allocator exhausted
+check	tadd-free-last	T	state:0=63	thinker_add	10,1	-	0	4	a free-list head at the last slot
+check	tadd-free-past	T	state:0=64	thinker_add	10,1	-	3	0	a free-list head one slot past the array
+check	malloc-free-last	M	state:0=63	mobj_alloc	-	-	0	1	a free-list head at the last slot
+check	malloc-free-past	M	state:0=64	mobj_alloc	-	-	3	0	a free-list head one slot past the array
+check	tadd-tail-last	T	prev:0=63	thinker_add	11,1	-	0	6	a tail link at the last slot
+check	tadd-tail-past	T	prev:0=64	thinker_add	11,1	-	3	3	a tail link one slot past the array
+check	tadd-func-max	T	-	thinker_add	2147483647,1	-	0	5	the largest kind an i32 cell holds
+check	tadd-func-over	T	-	thinker_add	2147483648,1	-	2	1	one more, where the ORIGINAL stores it and i32 cannot
+check	tadd-func-min	T	-	thinker_add	-2147483648,1	-	0	5	the smallest kind an i32 cell holds
+check	tadd-func-under	T	-	thinker_add	-2147483649,1	-	2	1	one less
+check	tadd-data-max	T	-	thinker_add	10,2147483647	-	0	4	the largest datum an i32 cell holds
+check	tadd-data-over	T	-	thinker_add	10,2147483648	-	2	1	one more
+check	collect-empty	T	-	thinker_collect	-	-	0	0	an empty list sweeps to nothing
+check	collect-cycle	T	next:0=1,next:1=1	thinker_collect	-	-	4	0	a next chain that closes on itself
+check	collect-last	T	next:0=63	thinker_collect	-	-	0	0	a next link at the last slot
+check	collect-past	T	next:0=64	thinker_collect	-	-	3	0	a next link one slot past the array
+check	collect-prev-first	T	next:0=1,func:1=0,prev:1=0	thinker_collect	-	-	0	4	a back link at the first slot
+check	collect-prev-below	T	next:0=1,func:1=0,prev:1=-1	thinker_collect	-	-	3	0	one slot before it
+check	collect-prev-last	T	next:0=1,func:1=0,prev:1=63	thinker_collect	-	-	0	4	a back link at the last slot
+check	collect-prev-past	T	next:0=1,func:1=0,prev:1=64	thinker_collect	-	-	3	0	one slot past the array
+check	tadd-short-func	T	state:1=63	thinker_add	11,1	func	4	0	th_func one element shorter: the capacity is th_func's own count, so this is CAPACITY and not BOUNDS
+check	tadd-short-data	T	state:1=63	thinker_add	11,1	data	3	2	th_data one element shorter than the rest
+check	tadd-short-next	T	state:1=63	thinker_add	11,1	next	3	4	th_next one element shorter than the rest
+check	tadd-short-prev	T	state:1=63	thinker_add	11,1	prev	3	4	th_prev one element shorter than the rest
+check	tadd-short-state	T	-	thinker_add	11,1	state	3	0	a state buffer of one element, so the bump is outside it
+check	collect-short-data	T	next:0=63,func:63=0	thinker_collect	-	data	3	2	th_data one element shorter, met at the last slot
+check	malloc-short-thing	M	state:0=63	mobj_alloc	-	thing_next	3	0	thing_next one element shorter than the count says

@@ -1,0 +1,18 @@
+name = "e063-freestanding-probe"
+main = "index.mjs"
+compatibility_date = "2026-01-01"
+
+# kern.wasm must arrive as a compiled WebAssembly.Module, not bytes -- the same
+# rule tools/wasm/worker-template/wrangler.toml uses.  It matters more here
+# than there: the module is ~2 KB, so if compilation were on the request path
+# it would be most of the cost.
+[[rules]]
+type = "CompiledWasm"
+globs = ["**/*.wasm"]
+# Explicit so that wrangler does not warn about shadowing its own default rule.
+fallthrough = false
+
+# NOTE what is NOT in this file.  No [vars] the module could read (it has no
+# ENV), no bindings (it has no host API), no node compat, no wasi shim.  A
+# freestanding module's entire contract with the platform is the one import the
+# worker supplies in code -- `env.spinel_trap`.

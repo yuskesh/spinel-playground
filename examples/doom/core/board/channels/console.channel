@@ -1,0 +1,12 @@
+core-channel 1
+# examples/doom/core/board/channels/console.channel -- decision 0027's first
+# user: pair.rb's console lines from the M7 to the M33, which owns LPUART1
+# and writes them on its own console (companion.rb). The line is the owner's,
+# 2026-10-26: the tic, the line's length and its text, depth 16.
+channel console
+from cm7
+to cm33
+depth 16
+field tic u32
+field len u8
+field text u8 count 119

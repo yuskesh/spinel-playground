@@ -1,0 +1,783 @@
+{
+ "fixtures": [
+  {
+   "name": "hello",
+   "elem": "u8",
+   "size": 1,
+   "ctor": "Uint8Array",
+   "init": [
+    104,
+    101,
+    108,
+    108,
+    111
+   ]
+  },
+  {
+   "name": "bytes16",
+   "elem": "u8",
+   "size": 1,
+   "ctor": "Uint8Array",
+   "init": [
+    0,
+    1,
+    2,
+    3,
+    250,
+    251,
+    252,
+    253,
+    254,
+    255,
+    7,
+    9,
+    11,
+    13,
+    17,
+    19
+   ]
+  },
+  {
+   "name": "empty",
+   "elem": "u8",
+   "size": 1,
+   "ctor": "Uint8Array",
+   "init": []
+  },
+  {
+   "name": "sig",
+   "elem": "i32",
+   "size": 4,
+   "ctor": "Int32Array",
+   "init": [
+    10,
+    -20,
+    30,
+    -40,
+    50,
+    -60,
+    70,
+    -80
+   ]
+  },
+  {
+   "name": "sig_out",
+   "elem": "i32",
+   "size": 4,
+   "ctor": "Int32Array",
+   "init": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "name": "wide",
+   "elem": "i32",
+   "size": 4,
+   "ctor": "Int32Array",
+   "init": [
+    -1,
+    0,
+    1,
+    255,
+    256,
+    300,
+    -300,
+    2147483647
+   ]
+  },
+  {
+   "name": "small_out",
+   "elem": "u8",
+   "size": 1,
+   "ctor": "Uint8Array",
+   "init": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "name": "recs",
+   "elem": "i32",
+   "size": 4,
+   "ctor": "Int32Array",
+   "init": [
+    1,
+    100,
+    0,
+    2,
+    200,
+    1,
+    3,
+    300,
+    0
+   ]
+  },
+  {
+   "name": "mut",
+   "elem": "i32",
+   "size": 4,
+   "ctor": "Int32Array",
+   "init": [
+    1,
+    2,
+    3,
+    4
+   ]
+  },
+  {
+   "name": "dyadic",
+   "elem": "f64",
+   "size": 8,
+   "ctor": "Float64Array",
+   "init": [
+    1.5,
+    2.25,
+    -0.125,
+    4.0
+   ]
+  },
+  {
+   "name": "thirds",
+   "elem": "f64",
+   "size": 8,
+   "ctor": "Float64Array",
+   "init": [
+    1.0,
+    2.0,
+    4.0
+   ]
+  },
+  {
+   "name": "f32in",
+   "elem": "f32",
+   "size": 4,
+   "ctor": "Float32Array",
+   "init": [
+    1.5,
+    -2.25,
+    0.125,
+    8.0
+   ]
+  },
+  {
+   "name": "f32out",
+   "elem": "f32",
+   "size": 4,
+   "ctor": "Float32Array",
+   "init": [
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "name": "f32odd",
+   "elem": "f32",
+   "size": 4,
+   "ctor": "Float32Array",
+   "init": [
+    0.1,
+    0.2,
+    0.3,
+    0.4
+   ]
+  },
+  {
+   "name": "gpu_in",
+   "elem": "i32",
+   "size": 4,
+   "ctor": "Int32Array",
+   "init": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7
+   ]
+  },
+  {
+   "name": "gpu_out",
+   "elem": "i32",
+   "size": 4,
+   "ctor": "Int32Array",
+   "init": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "name": "gpu_ref",
+   "elem": "i32",
+   "size": 4,
+   "ctor": "Int32Array",
+   "init": [
+    0,
+    1,
+    5,
+    14,
+    30,
+    55,
+    91,
+    140
+   ]
+  }
+ ],
+ "cases": [
+  {
+   "name": "adler32(hello)",
+   "kind": "int",
+   "setup": [],
+   "sym": "spinel_adler32",
+   "args": [
+    {
+     "buf": "hello"
+    },
+    {
+     "lit": 5
+    }
+   ],
+   "expect": "same"
+  },
+  {
+   "name": "adler32(bytes16)",
+   "kind": "int",
+   "setup": [],
+   "sym": "spinel_adler32",
+   "args": [
+    {
+     "buf": "bytes16"
+    },
+    {
+     "lit": 16
+    }
+   ],
+   "expect": "same"
+  },
+  {
+   "name": "adler32(empty)",
+   "kind": "int",
+   "setup": [],
+   "sym": "spinel_adler32",
+   "args": [
+    {
+     "buf": "empty"
+    },
+    {
+     "lit": 0
+    }
+   ],
+   "expect": "same"
+  },
+  {
+   "name": "adler32(hello,9)",
+   "kind": "int",
+   "setup": [],
+   "sym": "spinel_adler32",
+   "args": [
+    {
+     "buf": "hello"
+    },
+    {
+     "lit": "9"
+    }
+   ],
+   "expect": "oob"
+  },
+  {
+   "name": "adler32(hello,-1)",
+   "kind": "int",
+   "setup": [],
+   "sym": "spinel_adler32",
+   "args": [
+    {
+     "buf": "hello"
+    },
+    {
+     "lit": "-1"
+    }
+   ],
+   "expect": "diverge"
+  },
+  {
+   "name": "movavg(sig,w3)",
+   "kind": "int",
+   "setup": [
+    "sig_out"
+   ],
+   "sym": "spinel_movavg",
+   "args": [
+    {
+     "buf": "sig"
+    },
+    {
+     "buf": "sig_out"
+    },
+    {
+     "lit": 8
+    },
+    {
+     "lit": "3"
+    }
+   ],
+   "expect": "same"
+  },
+  {
+   "name": "movavg(sig,w1)",
+   "kind": "int",
+   "setup": [
+    "sig_out"
+   ],
+   "sym": "spinel_movavg",
+   "args": [
+    {
+     "buf": "sig"
+    },
+    {
+     "buf": "sig_out"
+    },
+    {
+     "lit": 8
+    },
+    {
+     "lit": "1"
+    }
+   ],
+   "expect": "same"
+  },
+  {
+   "name": "bump(mut,+7)",
+   "kind": "int",
+   "setup": [
+    "mut"
+   ],
+   "sym": "spinel_bump",
+   "args": [
+    {
+     "buf": "mut"
+    },
+    {
+     "lit": 4
+    },
+    {
+     "lit": "7"
+    }
+   ],
+   "expect": "same"
+  },
+  {
+   "name": "bump(mut,-1)",
+   "kind": "int",
+   "setup": [
+    "mut"
+   ],
+   "sym": "spinel_bump",
+   "args": [
+    {
+     "buf": "mut"
+    },
+    {
+     "lit": 4
+    },
+    {
+     "lit": "-1"
+    }
+   ],
+   "expect": "same"
+  },
+  {
+   "name": "clamp8(wide)",
+   "kind": "int",
+   "setup": [
+    "small_out"
+   ],
+   "sym": "spinel_clamp8",
+   "args": [
+    {
+     "buf": "wide"
+    },
+    {
+     "buf": "small_out"
+    },
+    {
+     "lit": 8
+    }
+   ],
+   "expect": "same"
+  },
+  {
+   "name": "pack8(wide)",
+   "kind": "int",
+   "setup": [
+    "small_out"
+   ],
+   "sym": "spinel_pack8",
+   "args": [
+    {
+     "buf": "wide"
+    },
+    {
+     "buf": "small_out"
+    },
+    {
+     "lit": 8
+    }
+   ],
+   "expect": "diverge"
+  },
+  {
+   "name": "recsum(recs,f0)",
+   "kind": "int",
+   "setup": [],
+   "sym": "spinel_recsum",
+   "args": [
+    {
+     "buf": "recs"
+    },
+    {
+     "lit": 9
+    },
+    {
+     "lit": "0"
+    }
+   ],
+   "expect": "same"
+  },
+  {
+   "name": "recsum(recs,f1)",
+   "kind": "int",
+   "setup": [],
+   "sym": "spinel_recsum",
+   "args": [
+    {
+     "buf": "recs"
+    },
+    {
+     "lit": 9
+    },
+    {
+     "lit": "1"
+    }
+   ],
+   "expect": "same"
+  },
+  {
+   "name": "recsum(recs,f2)",
+   "kind": "int",
+   "setup": [],
+   "sym": "spinel_recsum",
+   "args": [
+    {
+     "buf": "recs"
+    },
+    {
+     "lit": 9
+    },
+    {
+     "lit": "2"
+    }
+   ],
+   "expect": "same"
+  },
+  {
+   "name": "recsum(recs,f3)",
+   "kind": "int",
+   "setup": [],
+   "sym": "spinel_recsum",
+   "args": [
+    {
+     "buf": "recs"
+    },
+    {
+     "lit": 9
+    },
+    {
+     "lit": "3"
+    }
+   ],
+   "expect": "diverge"
+  },
+  {
+   "name": "fpoly(2.5)",
+   "kind": "float",
+   "setup": [],
+   "sym": "spinel_fpoly",
+   "args": [
+    {
+     "lit": "2.5"
+    }
+   ],
+   "expect": "same"
+  },
+  {
+   "name": "fpoly(-0.5)",
+   "kind": "float",
+   "setup": [],
+   "sym": "spinel_fpoly",
+   "args": [
+    {
+     "lit": "-0.5"
+    }
+   ],
+   "expect": "same"
+  },
+  {
+   "name": "fpoly(0.1)",
+   "kind": "float",
+   "setup": [],
+   "sym": "spinel_fpoly",
+   "args": [
+    {
+     "lit": "0.1"
+    }
+   ],
+   "expect": "diverge"
+  },
+  {
+   "name": "fmix(1.5,2.25)",
+   "kind": "float",
+   "setup": [],
+   "sym": "spinel_fmix",
+   "args": [
+    {
+     "lit": "1.5"
+    },
+    {
+     "lit": "2.25"
+    }
+   ],
+   "expect": "same"
+  },
+  {
+   "name": "fmix(0.5,-1.0e10)",
+   "kind": "float",
+   "setup": [],
+   "sym": "spinel_fmix",
+   "args": [
+    {
+     "lit": "0.5"
+    },
+    {
+     "lit": "-1.0e10"
+    }
+   ],
+   "expect": "same"
+  },
+  {
+   "name": "fmean(dyadic)",
+   "kind": "float",
+   "setup": [],
+   "sym": "spinel_fmean",
+   "args": [
+    {
+     "buf": "dyadic"
+    },
+    {
+     "lit": 4
+    }
+   ],
+   "expect": "same"
+  },
+  {
+   "name": "fmean(thirds)",
+   "kind": "float",
+   "setup": [],
+   "sym": "spinel_fmean",
+   "args": [
+    {
+     "buf": "thirds"
+    },
+    {
+     "lit": 3
+    }
+   ],
+   "expect": "same"
+  },
+  {
+   "name": "fmean(empty_f)",
+   "kind": "float",
+   "setup": [],
+   "sym": "spinel_fmean",
+   "args": [
+    {
+     "buf": "dyadic"
+    },
+    {
+     "lit": "0"
+    }
+   ],
+   "expect": "same"
+  },
+  {
+   "name": "fscale(f32in,2)",
+   "kind": "int",
+   "setup": [
+    "f32out"
+   ],
+   "sym": "spinel_fscale",
+   "args": [
+    {
+     "buf": "f32in"
+    },
+    {
+     "buf": "f32out"
+    },
+    {
+     "lit": 4
+    },
+    {
+     "lit": "2.0"
+    }
+   ],
+   "expect": "same"
+  },
+  {
+   "name": "fscale(f32odd,3)",
+   "kind": "int",
+   "setup": [
+    "f32out"
+   ],
+   "sym": "spinel_fscale",
+   "args": [
+    {
+     "buf": "f32odd"
+    },
+    {
+     "buf": "f32out"
+    },
+    {
+     "lit": 4
+    },
+    {
+     "lit": "3.0"
+    }
+   ],
+   "expect": "diverge"
+  },
+  {
+   "name": "sum_checked(sig)",
+   "kind": "int",
+   "setup": [],
+   "sym": "spinel_sum_checked",
+   "args": [
+    {
+     "buf": "sig"
+    },
+    {
+     "lit": 8
+    }
+   ],
+   "expect": "same"
+  },
+  {
+   "name": "sum_unchecked(sig)",
+   "kind": "int",
+   "setup": [],
+   "sym": "spinel_sum_unchecked",
+   "args": [
+    {
+     "buf": "sig"
+    },
+    {
+     "lit": 8
+    }
+   ],
+   "expect": "same"
+  },
+  {
+   "name": "sum_offby1(sig)",
+   "kind": "int",
+   "setup": [],
+   "sym": "spinel_sum_offby1",
+   "args": [
+    {
+     "buf": "sig"
+    },
+    {
+     "lit": 8
+    }
+   ],
+   "expect": "diverge"
+  },
+  {
+   "name": "fill(gpu_out,100)",
+   "kind": "int",
+   "setup": [
+    "gpu_out"
+   ],
+   "sym": "spinel_fill",
+   "args": [
+    {
+     "buf": "gpu_out"
+    },
+    {
+     "lit": 8
+    },
+    {
+     "lit": "100"
+    }
+   ],
+   "expect": "same"
+  },
+  {
+   "name": "one_sumsq(10)",
+   "kind": "int",
+   "setup": [],
+   "sym": "spinel_one_sumsq",
+   "args": [
+    {
+     "lit": "10"
+    }
+   ],
+   "expect": "same"
+  },
+  {
+   "name": "verify(match)",
+   "kind": "int",
+   "setup": [],
+   "sym": "spinel_verify",
+   "args": [
+    {
+     "buf": "gpu_in"
+    },
+    {
+     "buf": "gpu_ref"
+    },
+    {
+     "lit": 8
+    }
+   ],
+   "expect": "same"
+  },
+  {
+   "name": "ver()",
+   "kind": "int",
+   "setup": [],
+   "sym": "spinel_e077_version",
+   "args": [],
+   "expect": "same"
+  }
+ ]
+}

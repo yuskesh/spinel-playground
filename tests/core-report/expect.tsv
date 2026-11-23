@@ -1,0 +1,168 @@
+# tests/core-report/expect.tsv -- what each fixture entry's report must say.
+#
+# Written from the rules in docs/core/core-report.md, not copied from a run.
+#
+# entry     the fixture entry in fixtures/loops.rb
+# subject   a loop id (method#ordinal), `term:<loop id>` for every occurrence of
+#           that loop in the work bound (they must all agree), or `work`
+# verdict   pass | unknown
+# value     pass: the iterations expression; unknown: the reason code
+#           (for `work`, `-` when unknown)
+# extra     `-`, or `;`-separated `conjunct=<index>`, `parent=<loop id>`,
+#           `detail=<text>` for a detail that must start with that text, and
+#           `limit=<name>` on a `work` row for the limit the analysis met
+# tight     loops and work only: `tight` if some oracle run reaches the bound,
+#           `upper` if the bound is only an upper bound, `-` for unknown
+# counter   loops only: the cell of `cnt` the loop counts itself into, or `-`
+#
+# entry	subject	verdict	value	extra	tight	counter
+lb_lt	lb_lt#0	pass	max(0, n)	-	tight	0
+lb_lt	work	pass	max(0, n)	-	tight	-
+lb_le	lb_le#0	pass	max(0, n)	-	tight	0
+lb_le	work	pass	max(0, n)	-	tight	-
+lb_gt	lb_gt#0	pass	max(0, n - lo)	-	tight	0
+lb_gt	work	pass	max(0, n - lo)	-	tight	-
+lb_ge	lb_ge#0	pass	max(0, hi - lo + 1)	-	tight	0
+lb_ge	work	pass	max(0, hi - lo + 1)	-	tight	-
+lb_reversed	lb_reversed#0	pass	max(0, n - s)	-	tight	0
+lb_reversed	work	pass	max(0, n - s)	-	tight	-
+lb_step	lb_step#0	pass	ceil_div(max(0, n), 3)	-	tight	0
+lb_step	work	pass	ceil_div(max(0, n), 3)	-	tight	-
+lb_count	lb_count#0	pass	max(0, n_cnt)	-	tight	0
+lb_count	work	pass	max(0, n_cnt)	-	tight	-
+lb_constant	lb_constant#0	pass	5	-	tight	0
+lb_constant	work	pass	5	-	tight	-
+lb_local	lb_local#0	pass	max(0, n - 2)	-	tight	0
+lb_local	lb_local#1	pass	max(0, floor_div(n, 2) + 1)	-	tight	1
+lb_local	work	pass	max(0, n - 2) + max(0, floor_div(n, 2) + 1)	-	tight	-
+lb_expression	lb_expression#0	pass	max(0, n * 2 + 1)	-	tight	0
+lb_expression	work	pass	max(0, n * 2 + 1)	-	tight	-
+lb_break	lb_break#0	pass	max(0, n)	-	tight	0
+lb_break	work	pass	max(0, n)	-	tight	-
+lb_return	lb_return#0	pass	max(0, n)	-	tight	0
+lb_return	work	pass	max(0, n)	-	tight	-
+lb_next_after_step	lb_next_after_step#0	pass	max(0, n)	-	tight	0
+lb_next_after_step	work	pass	max(0, n)	-	tight	-
+lb_both_arms	lb_both_arms#0	pass	max(0, n)	-	tight	0
+lb_both_arms	work	pass	max(0, n)	-	tight	-
+lb_min_step	lb_min_step#0	pass	max(0, n)	-	tight	0
+lb_min_step	work	pass	max(0, n)	-	tight	-
+lb_nested	lb_nested#0	pass	max(0, n)	-	tight	0
+lb_nested	lb_nested#1	pass	max(0, m)	parent=lb_nested#0	tight	1
+lb_nested	term:lb_nested#1	pass	max(0, n) * max(0, m)	-	-	-
+lb_nested	work	pass	max(0, n) + max(0, n) * max(0, m)	-	tight	-
+lb_siblings	lb_siblings#0	pass	max(0, n)	-	tight	0
+lb_siblings	lb_siblings#1	pass	max(0, m)	-	tight	1
+lb_siblings	work	pass	max(0, n) + max(0, m)	-	tight	-
+lb_callee_in_loop	lb_callee_in_loop#0	pass	max(0, n)	-	tight	0
+lb_callee_in_loop	lb_h_in_loop#0	pass	max(0, len)	-	tight	1
+lb_callee_in_loop	term:lb_h_in_loop#0	pass	max(0, n) * max(0, m + 1)	-	-	-
+lb_callee_in_loop	work	pass	max(0, n) + max(0, n) * max(0, m + 1)	-	tight	-
+lb_callee_twice	lb_h_twice#0	pass	max(0, len)	-	tight	0
+lb_callee_twice	work	pass	max(0, n) + 3	-	tight	-
+lb_predicate_call	lb_predicate_call#0	pass	max(0, n)	conjunct=0	tight	0
+lb_predicate_call	lb_h_more#0	pass	max(0, m)	-	upper	1
+lb_predicate_call	term:lb_h_more#0	pass	(max(0, n) + 1) * max(0, m)	-	-	-
+lb_predicate_call	work	pass	max(0, n) + (max(0, n) + 1) * max(0, m)	-	upper	-
+lb_conjunct	lb_conjunct#0	pass	max(0, n)	conjunct=1	tight	0
+lb_conjunct	work	pass	max(0, n)	-	tight	-
+lb_start_param	lb_start_param#0	pass	max(0, n - s)	-	tight	0
+lb_start_param	work	pass	max(0, n - s)	-	tight	-
+lb_ne	lb_ne#0	unknown	condition-not-induction	detail=`!=`	-	-
+lb_ne	work	unknown	-	-	-	-
+lb_or	lb_or#0	unknown	condition-not-induction	detail=the condition is a disjunction	-	-
+lb_or	work	unknown	-	-	-	-
+lb_boolean_call	lb_boolean_call#0	unknown	condition-not-induction	detail=the condition is a call	-	-
+lb_boolean_call	work	unknown	-	-	-	-
+lb_offset_side	lb_offset_side#0	unknown	condition-not-induction	detail=the side that changes	-	-
+lb_offset_side	work	unknown	-	-	-	-
+lb_true	lb_true#0	unknown	no-exit-condition	-	-	-
+lb_true	work	unknown	-	-	-	-
+lb_step_param	lb_step_param#0	unknown	step-not-constant	-	-	-
+lb_step_param	work	unknown	-	-	-	-
+lb_step_mul	lb_step_mul#0	unknown	step-not-constant	-	-	-
+lb_step_mul	work	unknown	-	-	-	-
+lb_skipped_by_next	lb_skipped_by_next#0	unknown	step-skipped-by-next	-	-	-
+lb_skipped_by_next	work	unknown	-	-	-	-
+lb_step_one_arm	lb_step_one_arm#0	unknown	step-conditional	detail=a path reaches the next iteration	-	-
+lb_step_one_arm	work	unknown	-	-	-	-
+lb_step_twice	lb_step_twice#0	unknown	step-conditional	detail=a path changes i more than once	-	-
+lb_step_twice	work	unknown	-	-	-	-
+lb_step_nested	lb_step_nested#0	unknown	step-conditional	detail=i is changed inside a nested loop	-	-
+lb_step_nested	lb_step_nested#1	pass	1	-	-	-
+lb_step_nested	term:lb_step_nested#1	unknown	enclosing-unknown	-	-	-
+lb_step_nested	work	unknown	-	-	-	-
+lb_away	lb_away#0	unknown	step-away-from-bound	-	-	-
+lb_away	work	unknown	-	-	-	-
+lb_reassigned	lb_reassigned#0	unknown	induction-reassigned	-	-	-
+lb_reassigned	work	unknown	-	-	-	-
+lb_bound_varies	lb_bound_varies#0	unknown	bound-varies	detail=m is assigned in the loop	-	-
+lb_bound_varies	work	unknown	-	-	-	-
+lb_both_vary	lb_both_vary#0	unknown	bound-varies	detail=both i and j	-	-
+lb_both_vary	work	unknown	-	-	-	-
+lb_buffer_bound	lb_buffer_bound#0	unknown	bound-from-buffer-element	detail=the bound reads a buffer element	-	-
+lb_buffer_bound	lb_buffer_bound#1	unknown	bound-from-buffer-element	detail=the bound holds a buffer element	-	-
+lb_buffer_bound	work	unknown	-	-	-	-
+lb_call_bound	lb_call_bound#0	unknown	bound-from-call	-	-	-
+lb_call_bound	work	unknown	-	-	-	-
+lb_enclosing_bound	lb_enclosing_bound#0	pass	max(0, n)	-	-	0
+lb_enclosing_bound	lb_enclosing_bound#1	unknown	bound-not-expressible	detail=enclosing-induction	-	-
+lb_enclosing_bound	work	unknown	-	-	-	-
+lb_after_loop_bound	lb_after_loop_bound#0	pass	max(0, n)	-	-	0
+lb_after_loop_bound	lb_after_loop_bound#1	unknown	bound-not-expressible	detail=after-loop	-	-
+lb_after_loop_bound	work	unknown	-	-	-	-
+lb_buffer_start	lb_buffer_start#0	unknown	start-not-expressible	detail=buffer-element	-	-
+lb_buffer_start	work	unknown	-	-	-	-
+lb_enclosing_start	lb_enclosing_start#0	pass	max(0, n)	-	-	0
+lb_enclosing_start	lb_enclosing_start#1	unknown	start-not-expressible	detail=enclosing-induction	-	-
+lb_enclosing_start	work	unknown	-	-	-	-
+lb_merged_start	lb_merged_start#0	unknown	start-not-expressible	detail=multiple-definitions	-	-
+lb_merged_start	work	unknown	-	-	-	-
+lb_argument	lb_argument#0	pass	max(0, n)	-	-	0
+lb_argument	lb_h_arg#0	pass	max(0, len)	-	-	1
+lb_argument	term:lb_h_arg#0	unknown	argument-not-expressible	detail=parameter len of lb_h_arg receives buffer-element	-	-
+lb_argument	work	unknown	-	-	-	-
+lb_argument_varies	lb_argument_varies#0	pass	max(0, n)	-	-	0
+lb_argument_varies	lb_h_var#0	pass	max(0, len)	-	-	1
+lb_argument_varies	term:lb_h_var#0	unknown	argument-not-expressible	detail=an argument depends on i	-	-
+lb_argument_varies	work	unknown	-	-	-	-
+lb_enclosing_unknown	lb_enclosing_unknown#0	unknown	bound-from-buffer-element	-	-	-
+lb_enclosing_unknown	lb_enclosing_unknown#1	pass	max(0, m)	-	-	1
+lb_enclosing_unknown	term:lb_enclosing_unknown#1	unknown	enclosing-unknown	-	-	-
+lb_enclosing_unknown	work	unknown	-	-	-	-
+lb_opassign_order	lb_opassign_order#0	pass	max(0, n)	-	tight	0
+lb_opassign_order	work	pass	max(0, n)	-	tight	-
+lb_expr_too_large	lb_expr_too_large#0	unknown	bound-not-expressible	detail=expression-too-large	-	-
+lb_expr_too_large	work	unknown	-	-	-	-
+lb_too_many_terms	lb_fan0#0	pass	max(0, n)	-	-	-
+lb_too_many_terms	term:lb_fan0#0	pass	max(0, n)	-	-	-
+lb_too_many_terms	work	unknown	-	limit=too-many-terms	-	-
+lb_times	lb_times#0	pass	max(0, n)	-	tight	0
+lb_times	work	pass	max(0, n)	-	tight	-
+lb_upto	lb_upto#0	pass	max(0, b - a + 1)	-	tight	0
+lb_upto	work	pass	max(0, b - a + 1)	-	tight	-
+lb_downto	lb_downto#0	pass	max(0, a - b + 1)	-	tight	0
+lb_downto	work	pass	max(0, a - b + 1)	-	tight	-
+lb_each	lb_each#0	pass	n_buf	-	tight	0
+lb_each	work	pass	n_buf	-	tight	-
+lb_each_with_index	lb_each_with_index#0	pass	n_buf	-	tight	0
+lb_each_with_index	work	pass	n_buf	-	tight	-
+lb_times_after_while	lb_times_after_while#0	pass	max(0, n)	-	tight	0
+lb_times_after_while	lb_times_after_while#1	pass	max(0, m)	-	tight	1
+lb_times_after_while	work	pass	max(0, n) + max(0, m)	-	tight	-
+lb_times_receiver_assigned	lb_times_receiver_assigned#0	pass	max(0, n)	-	tight	0
+lb_times_receiver_assigned	work	pass	max(0, n)	-	tight	-
+lb_times_enclosing	lb_times_enclosing#0	pass	max(0, n)	-	-	0
+lb_times_enclosing	lb_times_enclosing#1	unknown	bound-not-expressible	detail=enclosing-induction	-	-
+lb_times_enclosing	work	unknown	-	-	-	-
+lb_each_in_helper	lb_h_each#0	pass	size(buf)	-	tight	1
+lb_each_in_helper	term:lb_h_each#0	pass	n_buf	-	-	-
+lb_each_in_helper	work	pass	n_buf + n_buf	-	tight	-
+lb_times_effect	lb_times_effect#0	pass	max(0, n - 1)	-	tight	0
+lb_times_effect	work	pass	max(0, n - 1)	-	tight	-
+lb_upto_effect	lb_upto_effect#0	pass	max(0, b - 1 - a + 1)	-	tight	0
+lb_upto_effect	work	pass	max(0, b - 1 - a + 1)	-	tight	-
+lb_downto_effect	lb_downto_effect#0	pass	max(0, a - (b + 1) + 1)	-	tight	0
+lb_downto_effect	work	pass	max(0, a - (b + 1) + 1)	-	tight	-
+lb_upto_reassign	lb_upto_reassign#0	pass	max(0, 0 - a + 1)	-	tight	0
+lb_upto_reassign	work	pass	max(0, 0 - a + 1)	-	tight	-

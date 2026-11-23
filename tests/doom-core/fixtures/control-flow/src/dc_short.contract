@@ -1,0 +1,7 @@
+core-contract 1
+root src/dc_short.rb
+entry dc_short
+result i64
+param count buffer i32 inout count n_count
+param n_count scalar u64
+param flag scalar i64

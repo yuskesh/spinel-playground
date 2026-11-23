@@ -1,0 +1,6 @@
+core-contract 1
+root len_u8_64.rb
+entry len_u8_64
+result i64
+param src buffer u8 in count n_src
+param n_src scalar u64

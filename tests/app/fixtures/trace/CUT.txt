@@ -1,0 +1,1 @@
+16	CUT	0	255	entry=1	from=6	to=6

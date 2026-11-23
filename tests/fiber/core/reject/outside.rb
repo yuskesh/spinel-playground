@@ -1,0 +1,14 @@
+require "spinel/core"
+state :out, :i32, 1
+fiber_def :reader, max: 2
+every_ms 10, :tick
+def reader(n)
+  Fiber.yield n
+  0
+end
+def helper
+  Fiber.yield 1
+end
+def tick(out)
+  0
+end

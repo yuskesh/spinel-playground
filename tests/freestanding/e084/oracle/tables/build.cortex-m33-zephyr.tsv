@@ -1,0 +1,10 @@
+key	value
+profile	cortex-m33-zephyr-e084.yaml
+triple	thumbv8m.main-none-eabi
+adjoints	diffesp_sq_hinge_loss,diffespinel_sq_hinge_loss
+fwd_adjoints	fwddiffediffesp_sq_hinge_loss,fwddiffediffespinel_sq_hinge_loss,fwddiffesp_sq_hinge_loss,fwddiffespinel_grad_sq_hinge_loss,fwddiffespinel_sq_hinge_loss
+alloca_in_module	1
+fastmath_sites	0
+undefined	__aeabi_dadd,__aeabi_dcmpgt,__aeabi_ddiv,__aeabi_dmul,__aeabi_dsub,__aeabi_ui2d,__aeabi_ul2d,spinel_trap
+exports	spinel_grad_sq_hinge_loss,spinel_hvp_sq_hinge_loss
+object_bytes	7028

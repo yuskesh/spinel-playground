@@ -1,0 +1,8 @@
+load ok unmet=0
+run13 err=SpinelBPF::Other
+flow run xp err=SpinelBPF::State
+attach_netns xp err=SpinelBPF::State
+attach_netns stdin err=SpinelBPF::Other
+run64 ret=2 n=21 nhoff=14 thoff=34
+attached
+detached

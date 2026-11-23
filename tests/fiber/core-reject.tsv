@@ -1,0 +1,27 @@
+# file	line:col	text the spinel-fiber diagnostic must contain (written by hand)
+step.rb	7:3	must suspend on every path through an iteration
+fibernew.rb	10:7	Fiber.new is refused
+outside.rb	10:3	Fiber.yield may appear only in a fiber_def body
+called.rb	10:12	is started through Reader.start, not called
+recursive.rb	7:3	is started through Reader.start, not called
+arity.rb	10:3	Reader.start takes 2 argument(s)
+object.rb	11:3	is resumed through its module
+drive.rb	6:3	a fiber_def body may not drive a fiber
+optional.rb	5:1	only required positional parameters
+contexts.rb	4:1	a fiber kind has one owning context
+enum_fiberyield.rb	7:3	an enum_def body suspends with its yielder
+enum_escape.rb	11:8	the yielder `y` may only receive `<<` or `yield` with one value
+enum_value.rb	7:8	must be a statement of its own; its value is not available
+enum_step.rb	8:3	a loop that suspends must suspend on every path through an iteration
+enum_reserved.rb	6:1	the local `buf` has a name the enum_def frame reserves
+enum_resume.rb	12:12	Evens has start, next?, next, peek and alive?, not resume
+st_local.rb	6:1	the local `st` has a name the fiber_def frame reserves
+enum_noparam.rb	6:1	an enum_def body takes the yielder as its first parameter
+enum_lambda.rb	9:15	must be a statement of its own; its value is not available
+pool_contexts.rb	4:1	a pool has one owning context
+pool_method.rb	8:12	Node has alloc, free and live?, not count
+pool_arity.rb	8:3	Node.free takes 1 argument(s)
+pool_twice.rb	5:1	pool_def :node is declared twice
+pool_max.rb	4:1	pool_def takes a symbol and max: with a positive integer literal
+pool_body.rb	9:15	a fiber_def or enum_def body may not use the pool Node
+pool_body_helper.rb	14:15	a fiber_def body may not call `pick`, which uses a pool or a fiber module

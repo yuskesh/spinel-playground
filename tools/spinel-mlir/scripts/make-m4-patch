@@ -1,0 +1,31 @@
+#!/usr/bin/env ruby
+require 'fileutils';require 'open3';require 'json';require 'digest'
+root=File.expand_path('..',__dir__);source,destination=ARGV;abort 'usage: make-m4-patch M1-M3-SOURCE FRESH_OVERLAY' unless destination;abort 'fresh overlay' if File.exist?(destination);edits={}
+before=->(file,anchor,addition){body=edits.fetch(file){File.binread(source+'/'+file)};abort 'M4 anchor '+file unless body.scan(Regexp.new(Regexp.escape(anchor))).size==1;edits[file]=body.sub(anchor){addition+anchor}}
+before.call('src/main.c','#include "codegen.h"',"#include \"typing_probe.h\"\n")
+before.call('src/main.c','int main(int argc, char **argv)',"#include \"typing_probe_main.inc\"\n")
+before.call('src/main.c','    else if (sp_streq(a, "--dump-ast"))',<<'C')
+    else if (sp_streq(a,"--emit-typing-probe")) {
+      if(sp_typing_probe_enabled){fprintf(stderr,"spinel: duplicate --emit-typing-probe\n");return 2;}
+      sp_typing_probe_enabled=1;i++;
+    }
+C
+before.call('src/main.c','  char *text = sp_parse_file_to_text(source, argv[0]);',<<'C')
+  sp_typing_probe_source=source;
+  if(sp_typing_probe_enabled && (!sp_emit_mlir_enabled || !sp_analysis_root_spec)){
+    fprintf(stderr,"spinel: --emit-typing-probe requires --emit-mlir and analysis roots\n");return 2;
+  }
+  if(!sp_typing_probe_prepare())return 1;
+C
+before.call('src/emit_mlir.inc','extern int sp_emit_mlir_enabled;',"#include \"typing_probe.h\"\n")
+before.call('src/emit_mlir.inc',"static int mlir_emit(Compiler *c) {\n","#include \"typing_probe_emit.inc\"\n")
+before.call('src/emit_mlir.inc',"  mlir_emitted=1; /* Includes writer failure: never publish twice from atexit. */\n", "  if(sp_typing_probe_child)return probe_send_json(c);\n")
+before.call('src/analysis_root_emit.inc',"  buf_puts(b,\"]} {\\n\");\n",<<'C')
+  if(sp_typing_probe_enabled&&!g_ndiags){
+    buf_puts(b,"]");sp_typing_probe_metadata(b,c);buf_puts(b,"} {\n");return;
+  }
+C
+%w[typing_probe.h typing_probe_main.inc typing_probe_emit.inc typing_probe_sha.inc].each{|name|edits['src/'+name]=File.binread(root+'/patches/m4/'+name)}
+abort 'M4 prerequisites failed' unless system(root+'/scripts/check-m4-prerequisites',source)
+FileUtils.mkdir_p(destination);patch='';edits.each{|name,body|to=destination+'/'+name;FileUtils.mkdir_p(File.dirname(to));File.binwrite(to,body);old=File.exist?(source+'/'+name) ? source+'/'+name : '/dev/null';diff,status=Open3.capture2('diff','-u','--label','a/'+name,'--label','b/'+name,old,to);abort 'M4 diff' unless [0,1].include?(status.exitstatus);abort 'M4 non-additive' if diff.lines.any?{|l|l.start_with?('-')&&!l.start_with?('---')};patch<<diff}
+File.binwrite(root+'/patches/M4-typing-probe.patch',patch);puts "M4 #{patch.lines.count{|l|l.start_with?('+')&&!l.start_with?('+++')}} additions"

@@ -1,0 +1,31 @@
+#!/usr/bin/env ruby
+require_relative 'facts-inventory'
+require 'fileutils'
+require 'digest'
+input,output=ARGV
+abort 'usage: check-inventory-sensitivity actual-dump new-output' unless output
+abort 'output exists' if File.exist?(output)
+FileUtils.mkdir_p(output)
+begin
+  original=File.binread(input)
+  removed=original.lines.select{|l|l.include?('"spinel_facts.evidence"') && l.include?('node_id = 2144 : i64,')}
+  abort 'expected one evidence line' unless removed.length==1
+  changed=original.sub(removed.first,'')
+  File.binwrite(File.join(output,'original.mlir'),original)
+  File.binwrite(File.join(output,'mutated.mlir'),changed)
+  a=FactsInventory.read(File.join(output,'original.mlir'))
+  b=FactsInventory.read(File.join(output,'mutated.mlir'))
+  File.write(File.join(output,'original.json'),JSON.generate(a)+"\n")
+  File.write(File.join(output,'mutated.json'),JSON.generate(b)+"\n")
+  before=a.fetch(:selected_nodes).find{|n|n[:node_id]==2144}
+  after=b.fetch(:selected_nodes).find{|n|n[:node_id]==2144}
+  named=before && after && !before[:missing_evidence] && after[:missing_evidence] && b[:missing_call_evidence]==a[:missing_call_evidence]+1
+  row={original_reader_rc:0,mutated_reader_rc:0,original_bytes:original.bytesize,mutated_bytes:changed.bytesize,node_id:2144,named_missing_increase:named,
+    original_sha256:Digest::SHA256.hexdigest(original),mutated_sha256:Digest::SHA256.hexdigest(changed)}
+  File.write(File.join(output,'sensitivity.json'),JSON.pretty_generate(row)+"\n")
+  abort 'STOP inventory sensitivity' unless named && original.bytesize>0 && changed.bytesize>0
+  puts JSON.generate(row)
+rescue Exception => e
+  File.write(File.join(output,'failure.txt'),"#{e.class}: #{e.message}\n#{e.backtrace.join("\n")}\n")
+  raise
+end

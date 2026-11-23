@@ -1,0 +1,7 @@
+# cut by the horizon: a's release 2 costs 2500 us and runs past H = 4000;
+# b, visited after a at 4500 >= H, is not selected: its releases 2 and 3 are one CUT
+# record, and so is a's release 3. The invocation selected before H still
+# completes and the clock ends past H.
+horizon_us 4000
+drain_us 1000
+cost a 2 2500

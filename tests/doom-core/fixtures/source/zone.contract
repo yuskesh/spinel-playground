@@ -1,0 +1,17 @@
+core-contract 1
+root src/packed.rb
+entry dc_sp_zone
+result i64
+param wad buffer u8 in count n_wad
+param n_wad scalar u64
+param lump_pos buffer u32 in count n_lump_pos
+param n_lump_pos scalar u64
+param lump_size buffer u32 in count n_lump_size
+param n_lump_size scalar u64
+param next_lump buffer i16 in count n_next_lump
+param n_next_lump scalar u64
+param out buffer u8 inout count n_out
+param n_out scalar u64
+param lumpnum scalar i64
+param off scalar i64
+param base scalar i64

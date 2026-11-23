@@ -1,0 +1,1 @@
+# RUN: ruby %src/scoped-literals.rb %build %src

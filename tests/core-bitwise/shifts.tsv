@@ -1,0 +1,101 @@
+# tests/core-bitwise/shifts.tsv -- decision 0042 stage 2: `<<` and `>>` under
+# S1, by hand from Ruby's rules. No other implementation produced a value.
+#
+# Columns, tab-separated:
+#   w        the body width, 64 or 32
+#   op       shl (`a << n`) or shr (`a >> n`)
+#   a, n     the operands, as decimal Integers at that width
+#   checked  the answer where an overflow fails (the status lane, `--core`,
+#            freestanding `trap`): a value, or `fail`
+#   wrap     the answer of freestanding `wrap`: the low w bits read back
+#            as signed, 0 for a left shift by w or more
+#
+# S1: a negative count shifts the other way; `>>` by w or more is 0, or -1
+# for a negative operand; a `<<` that loses bits fails, including a `<<` by w
+# or more of a non-zero operand; `a >> -n` is `a << n`.
+64	shl	1	0	1	1
+64	shl	1	1	2	2
+64	shl	1	62	4611686018427387904	4611686018427387904
+64	shl	1	63	fail	-9223372036854775808
+64	shl	-1	63	-9223372036854775808	-9223372036854775808
+64	shl	3	62	fail	-4611686018427387904
+64	shl	-3	62	fail	4611686018427387904
+64	shl	1	64	fail	0
+64	shl	0	64	0	0
+64	shl	0	65	0	0
+64	shl	1	65	fail	0
+64	shl	0	9223372036854775807	0	0
+64	shl	1	9223372036854775807	fail	0
+64	shl	5	-1	2	2
+64	shl	-5	-1	-3	-3
+64	shl	-5	-63	-1	-1
+64	shl	5	-63	0	0
+64	shl	-5	-64	-1	-1
+64	shl	5	-65	0	0
+64	shl	-5	-9223372036854775808	-1	-1
+64	shl	5	-9223372036854775808	0	0
+64	shr	-48	4	-3	-3
+64	shr	5	0	5	5
+64	shr	-5	1	-3	-3
+64	shr	-9223372036854775808	63	-1	-1
+64	shr	9223372036854775807	62	1	1
+64	shr	9223372036854775807	63	0	0
+64	shr	-5	64	-1	-1
+64	shr	5	64	0	0
+64	shr	-5	65	-1	-1
+64	shr	5	9223372036854775807	0	0
+64	shr	-5	9223372036854775807	-1	-1
+64	shr	5	-1	10	10
+64	shr	1	-62	4611686018427387904	4611686018427387904
+64	shr	1	-63	fail	-9223372036854775808
+64	shr	-1	-63	-9223372036854775808	-9223372036854775808
+64	shr	1	-64	fail	0
+64	shr	0	-64	0	0
+64	shr	1	-65	fail	0
+64	shr	0	-9223372036854775808	0	0
+64	shr	1	-9223372036854775808	fail	0
+64	shr	9223372036854775807	-1	fail	-2
+64	shr	-3	-62	fail	4611686018427387904
+32	shl	1	0	1	1
+32	shl	1	1	2	2
+32	shl	1	30	1073741824	1073741824
+32	shl	1	31	fail	-2147483648
+32	shl	-1	31	-2147483648	-2147483648
+32	shl	3	30	fail	-1073741824
+32	shl	-3	30	fail	1073741824
+32	shl	1	32	fail	0
+32	shl	0	32	0	0
+32	shl	0	33	0	0
+32	shl	1	33	fail	0
+32	shl	0	2147483647	0	0
+32	shl	1	2147483647	fail	0
+32	shl	5	-1	2	2
+32	shl	-5	-1	-3	-3
+32	shl	-5	-31	-1	-1
+32	shl	5	-31	0	0
+32	shl	-5	-32	-1	-1
+32	shl	5	-33	0	0
+32	shl	-5	-2147483648	-1	-1
+32	shl	5	-2147483648	0	0
+32	shr	-48	4	-3	-3
+32	shr	5	0	5	5
+32	shr	-5	1	-3	-3
+32	shr	-2147483648	31	-1	-1
+32	shr	2147483647	30	1	1
+32	shr	2147483647	31	0	0
+32	shr	-5	32	-1	-1
+32	shr	5	32	0	0
+32	shr	-5	33	-1	-1
+32	shr	5	2147483647	0	0
+32	shr	-5	2147483647	-1	-1
+32	shr	5	-1	10	10
+32	shr	1	-30	1073741824	1073741824
+32	shr	1	-31	fail	-2147483648
+32	shr	-1	-31	-2147483648	-2147483648
+32	shr	1	-32	fail	0
+32	shr	0	-32	0	0
+32	shr	1	-33	fail	0
+32	shr	0	-2147483648	0	0
+32	shr	1	-2147483648	fail	0
+32	shr	2147483647	-1	fail	-2
+32	shr	-3	-30	fail	1073741824

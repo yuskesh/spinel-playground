@@ -1,0 +1,8 @@
+# The divides control's stimulus: 20 ms, nothing driven, no nesting source.
+# The accumulator overflows i64 at the fifth release (1000003^5 > 2^63), a
+# deterministic ARITHMETIC failure: the run exercises the failure path --
+# FAIL, the CANCEL of the remaining releases, the safe state (no device
+# here) -- and is the expected-failure lifecycle fixture of the plan.
+horizon_us 20000
+drain_us 10000
+expect_failure step 5 2

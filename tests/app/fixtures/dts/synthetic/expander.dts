@@ -1,0 +1,68 @@
+/dts-v1/;
+
+/ {
+	compatible = "synthetic,expander-board";
+	#address-cells = < 0x1 >;
+	#size-cells = < 0x1 >;
+
+	aliases {
+		led0 = &led_0;
+		led1 = &led_1;
+		led2 = &led_ext;
+	};
+
+	soc {
+		#address-cells = < 0x1 >;
+		#size-cells = < 0x1 >;
+
+		systick: timer@e000e010 {
+			compatible = "arm,armv8m-systick";
+			reg = < 0xe000e010 0x10 >;
+			status = "okay";
+		};
+
+		gpio0: gpio@40000000 {
+			compatible = "arm,mmio32-gpio";
+			reg = < 0x40000000 0x1000 >;
+			gpio-controller;
+			#gpio-cells = < 0x2 >;
+			status = "okay";
+		};
+
+		i2c0: i2c@40010000 {
+			compatible = "synthetic,i2c";
+			reg = < 0x40010000 0x1000 >;
+			#address-cells = < 0x1 >;
+			#size-cells = < 0x0 >;
+			status = "okay";
+
+			expander: pcal6416a@20 {
+				compatible = "nxp,pcal6416a";
+				reg = < 0x20 >;
+				gpio-controller;
+				#gpio-cells = < 0x2 >;
+				ngpios = < 0x10 >;
+				status = "okay";
+			};
+		};
+	};
+
+	leds {
+		compatible = "gpio-leds";
+
+		led_0: led_0 {
+			gpios = < &gpio0 0x0 0x0 >;
+			label = "LED0";
+		};
+
+		led_1: led_1 {
+			gpios = < &gpio0 0x1 0x0 >;
+			label = "LED1";
+		};
+
+		led_ext: led_ext {
+			gpios = < &expander 0x4 0x0 >;
+			label = "EXTLED";
+		};
+	};
+};

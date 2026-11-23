@@ -1,0 +1,50 @@
+{
+  "empty_array": [],
+  "empty_object": {},
+  "one_element_array": [
+    1
+  ],
+  "one_element_object": {
+    "only": 1
+  },
+  "nested_in_array": [
+    [],
+    {},
+    {
+      "b": []
+    }
+  ],
+  "nested_in_object": {
+    "b": [],
+    "c": {},
+    "d": {
+      "e": {}
+    }
+  },
+  "non_ascii_bmp": "ý あ",
+  "non_bmp": "😀",
+  "control": "\u0001 \u001f",
+  "quote_and_backslash": "q \" b \\",
+  "newline_and_tab": "n \n t \t",
+  "del": "",
+  "solidus": "a/b",
+  "empty_string": "",
+  "int64_max": 9223372036854775807,
+  "beyond_int64": 18446744073709551616,
+  "int64_min": -9223372036854775808,
+  "minus_one": -1,
+  "zero": 0,
+  "literals": {
+    "t": true,
+    "f": false,
+    "n": null
+  },
+  "key_order": {
+    "z": 1,
+    "a": 2
+  },
+  "": {
+    "": "",
+    "with space": 0
+  }
+}

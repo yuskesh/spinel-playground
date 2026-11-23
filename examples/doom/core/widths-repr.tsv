@@ -1,0 +1,11 @@
+# examples/doom/core/widths-repr.tsv -- buffers whose element is a representation, not
+# the smallest type of their range (read by tools/doom/core-widths.rb).
+#
+# i32-bits: the buffer holds a 32-bit word as its signed i32 bit pattern. Its measured
+# values must fit 32 bits read one way, unsigned (u32) or signed (i32), and its element
+# is i32. The angle cells of decision 0022 section 2.4.
+#field	repr	basis
+game_mobj_angle	i32-bits	0022-2.4
+jobs_span	i32-bits	0022-2.4
+level_seg_angle	i32-bits	0022-2.4
+renderer_xtoviewangle	i32-bits	0022-2.4

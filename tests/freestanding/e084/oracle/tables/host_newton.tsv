@@ -1,0 +1,4 @@
+check	detail	verdict
+ruby_converged	7 steps, gnorm 2.7793957173973425e-15	OK
+one_step_kill	9.329e-03 -> 2.779e-15	OK
+steps_match_kernel	ruby 7 vs kernel B 7	OK

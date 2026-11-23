@@ -1,0 +1,237 @@
+#!/usr/bin/env ruby
+# spinel-jobtable -- generates a C header from the Job IR table, and checks the table itself.
+# [the raster plan, phase 2 / E170: Ruby]
+#
+# **The product is this Ruby.** The frozen Python stays read-only in `frozen/spinel-jobtable`,
+# and the E170 suite runs it every time as the oracle for **byte equality of stdout / stderr / rc and
+# the outputs**. The vocabulary (the meaning table and the signatures) lives in one place,
+# `spinel_jobtable.rb`, and jobcheck / rastergen read the same one.
+#
+#   spinel-jobtable emit  <table.tsv> [-o OUT]
+#   spinel-jobtable check <table.tsv> [--header H] [--tsv T]
+#   spinel-jobtable ksig  <table.tsv> [--kernel K] [--W W] ...
+require_relative "spinel_jobtable"
+
+JT = SpinelJobtable
+PROG = "spinel-jobtable"
+
+# The frozen Python prints usage with argparse. **The spelling is copied word for word** — a calling
+# script may look at the first line, `usage:`, and the rc is 2 as well.
+USAGE = <<~USAGE
+  usage: spinel-jobtable [-h] [-o OUT] [--header HEADER] [--tsv TSV]
+                         [--kernel KERNEL] [--W W] [--H H] [--K K]
+                         [--centery CENTERY] [--ntex NTEX] [--ncmap NCMAP]
+                         {emit,check,ksig} table
+USAGE
+
+# **The spelling of `(choose from …)` differs between Python versions** (3.12 has `'emit', 'check'`,
+# 3.13 has `emit, check`). Ruby can match only one of them, so it takes 3.13's
+# spelling, and **the suite masks only the inside of these parentheses** when comparing (E170's honest
+# boundary). rc, usage and `invalid choice: 'x'` are compared by bytes.
+def argparse_error(msg)
+  $stderr.write(USAGE)
+  $stderr.write("#{PROG}: error: #{msg}\n")
+  exit 2
+end
+
+def die(msg)
+  $stderr.puts "#{PROG}: #{msg}"
+  exit 2
+end
+DIE = method(:die)
+
+MODES = ["emit", "check", "ksig"].freeze
+
+def parse_args(argv)
+  a = { "out" => "-", "header" => nil, "tsv" => nil, "kernel" => "wall_columns",
+        "W" => 320, "H" => 168, "K" => 16, "centery" => 84, "ntex" => 0,
+        "ncmap" => 8704 }
+  pos = []
+  i = 0
+  while i < argv.size
+    t = argv[i]
+    take = lambda do |name|
+      i += 1
+      argparse_error("argument #{name}: expected one argument") if i >= argv.size
+      argv[i]
+    end
+    case t
+    when "-h", "--help" then $stdout.write(USAGE); exit 0
+    when "-o", "--out" then a["out"] = take.call("-o/--out")
+    when "--header" then a["header"] = take.call("--header")
+    when "--tsv" then a["tsv"] = take.call("--tsv")
+    when "--kernel" then a["kernel"] = take.call("--kernel")
+    when "--W", "--H", "--K", "--centery", "--ntex", "--ncmap"
+      a[t.delete_prefix("--")] = Integer(take.call(t), exception: false) ||
+                                 argparse_error("argument #{t}: invalid int value")
+    else
+      if t.start_with?("-") && t != "-"
+        argparse_error("unrecognized arguments: #{t}")
+      end
+      pos << t
+    end
+    i += 1
+  end
+  missing = []
+  missing << "mode" if pos.empty?
+  missing << "table" if pos.size < 2
+  argparse_error("the following arguments are required: #{missing.join(', ')}") unless missing.empty?
+  unless MODES.include?(pos[0])
+    argparse_error("argument mode: invalid choice: '#{pos[0]}' " \
+                   "(choose from #{MODES.join(', ')})")
+  end
+  argparse_error("unrecognized arguments: #{pos[2..].join(' ')}") if pos.size > 2
+  a["mode"] = pos[0]
+  a["table"] = pos[1]
+  a
+end
+
+def emit(rows, out)
+  body = +JT::HDR.dup
+  body << "#define SP_JOB_TABLE_N #{rows.size}\n"
+  body << "static const sp_job_entry_t SP_JOB_TABLE[SP_JOB_TABLE_N] = {\n"
+  rows.each do |r|
+    body << "  {\n"
+    body << format("    .name = \"%s\", .phase = %s,\n", r["name"], r["phase"])
+    body << format("    .form = \"%s\", .nfield = %s,\n", r["form"], r["nfield"])
+    body << format("    .fields = \"%s\", .ftypes = \"%s\",\n", r["fields"], r["ftypes"])
+    body << format("    .k_max = %s,\n", r["k_max"])
+    body << format("    .reads = \"%s\", .writes = \"%s\",\n", r["reads"], r["writes"])
+    body << format("    .order = \"%s\",\n", r["order"])
+    body << format("    .ranges = \"%s\",\n", r["ranges"])
+    JT::SEMCOLS.each do |c|
+      body << format("    .%s = \"%s\",\n", c, JT::SEM.fetch(r["name"]).fetch(c))
+    end
+    body << format("    .sig = UINT64_C(0x%016x),\n", r["sig"])
+    body << format("    .semsig = UINT64_C(0x%016x),\n", r["semsig"])
+    body << "  },\n"
+  end
+  body << "};\n\n"
+  body << "#endif  /* SP_JOB_TABLE_H_ */\n"
+  if out.nil?
+    # Writes nothing (the path T8 takes when it makes the expected value).
+  elsif out == "-"
+    $stdout.write(body)
+  else
+    File.write(out, body)
+    puts "#{PROG}: wrote #{out} (#{body.split("\n", -1).size - 1} lines, #{rows.size} entries)"
+  end
+  body
+end
+
+# Checks of the table itself. **Each break is printed as a TSV row, and any one of them means a non-zero exit.**
+def check(rows, header, tsv_out)
+  out = []
+  rec = lambda do |idx, name, ok, detail|
+    out << [idx, name, ok ? "PASS" : "REJECT", detail]
+  end
+
+  # T1: does the sig Ruby computed match this tool's sig?
+  rows.each do |r|
+    got = format("%016x", r["sig"])
+    rec.call("T1", "sig agrees with Ruby (#{r['name']})", got == r["sig_ruby"],
+             "ruby=#{r['sig_ruby']} python=#{got}")
+  end
+  # T2 / T3
+  rows.each do |r|
+    n = r["nfield"].to_i
+    ok = r["ftypes"].length == n && r["fields"].split(",", -1).size == n
+    rec.call("T2", "nfield/fields/ftypes agree (#{r['name']})", ok,
+             "nfield=#{n} fields=#{r['fields'].split(',', -1).size} ftypes=#{r['ftypes'].length}")
+    bad = r["ftypes"].chars.reject { |c| "iuxor".include?(c) }
+    rec.call("T3", "ftypes alphabet (#{r['name']})", bad.empty?,
+             "unknown type chars: #{bad.empty? ? '-' : bad.join}")
+  end
+  # T4: a gather shape has k_max > 0, a scatter shape k_max == 0.
+  rows.each do |r|
+    k = r["k_max"].to_i
+    rec.call("T4", "form/k_max consistent (#{r['name']})", (r["form"] == "gather") == (k > 0),
+             "form=#{r['form']} k_max=#{k}")
+  end
+  # T5: a gather shape's order must name **an ordering contract**.
+  rows.each do |r|
+    next unless r["form"] == "gather"
+    rec.call("T5", "gather declares an ordering contract (#{r['name']})",
+             ["disjoint_per_x", "disjoint_per_y", "seq_front_wins",
+              "seq_one_per_column"].include?(r["order"]),
+             "order=#{r['order']}")
+  end
+  # T9: rows of the same job kind with different K must **differ in the declaration only by K**.
+  fam = {}
+  rows.each do |r|
+    base = r["name"].include?("_k") ? r["name"].sub(/_k[^_]*\z/, "") : r["name"]
+    (fam[base] ||= []) << r
+  end
+  fam.each do |base, rs|
+    next if rs.size < 2
+    strip = lambda do |r|
+      p = r["decl"].split("\t", -1)
+      p[0] = base
+      p[6] = "K"
+      p.join("\t")
+    end
+    same = rs.map { |r| strip.call(r) }.uniq.size == 1
+    semsame = rs.map { |r| r["sem"] }.uniq.size == 1
+    rec.call("T9", "the K variants of #{base} differ only in K", same && semsame,
+             "#{rs.size} rows (k_max=#{rs.map { |r| r['k_max'] }.join(',')}), " \
+             "decl #{same ? 'identical' : 'DIFFERS'} / " \
+             "semantics #{semsame ? 'identical' : 'DIFFER'}")
+  end
+  # T6: a fixed-point field ('u') must be named in the meaning table's fixedpt.
+  rows.each do |r|
+    fields = r["fields"].split(",", -1)
+    us = r["ftypes"].chars.each_with_index.select { |c, _| c == "u" }.map { |_, i| fields[i] }
+    fixedpt = JT::SEM.fetch(r["name"]).fetch("fixedpt")
+    missing = us.reject { |f| fixedpt.include?(f) }
+    rec.call("T6", "u32 fields named in fixedpt (#{r['name']})", missing.empty?,
+             "u32 fields=#{us.join(',')} missing from fixedpt: " \
+             "#{missing.empty? ? '-' : missing.join(',')}")
+  end
+  # T7: phase is 0..2 and monotone in row order.
+  ph = rows.map { |r| r["phase"].to_i }
+  rec.call("T7", "phases are 0..2 and monotone in table order",
+           ph == ph.sort && ph.all? { |p| p >= 0 && p <= 2 }, "phases=[#{ph.join(', ')}]")
+  # T8: does the generated header match the current table?
+  if header
+    want = emit(rows, nil)
+    have = nil
+    begin
+      have = File.read(header, mode: "rb").force_encoding("UTF-8")
+    rescue SystemCallError => e
+      # The frozen Python prints `str(OSError)` = `[Errno N] <text>: '<path>'`.
+      # Ruby's `message` is `<text> @ rb_sysopen - <path>`, so it is rebuilt.
+      rec.call("T8", "generated header is present", false,
+               "[Errno #{e.errno}] #{e.message.sub(/ @ .*/, '')}: '#{header}'")
+    end
+    unless have.nil?
+      rec.call("T8", "generated header matches the table", have == want,
+               "#{header}: #{have == want ? 'identical' : 'DIFFERS -- regenerate'}")
+    end
+  end
+  if tsv_out
+    File.open(tsv_out, "w") do |f|
+      f.write("#check\tsubject\tresult\tdetail\n")
+      out.each { |row| f.write(row.join("\t") + "\n") }
+    end
+  end
+  nrej = out.count { |r| r[2] == "REJECT" }
+  out.each { |r| puts r.join("\t") }
+  puts "#{PROG}: #{out.size} checks, #{nrej} rejected"
+  nrej
+end
+
+a = parse_args(ARGV)
+rows = JT.annotate(JT.read_table(a["table"], DIE))
+case a["mode"]
+when "emit"
+  emit(rows, a["out"])
+  exit 0
+when "check"
+  exit(check(rows, a["header"], a["tsv"]).zero? ? 0 : 1)
+else
+  row = rows.find { |r| r["name"] == a["kernel"] }
+  die("no table row named #{a['kernel']}") if row.nil?
+  d = JT.kernel_decl(row, a["W"], a["H"], a["K"], a["centery"], a["ntex"], a["ncmap"])
+  puts format("%016x\t%s", JT.fnv1a64(d), d)
+  exit 0
+end

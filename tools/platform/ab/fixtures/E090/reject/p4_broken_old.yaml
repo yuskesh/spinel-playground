@@ -1,0 +1,11 @@
+# profile lie 4: a BROKEN pre-T5 profile (abi: section missing).  The old
+# format must stay accepted -- and its existing validation must stay LOUD.
+target:
+  triple: thumbv8m.main-none-eabi
+runtime:
+  libc: none
+  libm: none
+  compiler_rt: allow
+platform:
+  type: zephyr
+  externs: []

@@ -1,0 +1,2 @@
+function	source	note
+mcux_lpuart_poll_out	su	https://github.com/zephyrproject-rtos/zephyr/blob/dccb09599635bdff17633fa7e9dab014b91dce90/drivers/serial/uart_mcux_lpuart.c#L179: the transport's uart_poll_out on the console LPUART (nxp,lpuart directly on the bus, no flexcomm parent on this board); mcux_lpuart_poll_in (line 165) has the same frame

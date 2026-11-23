@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "coverage": {"programs": "complete", "maps": "complete", "records": "complete", "telemetry": "complete"},
+  "core": {
+    "records": [],
+    "maps": [
+      {"symbol": "hits", "kind": "array", "key": {"kind":"int","bits":32,"signed":false,"endianness":"little","alignment":4}, "value": {"kind":"int","bits":64,"signed":false,"endianness":"little","alignment":8}, "max_entries": 2, "flags": 0, "record": "", "note": "E056: 0 は uprobe・1 は uretprobe の回数"}
+    ],
+    "programs": [
+      {"name": "up", "kind": "uprobe", "attach_target": "e56_fn", "arch": "x86_64", "maps": ["hits"], "params": [],
+       "binary_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+       "note": "E056: .dynsym だけの本体の e56_fn の入口 — 引数を読まない"},
+      {"name": "ur", "kind": "uretprobe", "attach_target": "e56_fn", "arch": "x86_64", "maps": ["hits"],
+       "binary_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+       "note": "E056: 同じ関数の戻り — 戻り値を読まない"}
+    ]
+  },
+  "telemetry": {"clocks": [], "value_maps": [], "bounds_sets": [], "signals": []},
+  "extensions": {}
+}

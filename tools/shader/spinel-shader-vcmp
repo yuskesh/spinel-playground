@@ -1,0 +1,302 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+#
+# tools/shader/spinel-shader-vcmp — the oracle check for the vertex pipeline form.
+#
+#   spinel-shader-vcmp <dir> --res N [--tsv PATH]
+#
+# What lives in <dir>:
+#   wgpu.ppm.rgba / dawn.ppm.rgba   u8 drawings (RGBA8Unorm readback)
+#   wgpu_f32.rgba                   f32 drawing (RGBA32Float readback)
+#   raster_ref.rgba / cover.bin     R2's picture (the CPU rasterizer) and its coverage
+#   native_f64.txt                  R1's picture (Spinel native f64, one pixel per line "r g b cov")
+#
+# Design of the check (the comparison contract extended to the vertex pipeline):
+#   - layer 1 (wgpu vs Dawn): **0 bytes of difference** for both u8 and f32 (EXACT)
+#   - coverage: the GPU's coverage (f32 rgb != clear(0,0,0) — relies on the scene rule "a fragment never
+#     outputs the clear colour"; the lasting fix is the primitive ID target) must **match R2's coverage
+#     exactly**. It matches R1 (f64 positions) too — this holds only under the margin rule
+#   - values: max |gpu − R2| ≤ 4 × 2⁻²⁴ × S (S = max(1, max|R2|)) over pixels whose coverage matches.
+#     ★ The ULP denominator is **the value range** — a per-pixel value would make the relative ULP
+#     explode at pixels where u→0 (the CTS interpolation tolerance is scaled by the range too). Measured 1.0 to 1.5 ULP@1
+#   - u8 (the contract's 3 requirements): differences ±1 / every difference explained by the tie distance / difference rate ≤ 0.1%
+#     (the same as the first phase. Measured under the margin rule: nd=0 = pixel-exact —
+#     the interpolation error of ~2.3e-5 u8 units did not cross a rounding boundary)
+#   - background: the GPU f32 uncovered pixels are rgb = clear, **EXACT**
+
+def die(msg)
+  warn "spinel-shader-vcmp: FATAL #{msg}"
+  exit 4
+end
+
+dir = nil
+res = 256
+tsv_path = nil
+mgolden = nil
+rate_key = nil
+cov_edge = false
+grid_bits = nil
+i = 0
+while i < ARGV.size
+  case ARGV[i]
+  when "--res" then res = ARGV[i + 1].to_i; i += 2
+  when "--tsv" then tsv_path = ARGV[i + 1]; i += 2
+  # Per-machine goldens. darwin passes none, so the original check stays.
+  when "--mgolden"  then mgolden = ARGV[i + 1]; i += 2
+  when "--rate-key" then rate_key = ARGV[i + 1]; i += 2
+  # The coverage control scene. Mismatches must be explained as "within one grid step of an edge".
+  when "--cov-edge"  then cov_edge = true; i += 1
+  when "--grid-bits" then grid_bits = ARGV[i + 1].to_i; i += 2
+  else dir = ARGV[i]; i += 1
+  end
+end
+# A textured shader has no CPU reference. This is decided before anything is read.
+if dir && File.exist?(File.join(dir, "textured"))
+  warn "spinel-shader-vcmp: REFUSE #{dir}: this shader samples a texture and has no CPU reference to compare with"
+  exit 3
+end
+mg = nil
+if mgolden && File.exist?(mgolden)
+  mg = {}
+  File.foreach(mgolden) do |line|
+    k, v = line.chomp.split("\t", 2)
+    mg[k] = v if k && v
+  end
+end
+die("usage: spinel-shader-vcmp <dir> --res N") if dir.nil?
+
+# The coverage mask (R32Uint) and the distance to an edge. nil when missing (the caller reports MISSING).
+def read_u32(path, n)
+  return nil unless File.exist?(path)
+  a = File.binread(path).unpack("V*")
+  a.size >= n ? a[0, n] : nil
+end
+
+def read_f32_opt(path, n)
+  return nil unless File.exist?(path)
+  a = File.binread(path).unpack("e*")
+  a.size >= n ? a[0, n] : nil
+end
+
+def read_f32(path, n)
+  d = File.binread(path)
+  raise "#{path}: #{d.bytesize}B (expected #{n * 4}B)" if d.bytesize != n * 4
+  d.unpack("e*")
+end
+
+n_px = res * res
+begin
+  u8_wgpu = File.binread(File.join(dir, "wgpu.ppm.rgba")).unpack("C*")
+  u8_dawn = File.binread(File.join(dir, "dawn.ppm.rgba")).unpack("C*")
+  g32 = read_f32(File.join(dir, "wgpu_f32.rgba"), n_px * 4)
+  r32 = read_f32(File.join(dir, "raster_ref.rgba"), n_px * 4)
+  cov = File.binread(File.join(dir, "cover.bin")).unpack("C*")
+  nat = File.read(File.join(dir, "native_f64.txt")).split("\n")
+rescue StandardError => e
+  die(e.message)
+end
+die("native_f64.txt has #{nat.size} lines (expected #{n_px})") if nat.size != n_px
+
+rows = ["gate\tverdict\tdetail\torigin"]
+fails = 0
+gate = lambda do |name, ok, detail, origin|
+  rows << [name, ok ? "PASS" : "FAIL", detail, origin].join("\t")
+  fails += 1 unless ok
+end
+
+# ---- layer 1 ------------------------------------------------------------
+gate.call("v_layer1_u8", u8_wgpu == u8_dawn, "wgpu vs Dawn (u8)", "EXACT")
+dawn32 = File.exist?(File.join(dir, "dawn_f32.rgba")) ? read_f32(File.join(dir, "dawn_f32.rgba"), n_px * 4) : nil
+gate.call("v_layer1_f32", g32 == dawn32, "wgpu vs Dawn (f32)", "EXACT") if dawn32
+
+# ---- coverage (the primitive ID mask is authoritative; independent of value errors) ----
+# ★ The provisional check (rgb != clear) was replaced. The scene rule ("a fragment never outputs the clear
+# colour") is no longer needed — the IDs are read directly as R32Uint.
+mask_w = read_u32(File.join(dir, "wgpu_cov.bin.r32u"), n_px)
+mask_d = read_u32(File.join(dir, "dawn_cov.bin.r32u"), n_px)
+if mask_w.nil?
+  # Never fall back to the old path silently. If the wiring breaks, turn red.
+  gate.call("v_cov_mask_present", false,
+            "wgpu_cov.bin.r32u is missing — the coverage pass did not run (E139's wiring)", "EXACT")
+  gcov = Array.new(n_px) { |k| g32[k * 4] != 0.0 || g32[k * 4 + 1] != 0.0 || g32[k * 4 + 2] != 0.0 }
+else
+  # Axis 1 (between implementations): bitwise including ID values. Also checks painter's order (last wins).
+  if mask_d
+    gate.call("v_cov_layer1_id", mask_w == mask_d,
+              "wgpu vs Dawn coverage mask (bitwise, including ID values)", "EXACT")
+  else
+    rows << ["v_cov_layer1_id", "MISSING", "dawn_cov.bin.r32u is missing", "EXACT"].join("\t")
+  end
+  gcov = Array.new(n_px) { |k| mask_w[k] != 0 }
+end
+rcov = Array.new(n_px) { |k| cov[k] != 0 }
+ncov = Array.new(n_px) { |k| nat[k].split(" ")[3].to_i != 0 }
+mm_gr = (0...n_px).count { |k| gcov[k] != rcov[k] }
+mm_rn = (0...n_px).count { |k| rcov[k] != ncov[k] }
+
+# Axis 2 (device vs reference). The margin-safe scene requires an exact match **down to the ID values**
+# (which also checks that the diagonal shared edge is attributed correctly per primitive).
+if mask_w && !cov_edge
+  mm_id = (0...n_px).count { |k| mask_w[k] != cov[k] }
+  first = (0...n_px).find { |k| mask_w[k] != cov[k] }
+  gate.call("v_coverage_gpu_vs_r2", mm_id.zero?,
+            mm_id.zero? ? "fully equal down to the ID values (0 pixels)" :
+              "ID mismatch in #{mm_id} pixels (first: x=#{first % res},y=#{first / res} " \
+              "gpu=#{mask_w[first]} r2=#{cov[first]}) — if this breaks, it is E139's domain",
+            "EXACT")
+elsif !mask_w
+  gate.call("v_coverage_gpu_vs_r2", mm_gr.zero?,
+            "coverage mismatch in #{mm_gr} pixels (provisional source)", "MEASURED")
+end
+
+# Control scene: explain **where** the mismatches are (the place, not the count).
+if mask_w && cov_edge
+  dist = read_f32_opt(File.join(dir, "dist.bin"), n_px)
+  bad = (0...n_px).select { |k| mask_w[k] != cov[k] }
+  if dist.nil?
+    rows << ["v_cov_edge_explained", "MISSING", "dist.bin is missing (the 4th argument of raster_ref)",
+             "DERIVED"].join("\t")
+  elsif grid_bits.nil?
+    rows << ["v_cov_edge_explained", "SKIP",
+             "#{bad.size} pixels mismatch — the per-machine golden has no grid width (coverage_grid_bits). " \
+             "Freeze: run_shader_gate.sh --freeze", "DERIVED"].join("\t")
+  else
+    w = 2.0**(-grid_bits)
+    unexplained = bad.count { |k| dist[k] > w }
+    far = bad.map { |k| dist[k] }.max || 0.0
+    gate.call("v_cov_edge_explained", unexplained.zero?,
+              format("%d pixels mismatch; all within the grid width %.6f px (= 2^-%d) of an edge? unexplained %d " \
+                     "(farthest %.6f px)", bad.size, w, grid_bits, unexplained, far), "DERIVED")
+    rows << ["v_cov_edge_info", "INFO",
+             "columns of the mismatched pixels: #{bad.map { |k| k % res }.uniq.sort.join(',')}", "MEASURED"].join("\t")
+  end
+end
+
+gate.call("v_coverage_r2_vs_r1", mm_rn.zero?,
+          "coverage mismatch in #{mm_rn} pixels (R2 at f32 positions vs R1 at f64 positions)", "MEASURED")
+
+# ---- exactness of the background ----------------------------------------
+bg_bad = (0...n_px).count do |k|
+  !rcov[k] && (g32[k * 4] != 0.0 || g32[k * 4 + 1] != 0.0 || g32[k * 4 + 2] != 0.0)
+end
+gate.call("v_background_exact", bg_bad.zero?, "uncovered pixels with rgb != clear: #{bg_bad}", "EXACT")
+
+# ---- values (4 ULP scaled to the value range) ---------------------------
+U1 = 2.0**-24
+# The tolerance is **an upper bound composed from the expression tree** (SPEC). The generator writes it to tol.txt.
+# Without one, the original fixed 4 ULP (the composer builds v1's subjects so that they come out equal to it).
+tol_path = File.join(dir, "tol.txt")
+TOL = File.exist?(tol_path) ? File.read(tol_path).to_f : 4.0
+smax = 1.0
+(0...n_px).each do |k|
+  next unless rcov[k]
+  3.times { |c| smax = [smax, r32[k * 4 + c].abs].max }
+end
+bound = TOL * U1 * smax
+mx = [0.0, 0.0, 0.0]
+(0...n_px).each do |k|
+  next unless rcov[k] && gcov[k]
+  3.times do |c|
+    d = (g32[k * 4 + c] - r32[k * 4 + c]).abs
+    mx[c] = d if d > mx[c]
+  end
+end
+mxall = mx.max
+gate.call("v_value_within_spec_tol", mxall <= bound,
+          format("max_abs=%.3e (= %.2f ULP@S, S=%.3f) ≤ limit %.2f ULP@S=%.3e — per ch [%s]",
+                 mxall, mxall / (U1 * smax), smax, TOL, bound,
+                 mx.map { |m| format('%.2f', m / (U1 * smax)) }.join(", ")), "SPEC")
+rows << ["v_value_tol_source", "INFO",
+         format("the limit %.2f ULP@S is composed from the expression tree (GR-8: varying 4 + / 2.5 + sqrt 3). " \
+                "Measured %.2f = %.0f%% of the limit", TOL, mxall / (U1 * smax),
+                100.0 * (mxall / (U1 * smax)) / TOL), "SPEC"].join("\t")
+
+# ---- u8 stage (the contract's 3 requirements) ----------------------------
+# The reference is R1 (f64) quantized half-even to u8. Reach = max|gpu_f32 − R1_f64| × 255.
+def q_half_even(x)
+  v = x * 255.0
+  v = 0.0 if v < 0.0
+  v = 255.0 if v > 255.0
+  f = v.floor
+  d = v - f
+  r = if d > 0.5 then f + 1
+      elsif d < 0.5 then f
+      else (f % 2).zero? ? f : f + 1
+      end
+  r.to_i
+end
+
+reach = 0.0
+(0...n_px).each do |k|
+  next unless rcov[k] && ncov[k]
+  fv = nat[k].split(" ")
+  3.times do |c|
+    d = (g32[k * 4 + c] - fv[c].to_f).abs
+    reach = d if d > reach
+  end
+end
+reach255 = reach * 255.0
+
+nd = 0
+nbad_mag = 0
+nbad_tie = 0
+worst = nil
+(0...n_px).each do |k|
+  fv = nat[k].split(" ")
+  3.times do |c|
+    ref_f = ncov[k] ? fv[c].to_f : 0.0
+    ref_u = ncov[k] ? q_half_even(ref_f) : 0
+    got = u8_wgpu[k * 4 + c]
+    next if got == ref_u
+    nd += 1
+    diff = (got - ref_u).abs
+    nbad_mag += 1 if diff > 1
+    # Tie distance: whether f64*255 is within the reach of a rounding boundary (x.5)
+    t = ref_f * 255.0
+    dist = (t - t.floor - 0.5).abs
+    nbad_tie += 1 if dist > reach255
+    worst ||= [k % res, k / res, c, got, ref_u]
+  end
+end
+rate = nd.to_f / (n_px * 3)
+gate.call("v_u8_a_diff_is_pm1", nbad_mag.zero?, "differences beyond ±1: #{nbad_mag} (nd=#{nd})", "EXACT")
+b_detail = "explainable #{nd - nbad_tie} / #{nd} (reach #{format('%.3e', reach255)} in u8 units)"
+if mgolden
+  # Per-machine (b): not required on other machines (the derivation of the reach may assume the M1's contraction positions)
+  rows << ["v_u8_b_all_diffs_at_tie", "INFO", b_detail + " * GR-6 (b): not required on other machines",
+           "DERIVED"].join("\t")
+else
+  gate.call("v_u8_b_all_diffs_at_tie", nbad_tie.zero?, b_detail, "DERIVED")
+end
+pct = rate * 100.0
+if mgolden
+  frozen = mg && rate_key && mg[rate_key] ? mg[rate_key].to_f : nil
+  if frozen.nil?
+    # SKIP does not go into fails, but it is not PASS either
+    rows << ["v_u8_c_diff_rate", "SKIP", format(
+      "%.4f%% (nd=%d / %d) — the per-machine golden has no %s. Freeze: run_shader_gate.sh --freeze",
+      pct, nd, n_px * 3, rate_key || "(no rate-key)"), "MEASURED"].join("\t")
+  else
+    lim = frozen * 3.0
+    gate.call("v_u8_c_diff_rate", pct <= lim,
+              format("%.4f%% ≤ %.4f%% (this machine's frozen value %.4f%% × 3, nd=%d / %d)",
+                     pct, lim, frozen, nd, n_px * 3), "MEASURED")
+  end
+else
+  gate.call("v_u8_c_diff_rate_le_0.1pct", rate <= 0.001,
+            format("%.4f%% (nd=%d / %d)", pct, nd, n_px * 3), "MEASURED")
+end
+rows << ["v_u8_rate_value", "INFO", format("%.4f", pct), "MEASURED"].join("\t")
+rows << ["v_u8_info_worst", "INFO",
+         worst ? "first difference: (x=#{worst[0]},y=#{worst[1]},#{'rgb'[worst[2]]}) gpu=#{worst[3]} ref=#{worst[4]}" : "no differences",
+         "MEASURED"].join("\t")
+
+File.write(tsv_path, rows.join("\n") + "\n") if tsv_path
+puts rows.join("\n")
+if fails.zero?
+  warn "---- shader vcmp: PASS (#{rows.size - 1} rows)"
+  exit 0
+else
+  warn "---- shader vcmp: FAIL (#{fails} failures)"
+  exit 1
+end

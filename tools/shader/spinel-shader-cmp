@@ -1,0 +1,294 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+#
+# tools/shader/spinel-shader-cmp — the shader lane's oracle (implements the shader comparison contract)
+#
+#   spinel-shader-cmp <dir> --res N [--tsv out.tsv]
+#
+# The prototype was `r011_probes/src/analyze.py` (163 lines) and **only printed numbers**.
+# The product **decides pass/fail** with the contract's thresholds (fixed on 2026-08-18).
+#
+# ★ A GPU and a CPU reference can never be bitwise equal in principle (WGSL cannot stop FMA).
+# So this oracle can only take the form of **holding as its contract "which side a difference
+# belongs to, and how"**, not "they should match". Each layer has its own requirement:
+#
+#   layer 1 (across = wgpu / Dawn)  **0 bytes of difference** at the f32 stage. A break is not absorbed by a tolerance
+#                                  but investigated as a missing piece of the contract
+#   validity of the llvm exit      requires ref.o == C(-ffp-contract=off) bitwise.
+#                                  As a **positive control** it also requires a difference from C(=fast)
+#                                  (no difference means the instrument is not working)
+#   layer 2 (down = GPU vs R2)     f32 stage. The GPU contracts, so **not matching** is correct.
+#                                  Reports that a difference exists and where it belongs
+#   u8 stage (main measure)        the contract's 3 requirements: (a) differences are ±1 only /
+#                                  (b) 100% of nd is explained by the tie distance /
+#                                  (c) difference rate ≤ 0.1% (3 × the measured 0.033%, source MEASURED)
+#
+# Source labels: always write EXACT / DERIVED / MEASURED / SPEC into the TSV.
+
+require "fileutils"
+
+def die(msg)
+  warn "spinel-shader-cmp: FATAL #{msg}"
+  exit 4
+end
+
+dir = nil
+res = 256
+tsv = nil
+mgolden = nil
+rate_key = nil
+i = 0
+while i < ARGV.size
+  case ARGV[i]
+  when "--res" then res = ARGV[i + 1].to_i; i += 2
+  when "--tsv" then tsv = ARGV[i + 1]; i += 2
+  # Per-machine goldens. **darwin passes none** — without one, the original check
+  # (fixed 0.1% / tie-distance explanation required) applies as before. macOS behaviour is byte for byte unchanged.
+  when "--mgolden"  then mgolden = ARGV[i + 1]; i += 2
+  when "--rate-key" then rate_key = ARGV[i + 1]; i += 2
+  else
+    die("unknown argument #{ARGV[i]}") if ARGV[i].start_with?("-")
+    dir = ARGV[i]; i += 1
+  end
+end
+# A textured shader has no CPU reference. This is decided before anything is read.
+if dir && File.exist?(File.join(dir, "textured"))
+  warn "spinel-shader-cmp: REFUSE #{dir}: this shader samples a texture and has no CPU reference to compare with"
+  exit 3
+end
+die("usage: spinel-shader-cmp <dir> --res N [--tsv out.tsv]") if dir.nil?
+
+def read_f32(path)
+  die("missing: #{path}") unless File.exist?(path)
+  File.binread(path).unpack("e*")
+end
+
+def read_u8(path)
+  die("missing: #{path}") unless File.exist?(path)
+  File.binread(path).bytes
+end
+
+def read_f64_txt(path)
+  die("missing: #{path}") unless File.exist?(path)
+  out = []
+  File.foreach(path) { |l| l.split.each { |t| out << t.to_f } }
+  out
+end
+
+def to_f32(x) = [x].pack("e").unpack1("e")
+
+# Quantization at the u8 exit. The default is half-even (`quant: :half_even`).
+def q_half_even(v)
+  x = [[v, 0.0].max, 1.0].min * 255.0
+  fl = x.floor
+  fr = x - fl
+  n = if fr > 0.5 then fl + 1
+      elsif fr < 0.5 then fl
+      else (fl.to_i.even? ? fl : fl + 1)
+      end
+  [[n.to_i, 0].max, 255].min
+end
+
+rows = []
+fails = []
+def rows.gate(rows, fails, name, verdict, detail, origin)
+  rows << [name, verdict, detail, origin].join("\t")
+  fails << "#{name}: #{detail}" unless verdict == "PASS"
+end
+# SKIP does not go into fails (it means "there is no frozen value yet", not that the requirement was dropped).
+# But it is **not PASS either** — never turn green silently.
+def rows.skip(rows, name, detail, origin)
+  rows << [name, "SKIP", detail, origin].join("\t")
+end
+
+# Loading the per-machine golden. nil when there is none (the basis for SKIP).
+mg = nil
+if mgolden && File.exist?(mgolden)
+  mg = {}
+  File.foreach(mgolden) do |line|
+    k, v = line.chomp.split("\t", 2)
+    mg[k] = v if k && v
+  end
+end
+
+n_px = res * res
+n_comp = n_px * 3
+
+# ---------------------------------------------- layer 1 (across): wgpu vs Dawn
+wgpu = File.join(dir, "wgpu.ppm.rgba")
+dawn = File.join(dir, "dawn.ppm.rgba")
+if File.exist?(wgpu) && File.exist?(dawn)
+  same = File.binread(wgpu) == File.binread(dawn)
+  rows.gate(rows, fails, "layer1_wgpu_vs_dawn", same ? "PASS" : "FAIL",
+            same ? "0 bytes differ" : "bytes differ (investigate as a gap in the contract)", "EXACT")
+else
+  rows.gate(rows, fails, "layer1_wgpu_vs_dawn", "MISSING",
+            "wgpu.ppm.rgba or dawn.ppm.rgba is missing", "EXACT")
+end
+
+# ------------------------------- validity of the llvm exit: ref.o vs C(off) and C(fast)
+ref  = File.join(dir, "ref.rgba")
+coff = File.join(dir, "refc_off.rgba")
+cfst = File.join(dir, "refc_fast.rgba")
+if File.exist?(ref) && File.exist?(coff)
+  same = File.binread(ref) == File.binread(coff)
+  rows.gate(rows, fails, "llvm_exit_vs_c_contract_off", same ? "PASS" : "FAIL",
+            same ? "bitwise equal (the MLIR lowering did not change the semantics)"
+                 : "differs — the MLIR path and C disagree", "EXACT")
+else
+  rows.gate(rows, fails, "llvm_exit_vs_c_contract_off", "MISSING",
+            "ref.rgba or refc_off.rgba is missing", "EXACT")
+end
+if File.exist?(ref) && File.exist?(cfst)
+  differs = File.binread(ref) != File.binread(cfst)
+  rows.gate(rows, fails, "positive_control_contract_fast", differs ? "PASS" : "FAIL",
+            differs ? "differs from C(=fast) (contraction takes effect = the instrument works)"
+                    : "no difference — **the instrument is not working**. The expression is too exact in f32 " \
+                      "(the same trap as frag.rb in R011 §3.2)", "EXACT")
+else
+  rows.gate(rows, fails, "positive_control_contract_fast", "MISSING",
+            "refc_fast.rgba is missing", "EXACT")
+end
+
+# ------------------------------------------------ layer 2 (down): GPU f32 vs R2
+gpu_f32_path = File.join(dir, "wgpu_f32.rgba")
+maxabs = 0.0
+if File.exist?(gpu_f32_path) && File.exist?(ref)
+  g = read_f32(gpu_f32_path)
+  r = read_f32(ref)
+  nd = 0
+  maxref = 0.0
+  n_px.times do |k|
+    3.times do |c|
+      gv = g[k * 4 + c]
+      rv = r[k * 4 + c]
+      next if gv.nil? || rv.nil?
+      maxref = [maxref, rv.abs].max
+      next if gv == rv
+      nd += 1
+      maxabs = [maxabs, (gv - rv).abs].max
+    end
+  end
+  pct = 100.0 * nd / n_comp
+  # The GPU contracts. If the difference is **0**, this expression is exact in f32 or the instrument is not working.
+  verdict = nd.zero? ? "WARN" : "PASS"
+  detail = format("nd=%d (%.3f%%) max_abs=%.6e normwise=%.6e%s",
+                  nd, pct, maxabs, maxref.zero? ? 0.0 : maxabs / maxref,
+                  nd.zero? ? "  ← 0 differences. The answer does not change even when the GPU contracts this expression" : "")
+  rows.gate(rows, fails, "layer2_gpu_vs_r2_f32", verdict, detail, "MEASURED")
+
+  if File.exist?(cfst)
+    cf = read_f32(cfst)
+    nd_fast = 0
+    n_px.times { |k| 3.times { |c| nd_fast += 1 if g[k * 4 + c] != cf[k * 4 + c] } }
+    attrib = if nd_fast.zero? then "the GPU matches the fused (FMA) side — the same conclusion as R010 P08"
+             else format("matches neither (nd_vs_fast=%d) — it contracts in other places than clang. " \
+                         "Locating them is the job of the R3 attributor (spinel-shader-attrib, E136)", nd_fast)
+             end
+    rows << ["layer2_attribution", "INFO", attrib, "MEASURED"].join("\t")
+  end
+else
+  rows.gate(rows, fails, "layer2_gpu_vs_r2_f32", "MISSING",
+            "wgpu_f32.rgba or ref.rgba is missing", "MEASURED")
+end
+
+# ------------------------------------------- u8 stage (main measure): GPU vs R1 (f64)
+u8_path = File.join(dir, "wgpu.ppm.rgba")
+nat = File.join(dir, "native_f64.txt")
+if File.exist?(u8_path) && File.exist?(nat)
+  gq = read_u8(u8_path)
+  f64 = read_f64_txt(nat)
+  if f64.size < n_comp
+    rows.gate(rows, fails, "u8_native_reference", "MISSING",
+              "native_f64.txt has only #{f64.size} components (#{n_comp} needed)", "EXACT")
+  else
+    nd = 0
+    ties = 0
+    nd_at_tie = 0
+    worst = 0
+    minmargin = 1.0
+    diffs = []
+    n_px.times do |k|
+      3.times do |c|
+        g = gq[k * 4 + c]
+        rv = f64[k * 3 + c]
+        rq = q_half_even(rv)
+        xr = [[rv, 0.0].max, 1.0].min * 255.0
+        fr = xr - xr.floor
+        m = (fr - 0.5).abs
+        if fr == 0.5 then ties += 1 else minmargin = [minmargin, m].min end
+        next if g == rq
+        nd += 1
+        nd_at_tie += 1 if fr == 0.5
+        worst = [worst, (g - rq).abs].max
+        diffs << m
+      end
+    end
+    pct = 100.0 * nd / n_comp
+
+    # (a) differences are ±1 only
+    rows.gate(rows, fails, "u8_a_diff_is_pm1", worst <= 1 ? "PASS" : "FAIL",
+              "largest difference = #{worst}", "EXACT")
+    # (b) 100% of nd is explained by the tie distance (reach = max_abs_f32 × 255)
+    reach = maxabs * 255.0
+    explained = diffs.count { |m| m <= reach }
+    ok_b = nd.zero? || explained == nd
+    b_detail = format("explainable %d / %d (reach max_abs*255 = %.3e in u8 units)",
+                      explained, nd, reach)
+    if mgolden
+      # Per-machine (b): the derivation of the reach may assume the M1's contraction positions,
+      # so other machines are **not required** to meet it (INFO). Attributing NVIDIA's unexplained part is still open.
+      rows << ["u8_b_all_diffs_at_tie", "INFO", b_detail + " * GR-6 (b): not required on other machines",
+               "DERIVED"].join("\t")
+    else
+      rows.gate(rows, fails, "u8_b_all_diffs_at_tie", ok_b ? "PASS" : "FAIL", b_detail, "DERIVED")
+    end
+    # (c) the difference rate. Per machine (c): the rate is a property of the machine, so the threshold is 3 × the frozen value of the per-machine golden
+    # (derived like the first phase's 0.1% = 3 × the measured 0.033%).
+    if mgolden
+      frozen = mg && rate_key && mg[rate_key] ? mg[rate_key].to_f : nil
+      if frozen.nil?
+        rows.skip(rows, "u8_c_diff_rate", format(
+          "%.4f%% (nd=%d / %d) — the per-machine golden has no %s. Freeze: run_shader_gate.sh --freeze",
+          pct, nd, n_comp, rate_key || "(no rate-key)"), "MEASURED")
+      else
+        lim = frozen * 3.0
+        rows.gate(rows, fails, "u8_c_diff_rate", pct <= lim ? "PASS" : "FAIL",
+                  format("%.4f%% ≤ %.4f%% (this machine's frozen value %.4f%% × 3, nd=%d / %d)",
+                         pct, lim, frozen, nd, n_comp), "MEASURED")
+      end
+    else
+      rows.gate(rows, fails, "u8_c_diff_rate_le_0.1pct", pct <= 0.1 ? "PASS" : "FAIL",
+                format("%.4f%% (nd=%d / %d)", pct, nd, n_comp), "MEASURED")
+    end
+    # the raw values --freeze reads (not dependent on the display format)
+    rows << ["u8_rate_value", "INFO", format("%.4f", pct), "MEASURED"].join("\t")
+    rows << ["u8_info_ties", "INFO",
+             format("ties=%d nd_at_tie=%d min_margin=%.6e%s", ties, nd_at_tie, minmargin,
+                    maxabs.zero? ? "" : format(" margin_ratio=%.1f", minmargin / maxabs)),
+             "MEASURED"].join("\t")
+    rows << ["u8_info_pixel_exact", "INFO",
+             nd.zero? ? "u8 pixel-exact (GR-1 does not require it)" : "not pixel-exact (#{nd} components)",
+             "MEASURED"].join("\t")
+  end
+else
+  rows.gate(rows, fails, "u8_stage", "MISSING",
+            "wgpu.ppm.rgba or native_f64.txt is missing", "EXACT")
+end
+
+header = "gate\tverdict\tdetail\torigin"
+puts header
+rows.each { |r| puts r }
+if tsv
+  FileUtils.mkdir_p(File.dirname(tsv))
+  File.write(tsv, header + "\n" + rows.join("\n") + "\n")
+end
+
+if fails.empty?
+  puts "---- shader oracle: PASS (#{rows.size} rows)"
+  exit 0
+else
+  fails.each { |f| puts "FAIL\t#{f}" }
+  puts "---- shader oracle: FAIL (#{fails.size} failures)"
+  exit 1
+end

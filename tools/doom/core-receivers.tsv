@@ -1,0 +1,14 @@
+# tools/doom/core-receivers.tsv — decision 0008 task 1's receiver catalog.
+#
+# The reader types some receivers `poly`: it resolved the expression but not
+# the class it produces. A name occurring once in the tree is NOT evidence that
+# it is this receiver's method -- that mistake confirmed `Other#orphan` from a
+# bare call -- so the audit refuses to guess and these rows supply the missing
+# evidence explicitly, one caller and callee at a time.
+#
+# Keyed by the calling definition, the callee's name and the receiver type the
+# reader reported, which is stable under line moves. A row matching no call
+# site fails the run, so a row cannot outlive the code it describes.
+#
+# caller	callee	receiver-type	declared	why
+Game#check_sight	getbyte	poly	string	`lv.reject` at sight.rb:131. Level#reject returns the REJECT lump's bytes, which Full loaded; the reader types the accessor's result poly.

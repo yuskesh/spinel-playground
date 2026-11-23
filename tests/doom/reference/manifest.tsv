@@ -1,0 +1,22 @@
+# Import manifest for decision 0006, task 3: the doomgeneric modification
+# patches and the frame golden.
+#
+# Source: spinel-llvm at f8ad13c6d9dc990b116ba1c842c7881232f29585, read-only.
+# Every file is byte-identical to its original except 04 and 05, whose Japanese
+# comments were translated into English (2026-11-23; same line counts, so the
+# hunks are unchanged; modified=yes).  The local
+# names carry the application order that doom/reference/build_reference.sh uses,
+# which is the only thing the rename encodes.
+#
+# These patches modify id Software's GPL C source by way of ozkl/doomgeneric.
+# That is a different provenance from the Ruby port in examples/doom/, and it
+# has its own notice: tests/doom/reference/NOTICE.md.
+#
+# kind\toriginal path\toriginal bytes\toriginal sha256\tlocal path\tlocal bytes\tlocal sha256\tmodified
+patch	docs/researches/r007_probes/reference/doomgeneric_headless.patch	10212	a828e9385ab40f68859611d738fffdbde927eee11ead49a01e7b82846a192d64	tests/doom/reference/patches/01-r007-headless.patch	10212	a828e9385ab40f68859611d738fffdbde927eee11ead49a01e7b82846a192d64	no
+patch	doom/reference/e044_dump_hooks.patch	13233	8c3e731a5325822d9ded36172cafef6110e60aedd6ce59645f6970d22eaabec9	tests/doom/reference/patches/02-e044-dump-hooks.patch	13233	8c3e731a5325822d9ded36172cafef6110e60aedd6ce59645f6970d22eaabec9	no
+patch	doom/reference/e047_dump_hooks.patch	26417	f8c278f75e703fd81f0267e20a92ac182ab76dba5d9b577a86163b4aee9c0462	tests/doom/reference/patches/03-e047-dump-hooks.patch	26417	f8c278f75e703fd81f0267e20a92ac182ab76dba5d9b577a86163b4aee9c0462	no
+patch	doom/reference/e051_dump_hooks.patch	31239	ad72ff80294ce4837fe9aeb3c6aeade445f38515d1108a876facbcafaece4559	tests/doom/reference/patches/04-e051-dump-hooks.patch	31197	080aed59e540078777fe39dfad411f0ea63226ab1c8df6168fbb372f6099dd3e	yes
+patch	doom/reference/e052_dump_hooks.patch	23981	bb52b440dcf60468aa8c9cb132b06860e8eb365fb56a52154d84923d89a4f750	tests/doom/reference/patches/05-e052-dump-hooks.patch	23864	229e6f9d5128b65c572384d8ed1caf1e7979f270505d113cb2e602328b48b4c8	yes
+patch	doom/reference/e053_dump_hooks.patch	16552	d7b3cf94a4422ad040594ea0b6c76d3ccb634b4488dfab6fac275671f124dba8	tests/doom/reference/patches/06-e053-dump-hooks.patch	16552	d7b3cf94a4422ad040594ea0b6c76d3ccb634b4488dfab6fac275671f124dba8	no
+golden	docs/researches/r007_probes/reference/results/demo1_hashes.tsv	463676	0b98fc30ee21a552e31de409b03ba7afae54581967c9b8ebba281247ce5402ac	tests/doom/fixtures/reference/demo1_hashes.tsv	463676	0b98fc30ee21a552e31de409b03ba7afae54581967c9b8ebba281247ce5402ac	no

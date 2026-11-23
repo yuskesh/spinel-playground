@@ -1,0 +1,8 @@
+text="ne!\ntwo\n\u0000z"
+slice="!\ntw"
+length=10 pieces=4
+line=1 column=0
+find=0
+invariants=true
+empty=true pieces=0 lines=1
+empty-find=loud

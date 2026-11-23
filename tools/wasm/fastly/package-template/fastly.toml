@@ -1,0 +1,62 @@
+# Fastly Compute package manifest, scaffolded by `spinel-wasm --emit-fastly`.
+#
+# `language = "other"` is the load-bearing line: it tells the Fastly CLI that
+# the .wasm was produced by a toolchain it knows nothing about, which is
+# exactly our situation (clang + wasm-ld + wasi-libc, no Fastly SDK).  The
+# build is therefore a no-op here and the binary is passed explicitly:
+#
+#     fastly compute serve --skip-build                 # locally, on Viceroy
+#     fastly compute pack  --wasm-binary bin/main.wasm  # -> <name>.tar.gz
+#     fastly compute deploy                             # needs an API token
+#
+# bin/main.wasm is a fixed path -- `pack` looks nowhere else.
+authors = ["spinel"]
+description = "A Spinel (Ruby) program on Fastly Compute"
+language = "other"
+manifest_version = 3
+name = "@@NAME@@"
+
+[scripts]
+  build = "true"
+
+# ---------------------------------------------------------------------------
+# [local_server] is what `fastly compute serve` reads.  NONE of it exists on
+# the real edge: there it is the service configuration that declares backends
+# and stores.  What matters for a Spinel program is that reachability is an
+# explicit decision in both places -- asking for an undeclared backend or store
+# raises an ArgumentError naming it, never a silent nil (R003 §3-1, E058).
+# ---------------------------------------------------------------------------
+[local_server]
+
+  # Edge::HTTP.request(url, backend: "origin") reaches this and nothing else.
+  # On Fastly a URL alone reaches nothing: `backend:` is required and its
+  # absence is an ArgumentError before any traffic (R008 D-3).
+  [local_server.backends]
+    [local_server.backends.origin]
+      url = "http://127.0.0.1:7899/"
+
+  # Edge::KV.get("app_kv", "k") / .put(...).  Local KV is IN MEMORY:
+  # stopping `fastly compute serve` erases it.
+  [local_server.kv_stores]
+    app_kv = []
+
+  # The two knobs the platform layer itself reads, and the only thing it reads
+  # from a store.  Fastly has no way to hand a guest an environment variable,
+  # and a binding namespace is deliberately NOT flattened into ENV (R003 §3-1)
+  # -- so these live in a Config Store named exactly `spinel`:
+  #
+  #   SPINEL_CGI_HEADERS  = "1"    let the program emit a CGI header block
+  #                                (Status: / Content-Type: / ... then a blank
+  #                                line) before the body.  Off by default: a
+  #                                program writing binary bytes must not have
+  #                                them reinterpreted as headers.
+  #   SPINEL_CONTENT_TYPE          default response content type
+  #
+  # Anything else a program wants from a Config Store it reads for itself with
+  # Fastly::Config.get(store, key), which answers nil for a missing key and
+  # "" for an empty one.
+  [local_server.config_stores]
+    [local_server.config_stores.spinel]
+      format = "inline-toml"
+      [local_server.config_stores.spinel.contents]
+        SPINEL_CGI_HEADERS = "1"

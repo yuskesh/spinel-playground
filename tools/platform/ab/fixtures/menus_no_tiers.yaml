@@ -1,0 +1,8 @@
+# E168: a lie in the ledger's structure (no tiers). A fixture for exercising the path where the frozen Python's `load_menus` dies;
+# **the canonical menus.yaml is not touched by a single byte**.
+capabilities:
+  edge/kv: full
+platforms:
+  workers:
+    arch: wasm32
+    menu: [edge/kv]

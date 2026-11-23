@@ -1,0 +1,12 @@
+# tools/app/adapters/button/class.tsv -- the Button class, polled (decision 0014 §3)
+# key	value
+module	Button
+source	children gpio-keys
+controller	gpios
+table	struct gpio_dt_spec
+spec	GPIO_DT_SPEC_GET(%NODE%, gpios)
+header	zephyr/drivers/gpio.h
+fn	read(index: u32) -> i32
+safe_state	none
+index_guard	on
+subsystem	CONFIG_GPIO

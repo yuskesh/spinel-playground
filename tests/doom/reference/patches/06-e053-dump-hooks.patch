@@ -1,0 +1,473 @@
+--- a/doomgeneric/Makefile.headless
++++ b/doomgeneric/Makefile.headless
+@@ -20,6 +20,7 @@
+ CFLAGS+=-DDG_E047_HOOK
+ CFLAGS+=-DDG_E051_HOOK
+ CFLAGS+=-DDG_E052_HOOK
++CFLAGS+=-DDG_E053_HOOK
+ # NOTE (macOS/arm64, Apple clang 21): the doomgeneric sources at dcb7a8d compile
+ # clean under -Wall with *no* -Wno-* suppressions and *no* source edits.
+ # The only macOS frictions are in the stock Makefile, and both are link flags
+@@ -32,7 +33,7 @@
+ OBJDIR=build_headless
+ OUTPUT=doomgeneric_headless
+ 
+-SRC_DOOM = dummy.o am_map.o doomdef.o doomstat.o dstrings.o d_event.o d_items.o d_iwad.o d_loop.o d_main.o d_mode.o d_net.o f_finale.o f_wipe.o g_game.o hu_lib.o hu_stuff.o info.o i_cdmus.o i_endoom.o i_joystick.o i_scale.o i_sound.o i_system.o i_timer.o memio.o m_argv.o m_bbox.o m_cheat.o m_config.o m_controls.o m_fixed.o m_menu.o m_misc.o m_random.o p_ceilng.o p_doors.o p_enemy.o p_floor.o p_inter.o p_lights.o p_map.o p_maputl.o p_mobj.o p_plats.o p_pspr.o p_saveg.o p_setup.o p_sight.o p_spec.o p_switch.o p_telept.o p_tick.o p_user.o r_bsp.o r_data.o r_draw.o r_main.o r_plane.o r_segs.o r_sky.o r_things.o sha1.o sounds.o statdump.o st_lib.o st_stuff.o s_sound.o tables.o v_video.o wi_stuff.o w_checksum.o w_file.o w_main.o w_wad.o z_zone.o w_file_stdc.o i_input.o i_video.o doomgeneric.o doomgeneric_headless.o doomgeneric_dump.o doomgeneric_e047.o doomgeneric_e051.o doomgeneric_e052.o
++SRC_DOOM = dummy.o am_map.o doomdef.o doomstat.o dstrings.o d_event.o d_items.o d_iwad.o d_loop.o d_main.o d_mode.o d_net.o f_finale.o f_wipe.o g_game.o hu_lib.o hu_stuff.o info.o i_cdmus.o i_endoom.o i_joystick.o i_scale.o i_sound.o i_system.o i_timer.o memio.o m_argv.o m_bbox.o m_cheat.o m_config.o m_controls.o m_fixed.o m_menu.o m_misc.o m_random.o p_ceilng.o p_doors.o p_enemy.o p_floor.o p_inter.o p_lights.o p_map.o p_maputl.o p_mobj.o p_plats.o p_pspr.o p_saveg.o p_setup.o p_sight.o p_spec.o p_switch.o p_telept.o p_tick.o p_user.o r_bsp.o r_data.o r_draw.o r_main.o r_plane.o r_segs.o r_sky.o r_things.o sha1.o sounds.o statdump.o st_lib.o st_stuff.o s_sound.o tables.o v_video.o wi_stuff.o w_checksum.o w_file.o w_main.o w_wad.o z_zone.o w_file_stdc.o i_input.o i_video.o doomgeneric.o doomgeneric_headless.o doomgeneric_dump.o doomgeneric_e047.o doomgeneric_e051.o doomgeneric_e052.o doomgeneric_e053.o
+ OBJS += $(addprefix $(OBJDIR)/, $(SRC_DOOM))
+ 
+ all: $(OUTPUT)
+--- a/doomgeneric/d_main.c
++++ b/doomgeneric/d_main.c
+@@ -1172,6 +1172,9 @@
+ #ifdef DG_E052_HOOK
+ void E052_Init(void);      // doomgeneric_e052.c
+ #endif
++#ifdef DG_E053_HOOK
++void E053_Init(void);      // doomgeneric_e053.c
++#endif
+ 
+ void D_DoomMain (void)
+ {
+@@ -1830,6 +1833,11 @@
+     // call D_DoomLoop() and return early.  E052_Init() is idempotent.
+     E052_Init();
+ #endif
++#ifdef DG_E053_HOOK
++    // spinel-llvm E053 (P004 Phase 4 latter half): fuzz / masked-column
++    // traces.  No-op unless DG_E053_DIR is set; never exits.
++    E053_Init();
++#endif
+     p = M_CheckParmWithArgs("-record", 1);
+ 
+     if (p)
+@@ -1888,6 +1896,9 @@
+     // set; unlike E047/E051 it does *not* exit -- it instruments the demo run.
+     E052_Init();
+ #endif
++#ifdef DG_E053_HOOK
++    E053_Init();
++#endif
+     D_DoomLoop ();
+ }
+ 
+--- a/doomgeneric/r_draw.c
++++ b/doomgeneric/r_draw.c
+@@ -119,6 +119,21 @@
+ 	I_Error ("R_DrawColumn: %i to %i at %i", dc_yl, dc_yh, dc_x); 
+ #endif 
+ 
++#ifdef DG_E053_HOOK
++    // spinel-llvm E053: the colormap row a column picks is the suspect for the
++    // one-index pixel differences left over from E052.
++    {
++	void E053_WCol(int,int,int,int,int,int,int);
++	fixed_t f0 = dc_texturemid + (dc_yl-centery)*dc_iscale;
++	fixed_t f1 = f0; int yy; unsigned h = 2166136261u;
++	void E053_WColSrc(const unsigned char *);
++	for (yy = dc_yl; yy <= dc_yh; yy++)
++	{ h = (h ^ dc_source[(f1>>FRACBITS)&127]) * 16777619u; f1 += dc_iscale; }
++	E053_WColSrc(dc_source);
++	E053_WCol(dc_x, dc_yl, dc_yh, (int)((dc_colormap - colormaps) / 256),
++		  (int)dc_iscale, (int)dc_texturemid, (int)(h & 0x7fffffff));
++    }
++#endif
+     // Framebuffer destination address.
+     // Use ylookup LUT to avoid multiply with ScreenWidth.
+     // Use columnofs LUT for subwindows? 
+@@ -286,6 +301,9 @@
+     byte*		dest; 
+     fixed_t		frac;
+     fixed_t		fracstep;	 
++#ifdef DG_E053_HOOK
++    int			e053_yl_in = dc_yl, e053_yh_in = dc_yh;
++#endif
+ 
+     // Adjust borders. Low... 
+     if (!dc_yl) 
+@@ -297,6 +315,17 @@
+ 		 
+     count = dc_yh - dc_yl; 
+ 
++#ifdef DG_E053_HOOK
++    // spinel-llvm E053: record every fuzz column with the fuzzpos phase it
++    // consumes.  fuzzpos is a file-scope static that persists across frames,
++    // so the *sequence* is the oracle, not any single frame.
++    {
++	void E053_Fuzz(int,int,int,int,int,int,int,int);
++	int adv = (count < 0) ? 0 : (count + 1);
++	E053_Fuzz(dc_x, e053_yl_in, e053_yh_in, dc_yl, dc_yh, count,
++		  fuzzpos, (fuzzpos + adv) % FUZZTABLE);
++    }
++#endif
+     // Zero length.
+     if (count < 0) 
+ 	return; 
+--- a/doomgeneric/r_plane.c
++++ b/doomgeneric/r_plane.c
+@@ -169,6 +169,17 @@
+ #ifdef DG_E051_HOOK
+     { void DG_E051_Span(int,int,int); DG_E051_Span(y,x1,x2); }
+ #endif
++#ifdef DG_E053_HOOK
++    // spinel-llvm E053: the light index a span picks is the suspect for the
++    // one-colormap-row pixel differences left over from E052.
++    {
++	void E053_Span(int,int,int,int,int,int,int,int,int);
++	extern lighttable_t *colormaps;
++	E053_Span(y, x1, x2, (int)((ds_colormap - colormaps) / 256),
++		  (int)ds_xfrac, (int)ds_yfrac, (int)ds_xstep, (int)ds_ystep,
++		  (int)distance);
++    }
++#endif
+     // high or low detail
+     spanfunc ();	
+ }
+--- a/doomgeneric/r_segs.c
++++ b/doomgeneric/r_segs.c
+@@ -174,6 +174,9 @@
+ 	    col = (column_t *)( 
+ 		(byte *)R_GetColumn(texnum,maskedtexturecol[dc_x]) -3);
+ 			
++#ifdef DG_E053_HOOK
++	    { void E053_MColSrc(int); E053_MColSrc(1); }
++#endif
+ 	    R_DrawMaskedColumn (col);
+ 	    maskedtexturecol[dc_x] = SHRT_MAX;
+ 	}
+--- a/doomgeneric/r_things.c
++++ b/doomgeneric/r_things.c
+@@ -345,6 +345,9 @@
+     int		topscreen;
+     int 	bottomscreen;
+     fixed_t	basetexturemid;
++#ifdef DG_E053_HOOK
++    int		e053_yl_raw = 0, e053_yh_raw = 0;
++#endif
+ 	
+     basetexturemid = dc_texturemid;
+ 	
+@@ -357,12 +360,26 @@
+ 
+ 	dc_yl = (topscreen+FRACUNIT-1)>>FRACBITS;
+ 	dc_yh = (bottomscreen-1)>>FRACBITS;
++#ifdef DG_E053_HOOK
++	e053_yl_raw = dc_yl; e053_yh_raw = dc_yh;
++#endif
+ 		
+ 	if (dc_yh >= mfloorclip[dc_x])
+ 	    dc_yh = mfloorclip[dc_x]-1;
+ 	if (dc_yl <= mceilingclip[dc_x])
+ 	    dc_yl = mceilingclip[dc_x]+1;
+ 
++#ifdef DG_E053_HOOK
++	// spinel-llvm E053: one line per post, with the raw and the clipped
++	// span, so a sprite-edge pixel can be attributed to the clip arrays.
++	{
++	    void E053_MCol(int,int,int,int,int,int,int,int,int,int,int);
++	    int E053_MColSrcGet(void);
++	    E053_MCol(E053_MColSrcGet(), dc_x, column->topdelta, column->length,
++		      e053_yl_raw, e053_yh_raw, mfloorclip[dc_x],
++		      mceilingclip[dc_x], dc_yl, dc_yh, dc_yl <= dc_yh);
++	}
++#endif
+ 	if (dc_yl <= dc_yh)
+ 	{
+ 	    dc_source = (byte *)column + 3;
+@@ -730,6 +747,9 @@
+ 	vis->colormap = spritelights[MAXLIGHTSCALE-1];
+     }
+ 	
++#ifdef DG_E053_HOOK
++    { void E053_MColSrc(int); E053_MColSrc(2); }
++#endif
+     R_DrawVisSprite (vis, vis->x1, vis->x2);
+ }
+ 
+@@ -945,6 +965,9 @@
+ 		
+     mfloorclip = clipbot;
+     mceilingclip = cliptop;
++#ifdef DG_E053_HOOK
++    { void E053_MColSrc(int); E053_MColSrc(0); }
++#endif
+     R_DrawVisSprite (spr, spr->x1, spr->x2);
+ }
+ 
+--- a/doomgeneric/st_stuff.c
++++ b/doomgeneric/st_stuff.c
+@@ -927,6 +927,14 @@
+     st_clock++;
+     st_randomnumber = M_Random();
+     ST_updateWidgets();
++#ifdef DG_E053_HOOK
++    {
++	void E053_StBar(int,int,int,int,int,int,int,int,int,int,int);
++	E053_StBar(st_faceindex, st_facecount, st_oldhealth, st_randomnumber,
++		   plyr->health, plyr->damagecount, plyr->bonuscount,
++		   plyr->attackdown, keyboxes[0], keyboxes[1], keyboxes[2]);
++    }
++#endif
+     st_oldhealth = plyr->health;
+ 
+ }
+--- /dev/null
++++ b/doomgeneric/doomgeneric_e053.c
+@@ -0,0 +1,257 @@
++//
++// doomgeneric_e053.c
++//
++// spinel-llvm / E053 (P004 Phase 4 後半) reference oracle hooks.
++//
++// Additive on top of the R007 headless harness and the E044 / E047 / E051 /
++// E052 dump hooks.  Same shape as all of them: one new .c file plus a handful
++// of #ifdef'd call sites, and a complete no-op unless DG_E053_DIR is set.
++//
++// E052 left 365 of 5 024 DEMO1 tics with a *pixel* difference in the 3D view
++// while every game-logic oracle matched.  Two suspects were named:
++//
++//   (a) R_DrawFuzzColumn -- fuzzpos is a file-scope static that persists across
++//       frames.  A single misplaced advance shifts the whole phase.
++//   (b) masked column clipping (mfloorclip / mceilingclip) at sprite edges.
++//
++// Both need the *sequence* of draw calls, not a snapshot, so this hook records
++// one line per call:
++//
++//   fuzz.tsv  gametic, seq, dc_x, yl_in, yh_in, yl, yh, count, pos_before,
++//             pos_after
++//   mcol.tsv  gametic, seq, source, dc_x, topdelta, length, yl_raw, yh_raw,
++//             floorclip, ceilingclip, yl, yh, drawn
++//
++// Nothing is re-implemented.  Every number is read out of the reference
++// implementation's own live state at the moment it is used.
++//
++// Environment variables:
++//
++//   DG_E053_DIR     output directory.  Unset -> the hook does nothing.
++//   DG_E053_WHAT    comma separated subset of "fuzz,mcol" (default: all)
++//   DG_E053_TIC_LO  first gametic to trace (default 0)
++//   DG_E053_TIC_HI  last gametic to trace, inclusive (default: no limit)
++//
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++
++#include "doomtype.h"
++#include "doomdef.h"
++
++extern int gametic;
++
++// ------------------------------------------------------------------- state
++
++static int   s_on = 0;
++static int   s_init = 0;
++static char  s_dir[512];
++static int   s_want_fuzz = 1, s_want_mcol = 1;
++static int   s_lo = 0, s_hi = 0x7fffffff;
++static int   s_tics[64];
++static int   s_ntics = 0;
++
++static FILE *s_fuzz = NULL;
++static FILE *s_mcol = NULL;
++static FILE *s_span = NULL;
++static FILE *s_wcol = NULL;
++static FILE *s_stbar = NULL;
++static int   s_want_stbar = 1;
++static long  s_fuzz_seq = 0;
++static long  s_mcol_seq = 0;
++static long  s_span_seq = 0;
++static long  s_wcol_seq = 0;
++static int   s_want_span = 1, s_want_wcol = 1;
++
++static FILE *e053_open(const char *name, const char *hdr)
++{
++    char path[700];
++    FILE *fp;
++    snprintf(path, sizeof(path), "%s/%s", s_dir, name);
++    fp = fopen(path, "w");
++    if (fp == NULL)
++    {
++        fprintf(stderr, "E053: cannot write %s\n", path);
++        exit(1);
++    }
++    fputs(hdr, fp);
++    return fp;
++}
++
++static int e053_want(const char *what, const char *name)
++{
++    return what == NULL || strstr(what, name) != NULL;
++}
++
++static int e053_live(void)
++{
++    int i;
++    if (!s_on)
++        return 0;
++    if (s_ntics > 0)
++    {
++        for (i = 0; i < s_ntics; i++)
++            if (s_tics[i] == gametic)
++                return 1;
++        return 0;
++    }
++    return gametic >= s_lo && gametic <= s_hi;
++}
++
++void E053_Init(void)
++{
++    const char *dir, *what, *lo, *hi;
++
++    if (s_init)
++        return;
++    s_init = 1;
++
++    dir = getenv("DG_E053_DIR");
++    if (dir == NULL || dir[0] == '\0')
++        return;
++    snprintf(s_dir, sizeof(s_dir), "%s", dir);
++
++    what = getenv("DG_E053_WHAT");
++    s_want_fuzz = e053_want(what, "fuzz");
++    s_want_mcol = e053_want(what, "mcol");
++    s_want_span = e053_want(what, "span");
++    s_want_wcol = e053_want(what, "wcol");
++    s_want_stbar = e053_want(what, "stbar");
++
++    lo = getenv("DG_E053_TIC_LO");
++    hi = getenv("DG_E053_TIC_HI");
++    if (lo != NULL) s_lo = atoi(lo);
++    if (hi != NULL) s_hi = atoi(hi);
++    {
++        const char *tl = getenv("DG_E053_TICS");
++        if (tl != NULL && tl[0] != '\0')
++        {
++            const char *q = tl;
++            while (*q && s_ntics < 64)
++            {
++                s_tics[s_ntics++] = atoi(q);
++                while (*q && *q != ',') q++;
++                if (*q == ',') q++;
++            }
++        }
++    }
++
++    if (s_want_fuzz)
++        s_fuzz = e053_open("fuzz.tsv",
++                           "#gametic\tseq\tx\tyl_in\tyh_in\tyl\tyh\tcount\tpos_before\tpos_after\n");
++    if (s_want_mcol)
++        s_mcol = e053_open("mcol.tsv",
++                           "#gametic\tseq\tsrc\tx\ttopdelta\tlength\tyl_raw\tyh_raw\t"
++                           "floorclip\tceilingclip\tyl\tyh\tdrawn\n");
++    if (s_want_span)
++        s_span = e053_open("span.tsv",
++                           "#gametic\tseq\ty\tx1\tx2\tcmap\txfrac\tyfrac\txstep\tystep\tdistance\n");
++    if (s_want_wcol)
++        s_wcol = e053_open("wcol.tsv",
++                           "#gametic\tseq\tx\tyl\tyh\tcmap\tiscale\ttexturemid\tsrc0\twindow\n");
++    if (s_want_stbar)
++        s_stbar = e053_open("stbar.tsv",
++                            "#gametic\tfaceindex\tfacecount\toldhealth\trnd\thealth\t"
++                            "damagecount\tbonuscount\tattackdown\tkey0\tkey1\tkey2\n");
++    s_on = 1;
++}
++
++// Called from R_MapPlane once per span, after ds_colormap has been chosen.
++void E053_Span(int y, int x1, int x2, int cmap, int xfrac, int yfrac,
++               int xstep, int ystep, int distance)
++{
++    if (!e053_live() || s_span == NULL)
++        return;
++    fprintf(s_span, "%d\t%ld\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n",
++            gametic, s_span_seq++, y, x1, x2, cmap, xfrac, yfrac,
++            xstep, ystep, distance);
++}
++
++// The 128 bytes R_DrawColumn can reach through dc_source[(frac>>16)&127].
++static unsigned char s_wcol_src[128];
++
++void E053_WColSrc(const unsigned char *p)
++{
++    if (e053_live() && s_wcol != NULL)
++        memcpy(s_wcol_src, p, 128);
++}
++
++// Called from R_DrawColumn (the opaque one) before it writes anything.
++void E053_WCol(int x, int yl, int yh, int cmap, int iscale, int texturemid,
++               int src0)
++{
++    if (!e053_live() || s_wcol == NULL)
++        return;
++    {
++        char hex[257]; int i;
++        for (i = 0; i < 128; i++)
++            snprintf(hex + i * 2, 3, "%02x", s_wcol_src[i]);
++        fprintf(s_wcol, "%d\t%ld\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\n",
++                gametic, s_wcol_seq++, x, yl, yh, cmap, iscale, texturemid,
++                src0, hex);
++    }
++}
++
++// ------------------------------------------------------------------- hooks
++
++// Called from R_DrawFuzzColumn *after* the two border adjustments and the
++// count computation, before the early return.  yl_in / yh_in are the values
++// the caller passed in; yl / yh are the clamped ones the loop will use.
++void E053_Fuzz(int x, int yl_in, int yh_in, int yl, int yh, int count,
++               int pos_before, int pos_after)
++{
++    if (!e053_live() || s_fuzz == NULL)
++        return;
++    fprintf(s_fuzz, "%d\t%ld\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n",
++            gametic, s_fuzz_seq++, x, yl_in, yh_in, yl, yh, count,
++            pos_before, pos_after);
++}
++
++// Called from R_DrawMaskedColumn once per post, after clipping.
++// src: 0 = sprite (R_DrawVisSprite), 1 = masked seg (R_RenderMaskedSegRange),
++//      2 = player sprite (R_DrawPSprite).
++void E053_MCol(int src, int x, int topdelta, int length,
++               int yl_raw, int yh_raw, int floorclip, int ceilingclip,
++               int yl, int yh, int drawn)
++{
++    if (!e053_live() || s_mcol == NULL)
++        return;
++    fprintf(s_mcol, "%d\t%ld\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n",
++            gametic, s_mcol_seq++, src, x, topdelta, length,
++            yl_raw, yh_raw, floorclip, ceilingclip, yl, yh, drawn);
++}
++
++// R_DrawMaskedColumn does not know who called it; the three callers set this.
++static int s_mcol_src = 0;
++
++void E053_MColSrc(int src)
++{
++    s_mcol_src = src;
++}
++
++int E053_MColSrcGet(void)
++{
++    return s_mcol_src;
++}
++
++// Called at the end of ST_Ticker.
++void E053_StBar(int faceindex, int facecount, int oldhealth, int rnd,
++                int health, int damagecount, int bonuscount, int attackdown,
++                int k0, int k1, int k2)
++{
++    if (!e053_live() || s_stbar == NULL)
++        return;
++    fprintf(s_stbar, "%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n",
++            gametic, faceindex, facecount, oldhealth, rnd, health,
++            damagecount, bonuscount, attackdown, k0, k1, k2);
++}
++
++void E053_Flush(void)
++{
++    if (s_fuzz) fflush(s_fuzz);
++    if (s_mcol) fflush(s_mcol);
++    if (s_span) fflush(s_span);
++    if (s_wcol) fflush(s_wcol);
++    if (s_stbar) fflush(s_stbar);
++}

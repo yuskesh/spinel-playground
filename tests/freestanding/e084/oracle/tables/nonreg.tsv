@@ -1,0 +1,29 @@
+check	verdict	detail
+paths_named	PASS	changed: 4 path(s); outside the E084 allowance: none
+vendor_untouched	PASS	vendor/ has no modification (READ-ONLY, never rebuilt)
+parallel_lanes	PASS	tools/mlir + tools/freestanding + tools/shader untouched (E085 parallel discipline)
+e079_replay_ran	PASS	build_all + run_gates completed (log: scratch/e084/replay_e079.log)
+e079_gates	PASS	gates.tsv: 0 FAIL/DIVERGE row(s) after the E084-era re-run
+e079_grad4	PASS	grad4.tsv: 0 FAIL/DIVERGE row(s) after the E084-era re-run
+e079_g3	PASS	g3.tsv: 0 FAIL/DIVERGE row(s) after the E084-era re-run
+e079_trap	PASS	trap.tsv: 0 FAIL/DIVERGE row(s) after the E084-era re-run
+e079_loop	PASS	loop.tsv: 0 FAIL/DIVERGE row(s) after the E084-era re-run
+e079_tables_bytes	PASS	tables byte-identical (pin tables excepted, judged in their own rows); volatile files restored: docs/experiments/results/E079/qemu_m33.log docs/experiments/results/E079/qemu_m33_shipped.log docs/experiments/results/E079/qemu_rv32.log
+e083_replay_ran	PASS	build_all + run_gates + run_reject completed (log: scratch/e084/replay_e083.log)
+e083_gates	PASS	gates.tsv: 0 FAIL/DIVERGE row(s) after the E084-era re-run
+e083_e079	PASS	e079.tsv: 0 FAIL/DIVERGE row(s) after the E084-era re-run
+e083_loop	PASS	loop.tsv: 0 FAIL/DIVERGE row(s) after the E084-era re-run
+e083_trap	PASS	trap.tsv: 0 FAIL/DIVERGE row(s) after the E084-era re-run
+e083_surface	PASS	surface.tsv: 0 FAIL/DIVERGE row(s) after the E084-era re-run
+e083_reject	PASS	reject.tsv: 0 FAIL/DIVERGE row(s) after the E084-era re-run
+e083_determinism	PASS	determinism.tsv: 0 FAIL/DIVERGE row(s) after the E084-era re-run
+e083_abi	PASS	abi.tsv: 0 FAIL/DIVERGE row(s) after the E084-era re-run
+e083_extern_check	PASS	extern_check.tsv: 0 FAIL/DIVERGE row(s) after the E084-era re-run
+e083_nonreg	EXPLAINED	paths_named pins E083's change window and now names E084's own (allowed) edits; every other row PASS. Recorded as e083_replay_nonreg.txt
+e083_tables_bytes	PASS	tables byte-identical (pin tables excepted, judged in their own rows); volatile files restored: docs/experiments/results/E083/nonreg.tsv docs/experiments/results/E083/qemu_m33.log docs/experiments/results/E083/qemu_m33_trap.log docs/experiments/results/E083/qemu_rv32.log
+e082_nonreg	EXPLAINED	the working-tree pins point at E084's uncommitted tools/grad edits (spinel-gradfs + grad_freestanding.rb); they turn PASS when the E084 commit lands. Every substantive row PASS -- and e079_*/e083_* above re-prove the pinned property dynamically (gradfs output unchanged where hvp: is not declared).
+e082_hvp_gates	PASS	e082_hvp_gates.tsv: 0 FAIL/DIVERGE row(s) after the E084-era re-run
+e082_newton	PASS	e082_newton.tsv: 0 FAIL/DIVERGE row(s) after the E084-era re-run
+e082_rules_gates	PASS	e082_rules_gates.tsv: 0 FAIL/DIVERGE row(s) after the E084-era re-run
+e082_searchgate_gates	PASS	e082_searchgate_gates.tsv: 0 FAIL/DIVERGE row(s) after the E084-era re-run
+e082_tables_bytes	PASS	tables byte-identical (pin tables excepted, judged in their own rows); volatile files restored: docs/experiments/results/E082/nonreg/nonreg.tsv

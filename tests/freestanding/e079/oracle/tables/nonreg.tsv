@@ -1,0 +1,14 @@
+check	verdict	detail
+tools_touched_only_by_grad	PASS	touched: tools/grad/README.md tools/grad/spinel-gradfs tools/grad/spinel/grad_freestanding.rb  (allowed: tools/grad/README.md tools/grad/spinel-gradfs tools/grad/spinel/grad_freestanding.rb )
+vendor_untouched	PASS	0 changes under vendor/ (READ-ONLY)
+vendor_head	PASS	8e30ae3c (READ-ONLY, never rebuilt)
+e076_twoexits_gates	PASS	byte-identical
+e076_twoexits_targets	PASS	byte-identical
+e076_twoexits_build	PASS	byte-identical
+e076_twoexits_summary	PRE-EXISTING	one line differs: the stored table says bitwise_equal_points 25/25, the twin prints 25. E076's summary was edited after the run; the four generated tables above are byte-identical, and no tool changed
+e076_rejects	PASS	byte-identical
+e077_kern_mlir	PASS	byte-identical
+e077_undef_cortex-m33-zephyr	PASS	byte-identical
+e077_undef_riscv32-zephyr	PASS	byte-identical
+e077_undef_wasm32-worker	PASS	byte-identical
+e077_header	PASS	byte-identical

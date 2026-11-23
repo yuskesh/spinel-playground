@@ -1,0 +1,48 @@
+# E084: the E083 profile plus a SECOND callable platform extern -- the
+# forward-over-reverse Hessian-vector product spinel-gradfs synthesises for
+# `sq_hinge_loss` when its `freestanding_grad_def` says `hvp: true` (draft
+# G9-fs; the spelling of the DECLARATION is D-10, confirmed, unchanged).
+#
+# The hvp signature keeps E077's run rule: dir/g/hv are inserted after the
+# wrt buffer `w`, INSIDE the run one `len` (nw) governs -- exactly where the
+# grad declaration put its shadow.  The declaration below IS the C signature
+# spinel-gradfs emits for the hvp shim:
+#
+#   double spinel_hvp_sq_hinge_loss(const double *data, int32_t nd,
+#                                   const double *w, const double *dir_w,
+#                                   double *g_w, double *hv_w, int32_t nw);
+#
+# (g_w receives the gradient, hv_w its tangent = H.v, the return value is
+# grad f . dir -- E082's spg_hvp_* contract, at the freestanding boundary.)
+#
+# NOT a shipped profile.  Same standing as E083's *-e083.yaml.
+
+target:
+  triple: wasm32-wasip1
+  cpu:
+  data_layout: "e-m:e-p:32:32-p10:8:8-p20:8:8-i64:64-i128:128-n32:64-S128-ni:1:10:20"
+  cflags:
+    - -Os
+
+abi:
+  boundary: c-abi
+  int_width: i32-internal
+  overflow: trap
+  trap_hook: spinel_trap
+
+runtime:
+  libc: none
+  libm: none
+  compiler_rt: allow
+
+platform:
+  type: none
+  externs:
+    - name: grad_loss
+      symbol: spinel_grad_sq_hinge_loss
+      params: [[f64_buf, in], len, [f64_buf, in], [f64_buf, out], len]
+      returns: f64
+    - name: hvp_loss
+      symbol: spinel_hvp_sq_hinge_loss
+      params: [[f64_buf, in], len, [f64_buf, in], [f64_buf, in], [f64_buf, out], [f64_buf, out], len]
+      returns: f64

@@ -1,0 +1,1265 @@
+#!/usr/bin/env bash
+# spinel-wasm -- .rb -> wasm32-wasip1 module (vendor/spinel stays unmodified).
+#
+#   spinel-wasm app.rb -o app.wasm [--mode command|reactor]
+#
+# Runs `bin/spinel app.rb -c`, then builds the generated TU plus the selected runtime
+# TUs with the wasi-sdk-style 3-piece toolchain introduced in E009
+# (llvm clang + lld's wasm-ld + wasi-libc sysroot + wasi-runtimes builtins;
+# see docs/tools/wasi-toolchain.md).  Runtime objects are cached under
+# tools/wasm/build/ and reused across programs.
+#
+#   command   wasip1 command module: crt1.o, `_start`, main() runs once.
+#   reactor   wasip1 reactor module: crt1-reactor.o, `_initialize`, plus the
+#             exported entry points in reactor.c (sp_reactor_run et al).
+#
+# ---------------------------------------------------------------------------
+# INTEGER IS 32-BIT ON wasm32 WITH THE PINNED RUNTIME.  spinel-llvm's vendor
+# tree carried Patch 4 (SP_INT64, E010), which made Integer 64-bit here; the
+# pinned vendor/spinel does not, so sp_int is intptr_t, 32 bits. No -DSP_INT64
+# is passed, because nothing in the pinned runtime reads it. Measured against
+# the upstream the pin is built on (2026-09-21, 8 programs x 3 overflow modes):
+# a literal that does not fit becomes a Bignum, an overflowing operation raises
+# or promotes as its mode says, and only wrap wraps -- its contract. E010's
+# "different answer without raising" does not reproduce there. The one silent
+# hole is the shift-width defect (bare C shifts for `<<=`, `>>`, `>>=`), which
+# is not wasm-specific and reaches the 64-bit host too (docs/provenance.md).
+# Making Integer 64-bit here would be Patch 4 again: a vendor patch, which is
+# the owner's decision.
+#
+# The single flags array stays, for E010's other reason: a define that reaches
+# the runtime TUs but not the generated TU (or the reverse) links fine and is
+# silently wrong. This driver keeps exactly one flags array ($CFLAGS) for every
+# compile, so the two TU sets cannot drift apart.
+# ---------------------------------------------------------------------------
+#
+# (bash 3.2 compatible, style-matched to tools/llvm/spinel-llvm)
+set -euo pipefail
+
+# No Homebrew or home-directory defaults: the compiler is the official LLVM
+# 23.1.1 the repository names (docs/building.md), and the two WASI inputs are
+# named by the caller.
+LLVM=${LLVM:-${LLVM_PREFIX:?set LLVM or LLVM_PREFIX to the official LLVM 23.1.1}}
+CLANG="$LLVM/bin/clang"
+WASM_LD=${WASM_LD:-$LLVM/bin/wasm-ld}
+WASI_SYSROOT=${WASI_SYSROOT:?set WASI_SYSROOT to a wasi-libc sysroot}
+WASI_BUILTINS=${WASI_BUILTINS:?set WASI_BUILTINS to libclang_rt.builtins.a for wasm32-unknown-wasip1}
+
+HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+REPO=$(cd -- "$HERE/../.." && pwd)
+SPINEL_DIR=${SPINEL_DIR:-$REPO/vendor/spinel}
+SPINEL_BIN=${SPINEL_BIN:-$SPINEL_DIR/bin/spinel}
+LIB_DIR="$SPINEL_DIR/lib"
+BUILD_DIR=${BUILD_DIR:-$HERE/build}
+JOBS=${JOBS:-4}
+
+PROG=$(basename "$0")
+die()  { echo "$PROG: $*" >&2; exit 1; }
+stage_fail() {
+  local rc=$2
+  [ "$rc" -ne 0 ] 2>/dev/null || rc=1   # never exit 0 on a reported failure
+  echo "$PROG: stage '$1' failed (exit $rc)" >&2
+  exit "$rc"
+}
+
+usage() {
+  cat >&2 <<'EOF'
+usage: spinel-wasm <input.rb> [-o OUT.wasm] [--profile PROFILE.yaml]
+                   [--platform workers|fastly]      (deprecated shorthand)
+                   [--mode command|reactor] [-I DIR]
+                   [-O LEVEL] [--int-overflow raise|wrap|promote] [--host-api]
+                   [--size-opt] [--elim-bigint] [--request-arena [--no-snapshot]]
+                   [--link FILE] [--keep-c] [--allow-unsupported] [--rebuild-rt] [-v]
+                   [-- <extra clang args>]
+       spinel-wasm [<input.rb>] --emit-worker DIR [--host-api]
+       spinel-wasm [<input.rb>] --emit-fastly DIR [--host-api]
+
+modes:
+  command   (default) wasip1 command module: crt1.o + `_start`, main() once
+  reactor   wasip1 reactor module: crt1-reactor.o + `_initialize`, and
+            exported sp_reactor_run(argv_blob, nargs) callable N times
+
+--profile PROFILE.yaml  [E090, P008 T-5]:
+  The platform choice as a FILE (readable, diffable, committed): a T-5
+  profile with `platform: workers|fastly` and `supplies: full`.  Canonical
+  profiles live in tools/platform/profiles/.  Porting = swap the profile,
+  never the source.  --platform NAME stays as the deprecated shorthand for
+  --profile tools/platform/profiles/NAME-full.yaml; passing both is refused.
+
+-I DIR  [E090, formalizing E089's probe]:
+  Add a `require` feature root, exactly bin/spinel's -I.  Repeatable; the
+  roots are handed to `spinel -c` unchanged (and to the capability check).
+
+`# spinel-tier:` magic comment  [E090, P008 T-2]:
+  Read from the ENTRY file's head (vendor's fsl window: the first 2 comment
+  lines, a shebang occupies a slot -- E089 P2).  No declaration = full
+  (current behaviour, byte-identical).  `arena` maps the build to
+  --request-arena (no collector, upstream's --gc=none; E064).  `core`
+  is refused loudly: a core-tier program is the freestanding lane's
+  (tools/mlir/spinel-mlirgen).  An unknown value is a loud typo, never a
+  silent full.
+
+capability/menu check  [E090, P008 T-3]:
+  When --profile, -I, or a tier declaration is present, the build asks
+  tools/platform/spinel-capcheck whether every REQUIRED capability (a
+  resolved `require "edge/*" | "cloudflare/*" | "fastly/*"` the ledger
+  tools/platform/menus.yaml defines) satisfies (1) declared tier >= the
+  capability's tier and (2) capability IN the chosen platform's menu.
+  A violation is a build-time REJECT (exit 1, machine-readable line 1).
+  Requires outside those prefixes are untouched; a build using none of the
+  three triggers runs exactly the pre-E090 path -- no new processes.
+
+platforms (R008 §6, E058):
+  workers   (default) Cloudflare Workers.  The lifecycle layer is JavaScript
+            (worker.mjs + wasi_shim.mjs): the JS owns wasi_snapshot_preview1
+            and turns a Request into ARGV/stdin/ENV.  The module itself is a
+            plain wasip1 command module with no platform code in it.
+  fastly    Fastly Compute.  There is no JS layer to put anything in -- the
+            host owns WASI -- so the same lifecycle layer is linked INTO the
+            module (tools/wasm/fastly/fastly_cgi.c) through __main_void() and
+            three --wrap flags.  E013's CGI contract is identical on both, so
+            the same .rb builds and behaves the same way either way; only the
+            packaging differs.  Layers 1 and 2 (wasm32, wasip1 +
+            the canonical value ABI) are shared byte for byte -- $CFLAGS does
+            not depend on --platform, which is what lets one runtime object
+            cache serve both.
+
+--emit-worker DIR:
+  Build <input.rb> to DIR/app.wasm and scaffold a runnable Cloudflare Workers
+  project around it (index.mjs, worker.mjs, wasi_shim.mjs, wrangler.toml,
+  examples/).  With no input, examples/echo.rb is built.  The Ruby side is
+  plain CGI-shaped Ruby: ARGV[0] = path, ARGV[1] = query, request body on
+  stdin, response body on stdout, exit 0 -> 200 (R003 §2-4 layer 0, E013).
+  Re-running refreshes app.wasm and the library .mjs files and leaves
+  index.mjs / wrangler.toml / examples alone.
+
+--emit-fastly DIR:
+  Build <input.rb> to DIR/bin/main.wasm and scaffold a runnable Fastly Compute
+  package around it (fastly.toml with a [local_server] section, README).  With
+  no input, the bundled echo/router example is built -- the SAME example
+  --emit-worker uses, which is the point.  Run it with
+
+      (cd DIR && fastly compute serve --skip-build)
+
+  and ship it with `fastly compute pack --wasm-binary bin/main.wasm`, which
+  needs no Fastly SDK and no language toolchain on their side (language =
+  "other").  bin/main.wasm is a fixed path: pack does not look anywhere else.
+  Re-running refreshes bin/main.wasm and README.md and leaves fastly.toml and
+  examples/ alone.
+
+--host-api (opt-in, --mode command only):
+  Link the host bridge (tools/wasm/sp_wasm_host.c on Workers,
+  tools/wasm/fastly/sp_fastly_host.c on Fastly -- one or the other, never
+  both) and put tools/wasm/lib on the `require` search path, so a program can
+  reach the host (R003 §2-4 layer 1, E014, E058; namespaces are R016 T-4 as
+  migrated by E091):
+
+      require "edge/http"
+      r = Edge::HTTP.request(:get, "https://example.com/", backend: "origin")
+      Edge::HTTP.get(url, backend: "origin")         # sugar: get / post only
+
+      require "edge/kv"
+      Edge::KV.put("MY_KV", "k", "v")                # a real KV binding
+
+      require "edge/cgi"                             # the receive side (E013)
+      req = Edge::CGI.request                        # path/query/params/body
+
+      require "cloudflare/r2"                        # object storage (E055)
+      Cloudflare::R2.put("VAULT", "logo.png", png, content_type: "image/png")
+
+      require "cloudflare/d1"                        # SQL (E055)
+      Cloudflare::D1.prepare("DB", "SELECT title FROM posts WHERE id = ?")
+                    .int(id).first.str("title")
+
+      require "fastly/config"                        # Config Store (E058)
+      Fastly::Config.get("spinel", "SPINEL_CGI_HEADERS")
+
+  ★ The Ruby names moved in E091; the ABI did not.  The wasm import module is
+    still `spinel_host` and every import in it still has its E014 name --
+    that is what the byte-identity assets of E014/E055/E058 are built on
+    (P008 T-4).  results/E091/run_gates.sh pins it.
+
+  On Workers the JS side wraps the async imports in WebAssembly.Suspending and
+  enters the module through WebAssembly.promising (JSPI); the Ruby and C sides
+  stay synchronous.  On Fastly every hostcall IS synchronous, so there is no
+  JSPI, no suspend and no stage-then-drain protocol -- the Ruby surface is
+  nevertheless identical (E058).  Two differences are visible from Ruby and
+  both are deliberate:
+
+    * Edge::HTTP.request(..., backend:) -- the backend name is REQUIRED on
+      Fastly (an ArgumentError without it) and ignored on Workers.  A URL
+      alone reaches nothing on Fastly (R008 D-3).
+    * Cloudflare::R2 and Cloudflare::D1 raise NotImplementedError on Fastly:
+      Object Storage has no hostcall (it is a signed S3 backend) and Fastly
+      has no SQL product at all.  Fastly::Config is Fastly-only for the
+      mirror-image reason.
+
+  The pre-E091 spelling (`require "spinel_host"`, SpinelHost::*) resolves from
+  the FROZEN tools/wasm/legacy root, which exists only for the frozen E014/E055
+  repro subjects; using it prints a deprecation note naming the new require.
+
+  Without this flag the build is byte-for-byte what it was and a program using
+  the host API fails at link with an explanation.  A program that declares
+  nothing pays nothing: an unreferenced thunk and its import are dropped by
+  --gc-sections.  R2 and D1 are separate `require`s for the same reason at the
+  Ruby level -- a require IS textual inclusion, so it is outside what
+  --gc-sections can drop (E055).
+
+--size-opt (E029 §4, E062):
+  Trade CPU time for module size.  Passes --no-inline-hot to `spinel -c`, which
+  turns OFF upstream's forced inlining of small leaf methods (72e7414e, default
+  ON).  MEASURE BEFORE YOU SHIP THIS: E029 measured what it costs and what it
+  buys, and the trade is not obviously good.
+
+      what it buys   framework-shaped code (many small leaf methods):
+                     examples/mvc-blog -15.7% raw, but only -5.9% gzipped.
+                     procedural one-file code: 0 bytes (no always_inline site
+                     exists to remove -- hello-http is 1 byte different).
+      IT CAN ALSO    this is not a "make it smaller" flag, it is a "change the
+      MAKE IT BIGGER inlining strategy" flag, and clang's own inliner then
+                     makes different choices.  examples/r2-d1 measured
+                     +24.0% raw (659,712 -> 817,908; all of it CODE, with the
+                     generated C 1.7 KB SMALLER and only +3 functions) for
+                     +1.1% gzipped.  7 of the 8 bundled examples shrink; that
+                     one grows.
+      what it costs  CPU up to +49.9% (bm_spectral_norm, from 4 sites).
+                     +13.7% on bm_ao_render.  0% where there are no sites.
+      what it does   nothing to the workerd request path: p50 -1.3% (noise),
+       NOT change    per-request instantiate +0.6%.  Workers receives the
+                     module already compiled ([[rules]] CompiledWasm), so the
+                     +12% WebAssembly.compile of the bigger module is not on
+                     the request path either.
+
+  Workers bills CPU time, not module bytes, so the default stays ON (= this
+  flag off).  Reach for --size-opt only when a *distribution* limit binds --
+  the gzipped module against the 1 MB (free) / 10 MB (paid) Workers ceiling --
+  and re-measure your own hot path afterwards.
+
+  Deliberately NOT bundled with -Oz.  E062 measured both on mvc-blog (raw /
+  gzip -9) and on bm_spectral_norm 2500 under node WASI (run min of 6 fresh
+  instantiations of one compiled module):
+
+      flags                 mvc raw     mvc gzip    spectral run
+      (none)                585,767     148,594     798.59 ms
+      --size-opt            493,977     139,842    1200.33 ms  (+50.3%)
+      -Oz                   393,915     127,396    1224.07 ms  (+53.3%)
+      -Oz --size-opt        358,044     120,128    1321.38 ms  (+65.5%)
+
+  -Oz buys more gzip than --size-opt and costs about the same CPU, and the two
+  are roughly additive in both directions -- which is exactly why they stay
+  separate knobs.  -Oz is already spelled `-Oz` here, it recompiles all 28
+  runtime TUs (a cold object cache), and it is a compile-flag change rather
+  than a codegen change; --size-opt touches $CFLAGS not at all, so it composes
+  with a warm cache.  Buy the bytes one knob at a time and measure your own
+  hot path between purchases.
+
+--elim-bigint (E025 / E062, needs the SP_TU_NO_BIGINT patch in $SPINEL_DIR):
+  Let whole-program inference drop the bignum subsystem.  With this flag the
+  compiler writes `#define SP_TU_NO_BIGINT 1` into the generated C whenever it
+  can prove no Bignum can exist, the header then resolves the bigint API to
+  TU-local raising stubs, and --gc-sections drops lib/sp_bigint.o with the
+  mpz/mpn/Toom-3 mass behind it.  UNLIKE --size-opt THIS COSTS NO CPU: what
+  goes away is unreachable code.  Measured (E062):
+
+      program                          raw            gzip -9
+      examples/mvc-blog --host-api     -54,122 (-9.2%)  -19,611 (-13.2%)
+      examples/hello-http              -54,121 (-22.0%) -19,674 (-20.9%)
+      def f; 1; end; puts f            -51,905 (-28.8%) -17,961 (-24.6%)
+      puts "hello"  (already had none) +2               +5
+
+  The proof fails -- and the flag then does nothing, which the driver says on
+  stderr -- when any expression is typed Bignum, when a Rational exists
+  anywhere (a Rational in a poly comparison reaches the bigint API through
+  sp_poly_cmp -> sp_poly_to_brat, E062 §3c), with --int-overflow promote, or
+  with Marshal.  2,856 of the 2,988 suite programs (95.6%) do get the gate.
+
+  If the proof is ever wrong the program raises
+  "internal: a Bignum reached a translation unit compiled with SP_TU_NO_BIGINT"
+  -- loudly, not a different number.
+
+  This is a fork patch, not upstream: the driver checks $SPINEL_DIR for it and
+  refuses up front if it is missing rather than silently building the big
+  module.  See vendor/spinel/SPINEL_LLVM_PATCHES.md Patch 5.
+
+--request-arena (E064; also `# spinel-tier: arena`), command mode only:
+  The small build for one request per instance, with no collector (upstream's
+  --gc=none): memory is allocated and never reclaimed while the instance
+  lives, and the death of the instance reclaims it.  The slab allocator is off
+  by default (tools/wasm/arena_env.c; an explicit SPINEL_GC_SLAB still wins),
+  and the tables only a collector or a diagnostic reads are shrunk (the flags
+  array says why each is safe).  Measured on examples/hello-http (-O2) at pin
+  ed8c753a4, against the ordinary build (docs/edge/workers-limits.md):
+
+      build              raw       gzip -9   pages at start   after 1 request
+      ordinary           966,677   324,834   16               1,104 (69 MiB)
+      --request-arena    940,993   316,396    7                   8 (512 KiB)
+
+  The arena tier's checks run on every arena build: a program that names GC
+  or ObjectSpace (whose meaning a build without a collector silently changes)
+  is refused at build time.  tests/edge/arena.sh checks all of this.
+
+  An arena module is also built so that a host can reuse its instance
+  (decision 0039): tools/wasm/snapshot.c's sbrk keeps the heap break in
+  linear memory, and the module exports __stack_pointer and the marker
+  spinel_snapshot_abi.  worker.mjs (runModule in wasi_shim.mjs) then makes
+  one instance per isolate, copies its memory before the first _start, and
+  writes the copy back before every request, so each request still starts
+  from the bytes a new instance has.  Run once, the module behaves as before.
+
+--no-snapshot (with --request-arena):
+  Leave the instance-reuse contract out; the host then instantiates the
+  module for every request, as before decision 0039.
+
+notes:
+  Integer is 32-bit on wasm32 with the pinned runtime (no Patch 4 / SP_INT64).
+  A value that does not fit is promoted or raises as its overflow mode says;
+  only --int-overflow wrap wraps, as that mode's contract.
+
+  Facilities this target does not have raise a catchable NotImplementedError
+  rather than returning a plausible wrong answer (Dir.home/Dir.pwd/Dir.glob/
+  File.fnmatch/Kernel#system/backticks/sockets).  Only true no-ops are shimmed.
+  See "What is shimmed and what raises" in tools/wasm/README.md (R003 §3, E012).
+
+env: LLVM=<prefix>            (default $LLVM_PREFIX; the official LLVM 23.1.1)
+     WASM_LD=<path>           (default $LLVM/bin/wasm-ld)
+     WASI_SYSROOT=<path>      (required: a wasi-libc sysroot)
+     WASI_BUILTINS=<path.a>   (required: wasm32-unknown-wasip1 builtins)
+     SPINEL_DIR=<path>        (default <repo>/vendor/spinel)
+     BUILD_DIR=<path>         (default tools/wasm/build; runtime object cache)
+     JOBS=<n>                 (default 4)
+EOF
+  exit 2
+}
+
+# ---- argument parsing --------------------------------------------------------
+SOURCE=""
+OUTPUT=""
+MODE=command
+PLATFORM=workers
+PLATFORM_EXPLICIT=0
+PROFILE_YAML=""
+I_ROOTS=()
+CAPCHECK="$REPO/tools/platform/spinel-capcheck"
+OPT_LEVEL=2
+INT_OVERFLOW=raise          # src/main.c:207 -- the default is "raise"
+KEEP_C=0
+ALLOW_UNSUPPORTED=0
+REBUILD_RT=0
+REQUEST_ARENA=0
+VERBOSE=0
+HOST_API=0
+SIZE_OPT=0
+ELIM_BIGINT=0
+SNAPSHOT=1
+EMIT_WORKER=""
+EMIT_FASTLY=""
+EXTRA=()
+LINK_INPUTS=()
+TEMPLATE="$HERE/worker-template"
+FASTLY_DIR="$HERE/fastly"
+FASTLY_TEMPLATE="$FASTLY_DIR/package-template"
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -h|--help) usage ;;
+    -o) [ $# -ge 2 ] || die "-o needs an argument"; OUTPUT=$2; shift 2 ;;
+    -o*) OUTPUT=${1#-o}; shift ;;
+    --mode) [ $# -ge 2 ] || die "--mode needs an argument"; MODE=$2; shift 2 ;;
+    --mode=*) MODE=${1#--mode=}; shift ;;
+    --platform) [ $# -ge 2 ] || die "--platform needs an argument"; PLATFORM=$2; PLATFORM_EXPLICIT=1; shift 2 ;;
+    --platform=*) PLATFORM=${1#--platform=}; PLATFORM_EXPLICIT=1; shift ;;
+    --profile) [ $# -ge 2 ] || die "--profile needs an argument"; PROFILE_YAML=$2; shift 2 ;;
+    --profile=*) PROFILE_YAML=${1#--profile=}; shift ;;
+    -I) [ $# -ge 2 ] || die "-I needs an argument"; I_ROOTS+=("$2"); shift 2 ;;
+    -O) [ $# -ge 2 ] || die "-O needs an argument"; OPT_LEVEL=$2; shift 2 ;;
+    -O*) OPT_LEVEL=${1#-O}; shift ;;
+    --int-overflow) [ $# -ge 2 ] || die "--int-overflow needs an argument"; INT_OVERFLOW=$2; shift 2 ;;
+    --int-overflow=*) INT_OVERFLOW=${1#--int-overflow=}; shift ;;
+    --emit-worker) [ $# -ge 2 ] || die "--emit-worker needs a directory"; EMIT_WORKER=$2; shift 2 ;;
+    --emit-worker=*) EMIT_WORKER=${1#--emit-worker=}; shift ;;
+    --emit-fastly) [ $# -ge 2 ] || die "--emit-fastly needs a directory"; EMIT_FASTLY=$2; shift 2 ;;
+    --emit-fastly=*) EMIT_FASTLY=${1#--emit-fastly=}; shift ;;
+    --host-api) HOST_API=1; shift ;;
+    --size-opt) SIZE_OPT=1; shift ;;
+    --elim-bigint) ELIM_BIGINT=1; shift ;;
+    --keep-c) KEEP_C=1; shift ;;
+    --allow-unsupported) ALLOW_UNSUPPORTED=1; shift ;;
+    --request-arena) REQUEST_ARENA=1; shift ;;
+    --no-snapshot) SNAPSHOT=0; shift ;;
+    --link) [ $# -ge 2 ] || die "--link needs a file"; LINK_INPUTS+=("$2"); shift 2 ;;
+    --link=*) LINK_INPUTS+=("${1#--link=}"); shift ;;
+    --rebuild-rt) REBUILD_RT=1; shift ;;
+    -v|--verbose) VERBOSE=1; shift ;;
+    --) shift; EXTRA+=("$@"); break ;;
+    -*) die "unknown option '$1' (see --help)" ;;
+    *) [ -z "$SOURCE" ] || die "more than one input file ('$SOURCE', '$1')"; SOURCE=$1; shift ;;
+  esac
+done
+
+# --emit-worker: a Workers project is a *command* module (one run per request,
+# E011 §6) plus the JS that turns a Request into ARGV/stdin/env.  With no input
+# the bundled echo/router example is what gets built, so `--emit-worker DIR`
+# alone produces something that answers requests.
+if [ -n "$EMIT_WORKER" ]; then
+  [ -d "$TEMPLATE" ] || die "worker template missing at $TEMPLATE"
+  [ "$MODE" = command ] \
+    || die "--emit-worker builds a command module; --mode reactor cannot serve
+  this shape (a reactor instance is shared across requests, which is exactly
+  the state-leak question E011 §3/§4 left open).  Drop --mode reactor."
+  [ -n "$SOURCE" ] || SOURCE="$TEMPLATE/examples/echo.rb"
+fi
+
+# --emit-fastly is the Fastly counterpart and implies --platform fastly.  Both
+# scaffolds build the SAME example when given no input, which is the cheapest
+# possible demonstration that the CGI contract is platform independent.
+if [ -n "$EMIT_FASTLY" ]; then
+  [ -z "$EMIT_WORKER" ] \
+    || die "--emit-worker and --emit-fastly build two different packagings of
+  the same program; run the driver twice, once for each.  (The .wasm is not
+  even the same file: a Fastly guest carries the lifecycle layer inside the
+  module, a Workers one gets it from worker.mjs.)"
+  [ -d "$FASTLY_TEMPLATE" ] || die "fastly package template missing at $FASTLY_TEMPLATE"
+  PLATFORM=fastly
+  [ -n "$SOURCE" ] || SOURCE="$TEMPLATE/examples/echo.rb"
+fi
+
+# ---- [E090, P008 T-5] --profile: the platform choice as a file ---------------
+# Resolved through tools/platform/spinel-capcheck (which owns the ledger and
+# the T-5 format); a wasm app profile must say supplies: full on a platform
+# this driver can package.  --platform stays as the shorthand: the two are the
+# same choice, so passing both is refused rather than reconciled.
+if [ -n "$PROFILE_YAML" ]; then
+  [ "$PLATFORM_EXPLICIT" -eq 0 ] || die "--profile and --platform are two spellings of one choice; pass one.
+  (--platform NAME is the deprecated shorthand for
+  --profile tools/platform/profiles/NAME-full.yaml -- P008 T-5.)"
+  [ -f "$PROFILE_YAML" ] || die "$PROFILE_YAML: No such profile"
+  [ -x "$CAPCHECK" ] || die "the platform ledger checker is missing at $CAPCHECK (P008 Phase 1, E090)"
+  prof_plan=$("$CAPCHECK" profile --profile "$PROFILE_YAML" --lane wasm) \
+    || stage_fail "profile check (T-5)" $?
+  prof_platform=$(printf '%s\n' "$prof_plan" | LC_ALL=C sed -n 's/^platform=//p')
+  if [ -n "$EMIT_FASTLY" ] && [ "$prof_platform" != fastly ]; then
+    die "--emit-fastly packages a Fastly Compute module, but $PROFILE_YAML says
+  platform: $prof_platform.  Use tools/platform/profiles/fastly-full.yaml (or drop --emit-fastly)."
+  fi
+  PLATFORM=$prof_platform
+fi
+
+case "$PLATFORM" in
+  workers) PLATFORM_NAME="Cloudflare Workers" ;;
+  fastly)  PLATFORM_NAME="Fastly Compute" ;;
+  *) die "--platform expects workers|fastly, got '$PLATFORM'" ;;
+esac
+if [ "$PLATFORM_EXPLICIT" -eq 1 ]; then
+  echo "$PROG: note: --platform is the shorthand for --profile tools/platform/profiles/$PLATFORM-full.yaml (deprecated; P008 Phase 2 canonicalizes --profile)" >&2
+fi
+
+# The Fastly platform layer defines __main_void(), which is a *command* module
+# concept: wasi-libc's crt1-command.o calls it, crt1-reactor.o does not exist
+# in that shape at all.  A reactor on Fastly would also need the reused-sandbox
+# hostcalls (fastly_http_downstream::next_request), which nothing here speaks.
+if [ "$PLATFORM" = fastly ] && [ "$MODE" != command ]; then
+  die "--platform fastly requires --mode command.  The Fastly lifecycle layer
+  takes control through __main_void(), which only crt1-command.o calls; a
+  reactor module has no equivalent entry, and Fastly's reused-sandbox path
+  (fastly_http_downstream::next_request*) is not implemented here (R008 H4)."
+fi
+if [ -n "$EMIT_WORKER" ] && [ "$PLATFORM" != workers ]; then
+  die "--emit-worker scaffolds a Cloudflare Workers project; use --emit-fastly
+  for a Fastly Compute package (or drop --platform $PLATFORM)."
+fi
+if [ "$PLATFORM" = fastly ]; then
+  for f in "$FASTLY_DIR/fastly_abi.h" "$FASTLY_DIR/fastly_cgi.c"; do
+    [ -f "$f" ] || die "the fastly platform layer is missing: $f"
+  done
+fi
+
+# --host-api is command-mode only, and this is a correctness gate rather than a
+# packaging preference.  The host API is reached through JSPI: the module
+# suspends mid-`main()` and resumes when a promise settles.  A reactor instance
+# is shared across requests, so a second request entering `sp_reactor_run`
+# while the first is suspended would have two runs inside one set of the
+# process-lifetime globals E011 §3/§4 enumerates (sp_argv_array_cache, the
+# regexp memo, the GC root stack).  R003 §2-5 called this out from inspection;
+# nothing here makes it safe, so the combination is refused rather than warned
+# about.
+if [ "$HOST_API" -eq 1 ] && [ "$MODE" != command ]; then
+  die "--host-api requires --mode command.  The host API suspends the module in
+  the middle of main() (JSPI); a reactor instance is shared across requests, so
+  a second request could enter the same instance while the first is suspended
+  and both would run inside one set of process-lifetime globals (E011 §3/§4,
+  R003 §2-5).  Use --mode command (one instance per request)."
+fi
+
+[ -n "$SOURCE" ] || usage
+[ -f "$SOURCE" ] || die "$SOURCE: No such file"
+[ -x "$CLANG" ] || die "clang not found at $CLANG (set LLVM=<prefix>)"
+[ -x "$WASM_LD" ] || die "wasm-ld not found at $WASM_LD (brew install lld)"
+[ -d "$WASI_SYSROOT" ] || die "wasi sysroot not found at $WASI_SYSROOT (brew install wasi-libc)"
+[ -f "$WASI_BUILTINS" ] || die "clang_rt builtins not found at $WASI_BUILTINS (brew install wasi-runtimes)"
+[ -x "$SPINEL_BIN" ] || die "spinel not found at $SPINEL_BIN (run 'make' in $SPINEL_DIR)"
+
+# ---- [E090, P008 T-2/T-3] tier declaration + capability/menu check -----------
+# Triggered only by the new surfaces (--profile / -I / a tier magic comment in
+# the entry's head), so a pre-E090 invocation spawns no new process and stays
+# byte-identical.  The presence grep is a SUPERSET of the real window (first 2
+# lines; spinel-capcheck applies vendor's exact fsl window, E089 P2), so it can
+# over-trigger harmlessly but never under-trigger.  All tier/menu verdicts are
+# spinel-capcheck's -- one authority, and its REJECT line is the loud first
+# line of any refusal (P008 検討点 F).
+TIER=full
+tier_comment=0
+if LC_ALL=C head -n 2 "$SOURCE" 2>/dev/null | LC_ALL=C grep '^#.*spinel-tier:' > /dev/null; then  # not grep -q: see newest_h
+  tier_comment=1
+fi
+# An arena build always runs it: the T-1 arena checks (E093 -- no GC-semantics
+# name such as GC.start or ObjectSpace, no request escape) live in capcheck,
+# and --request-arena without the tier comment used to skip them entirely.
+if [ -n "$PROFILE_YAML" ] || [ "$tier_comment" -eq 1 ] || [ "${#I_ROOTS[@]}" -gt 0 ] || [ "$REQUEST_ARENA" -eq 1 ]; then
+  [ -x "$CAPCHECK" ] || die "the platform ledger checker is missing at $CAPCHECK (P008 Phase 1, E090)"
+  cap_args=(check --entry "$SOURCE" --lane wasm)
+  # --request-arena is the build shape; the checks must be the arena tier's.
+  [ "$REQUEST_ARENA" -eq 0 ] || cap_args+=(--tier arena)
+  if [ -n "$PROFILE_YAML" ]; then cap_args+=(--profile "$PROFILE_YAML")
+  else cap_args+=(--platform "$PLATFORM"); fi
+  for r in ${I_ROOTS[@]+"${I_ROOTS[@]}"}; do cap_args+=(-I "$r"); done
+  # --host-api puts tools/wasm/lib (+ the frozen legacy root) on the require
+  # path (stage 1 below); the check must see the same roots the compile will,
+  # or a resolved require would be invisible to it.
+  [ "$HOST_API" -eq 0 ] || cap_args+=(-I "$HERE/lib" -I "$HERE/legacy")
+  cap_plan=$("$CAPCHECK" "${cap_args[@]}") || stage_fail "capability check (T-2/T-3)" $?
+  TIER=$(printf '%s\n' "$cap_plan" | LC_ALL=C sed -n 's/^tier=//p')
+  if [ "$TIER" = arena ] && [ "$REQUEST_ARENA" -eq 0 ]; then
+    # T-2: the declared tier maps to the build shape.  Same flag the user
+    # could pass; the declaration just makes the intent live in the source.
+    REQUEST_ARENA=1
+    echo "$PROG: '# spinel-tier: arena' -- building with --request-arena (no collector, upstream's --gc=none; freed with the instance; E064)" >&2
+  fi
+fi
+
+case "$MODE" in
+  command) CRT="$WASI_SYSROOT/lib/wasm32-wasip1/crt1.o" ;;
+  reactor) CRT="$WASI_SYSROOT/lib/wasm32-wasip1/crt1-reactor.o" ;;
+  *) die "--mode expects command|reactor, got '$MODE'" ;;
+esac
+[ -f "$CRT" ] || die "$CRT missing from the wasi sysroot"
+
+# src/main.c:332-336: --int-overflow maps to exactly one -D, default raise.
+case "$INT_OVERFLOW" in
+  raise)   OV_DEFINE=-DSP_INT_OVERFLOW_MODE_RAISE ;;
+  wrap)    OV_DEFINE=-DSP_INT_OVERFLOW_MODE_WRAP ;;
+  promote) OV_DEFINE=-DSP_INT_OVERFLOW_MODE_PROMOTE ;;
+  *) die "--int-overflow expects raise|wrap|promote, got '$INT_OVERFLOW'" ;;
+esac
+
+base=$(basename -- "$SOURCE"); base=${base%.rb}
+if [ -n "$EMIT_WORKER" ] && [ -z "$OUTPUT" ]; then
+  mkdir -p "$EMIT_WORKER" || die "cannot create $EMIT_WORKER"
+  EMIT_WORKER=$(cd -- "$EMIT_WORKER" && pwd)
+  OUTPUT="$EMIT_WORKER/app.wasm"        # index.mjs imports ./app.wasm
+fi
+if [ -n "$EMIT_FASTLY" ] && [ -z "$OUTPUT" ]; then
+  mkdir -p "$EMIT_FASTLY/bin" || die "cannot create $EMIT_FASTLY/bin"
+  EMIT_FASTLY=$(cd -- "$EMIT_FASTLY" && pwd)
+  # bin/main.wasm is not a convention, it is a hard requirement:
+  # `fastly compute pack --wasm-binary bin/main.wasm` looks nowhere else.
+  OUTPUT="$EMIT_FASTLY/bin/main.wasm"
+fi
+[ -n "$OUTPUT" ] || OUTPUT="$base.wasm"
+
+TMPDIR_SP=$(mktemp -d "${TMPDIR:-/tmp}/spinel-wasm.XXXXXX") || die "mktemp failed"
+cleanup() { [ "$KEEP_C" -eq 1 ] || rm -rf "$TMPDIR_SP"; }
+trap cleanup EXIT
+CFILE="$TMPDIR_SP/$base.c"
+
+run() {
+  [ "$VERBOSE" -eq 0 ] || { printf '+'; printf ' %q' "$@"; printf '\n'; } >&2
+  "$@"
+}
+
+# ---- driver-side TUs ---------------------------------------------------------
+# Compiled with $CFLAGS and cached next to the runtime objects.
+#   stubs.c        libc facilities wasi-libc lacks (backtrace = true no-op,
+#                  fnmatch = raise; see the file header)
+#   raise_stubs.c  the __wrap_ bodies for $WRAPS below (R003 §3 policy)
+#   sp_wasm_host.c --host-api only: the thunks over the `spinel_host` imports
+#                  (E014).  Kept out of the object list entirely when the flag
+#                  is off, so an ordinary build is byte-for-byte unchanged.
+#   fastly/fastly_cgi.c      --platform fastly: layer 0, the E013 lifecycle
+#                  contract as C instead of as JS (worker.mjs's counterpart).
+#                  It also defines sp_platform_name strong, which is how every
+#                  NotImplementedError message learns which platform it is on
+#                  without a per-platform -D (R008 D-5).
+#   fastly/sp_fastly_host.c  --platform fastly --host-api: layer 1 over the
+#                  synchronous fastly_* hostcalls.  Mutually exclusive with
+#                  sp_wasm_host.c -- they define the same sp_host_* symbols.
+DRIVER_TUS=("$HERE/stubs.c" "$HERE/raise_stubs.c" "$HERE/wasi_posix.c")
+if [ "$PLATFORM" = fastly ]; then
+  HOST_TU="tools/wasm/fastly/sp_fastly_host.c"
+  DRIVER_TUS+=("$FASTLY_DIR/fastly_cgi.c")
+  [ "$HOST_API" -eq 0 ] || DRIVER_TUS+=("$FASTLY_DIR/sp_fastly_host.c")
+else
+  HOST_TU="tools/wasm/sp_wasm_host.c"
+  [ "$HOST_API" -eq 0 ] || DRIVER_TUS+=("$HERE/sp_wasm_host.c")
+fi
+
+# ---- the raise policy: --wrap list (R003 §3, E012) ---------------------------
+# "Anything whose answer is observed must raise; only a true no-op may be
+# shimmed."  Before E012 this profile answered File.fnmatch with false, Dir.home
+# with "", Dir.pwd with "/" and Dir.glob with an empty Array -- four *silently
+# wrong* answers, the same failure shape E010 removed for SP_INT64.
+#
+# --wrap is wasm-ld link-time resolution, so it applies to BOTH modes.  (The
+# README used to claim --wrap "does not apply to --mode command at all"; R003
+# probe A2 disproved that -- it was only ever an implementation accident that
+# the driver passed --wrap in reactor mode alone.)  References *inside* the
+# defining TU are not redirected, so lib/sp_cold.c's own use of sp_dir_pwd from
+# sp_file_expand_path keeps working; only the Ruby-visible call is diverted.
+#
+# The bodies live in tools/wasm/raise_stubs.c.  Keep the two lists in step.
+WRAPS=(
+  # Preserve the refusal policy for unavailable scheduler object names.
+  sp_Queue_class_name sp_Mutex_class_name
+  # Dir.home / Dir.home(user) / Dir.pwd / Dir.glob / File.fnmatch
+  sp_dir_home sp_dir_home_user sp_dir_pwd sp_dir_glob sp_dir_glob_dot
+  sp_file_fnmatch
+  # Kernel#system / backticks / shell capture
+  sp_system_args sp_backtick sp_net_shell_capture
+  # sockets -- constructors, lookups and the method surface (R003 §2-4:
+  # outbound traffic is an explicit host bridge, never an emulated Socket)
+  sp_sock_new sp_sock_udp_new sp_sock_unix_server sp_sock_unix_connect
+  sp_sock_pair_end sp_io_fdopen_sock sp_net_connect sp_net_listen_host
+  sp_sock_gethostname sp_sock_getaddrinfo
+  sp_sock_accept sp_sock_accept_nb sp_sock_wait_readable sp_sock_read_nb
+  sp_sock_write_nb sp_sock_write_nb_bin sp_sock_connect_nb sp_sock_bind
+  sp_sock_connect sp_sock_send sp_sock_shutdown sp_sock_recv sp_sock_recvfrom
+  sp_sock_setsockopt sp_sock_getsockopt sp_sock_listen sp_sock_address
+)
+
+# ---- the fastly platform layer: three more --wrap flags ----------------------
+# This is the ENTIRE Fastly-specific delta at link time, and it is what lets
+# E013's contract live inside the module instead of inside worker.mjs:
+#
+#   fd_write  fd 1 -> the response body, fd 2 -> captured AND forwarded to the
+#             Fastly log endpoint (Workers gets the same two behaviours from
+#             worker.mjs's onWrite).
+#   fd_read   fd 0 <- the staged downstream request body (Fastly hands the
+#             guest an EOF stdin, R008 P05).
+#   exit      exit(n) -> send the response, then proc_exit(0) always (R008 H5).
+#
+# R008 P07 proved the load-bearing half: --wrap DOES apply to WASI import
+# symbols.  If it had not, this layer would have had to be a vendor patch.
+FASTLY_WRAPS=(
+  __imported_wasi_snapshot_preview1_fd_write
+  __imported_wasi_snapshot_preview1_fd_read
+  exit
+)
+
+# ---- THE flags array ---------------------------------------------------------
+# Used verbatim for the runtime TUs, the generated TU, reactor.c and stubs.c.
+# See the integer-width banner at the top of this file: one array, no second path.
+CFLAGS=(--target=wasm32-wasip1 --sysroot="$WASI_SYSROOT" "-O$OPT_LEVEL"
+        -Wno-everything -ferror-limit=0
+        -ffunction-sections -fdata-sections
+        # E009 §2: the four facilities wasi-libc fills in by emulation.
+        -D_WASI_EMULATED_SIGNAL -D_WASI_EMULATED_PROCESS_CLOCKS
+        -D_WASI_EMULATED_MMAN -D_WASI_EMULATED_GETPID
+        # No signal handler can be installed on WASI; omit its unused alt stack.
+        -DSP_NO_SIGNALS
+        # No SP_THREADS: only worker 0 exists; keep its real run queue.
+        -DSP_MAX_WORKERS=1
+        # E009 §7 break #2: setjmp/longjmp lowers to wasm exception handling.
+        -mllvm -wasm-enable-sjlj -fwasm-exceptions
+        # R008 §1 / D-2, E058: emit the STANDARDIZED wasm EH encoding
+        # (try_table / exnref / throw_ref) instead of LLVM's legacy default
+        # (try / catch / delegate).  Unconditional, and not a --platform knob:
+        #   * Wasmtime 39 (Fastly Compute / Viceroy) REFUSES legacy EH outright
+        #     -- "legacy-exceptions not supported", reported only as
+        #     "failed to compile: wasm[0]::function[N]".
+        #   * workerd runs both, so nothing on the Workers side is lost.
+        #   * the cost is +46 B raw / +34 B gzip on a 227 KB module.
+        # Branching this per platform would give the two platforms different
+        # generated code and cost us the byte-identity checks E014/E055 rely on,
+        # for no gain.  The one price is that a *node* harness needs
+        # --experimental-wasm-exnref until V8 turns exnref on by default
+        # (workerd's V8 already has).
+        -mllvm -wasm-use-legacy-eh=false
+        # Use the pinned runtime's complete WASI declaration contract first.
+        # Driver-only headers fill facilities outside that contract.
+        -I"$LIB_DIR/wasi" -I"$HERE/shim" -include "$HERE/shim_flockfile.h"
+        -include "$HERE/fix_bigint.h"
+        -I"$LIB_DIR" -I"$LIB_DIR/regexp" -I"$LIB_DIR/regexp/shim")
+
+# E064: --request-arena appends to THE flags array, so the runtime TUs and the
+# generated TU cannot disagree about it (the whole reason the array is
+# single).  It lands before the RT_DIR/FLAG_STAMP block, so the object cache key
+# sees it and a half-flagged build stays structurally impossible.
+if [ "${REQUEST_ARENA:-0}" -eq 1 ]; then
+  # Without a collector, memory is reclaimed only by the death of the
+  # INSTANCE, so this is a command-mode contract only.  A reactor instance
+  # serves many requests (E011: 13,006 on one instance) and its memory would
+  # only ever go up -- the module would die at the host's memory cap after N
+  # requests instead of at request 1, which is the worst possible failure shape.
+  [ "$MODE" = command ] || die "--request-arena needs --mode command: a reactor instance serves many requests and nothing reclaims memory between them without a collector (E064 §5)"
+  # The build is upstream's --gc=none (stage 1 passes it to spinel -c): the
+  # generated TU defines sp_gc_collect_fn as NULL, the runtime's weak
+  # definition gives way, the allocation triggers are lifted the first time
+  # one fires, and --gc-sections drops the collector. Refuse a runtime that
+  # does not carry the pointer: there spinel would not know --gc=none, or the
+  # collector would stay, and an ordinary collected module would claim to
+  # have none.
+  LC_ALL=C grep -q 'sp_gc_collect_fn' "$LIB_DIR"/sp_gc.h 2>/dev/null \
+    || die "--request-arena (and '# spinel-tier: arena') needs a runtime with upstream's --gc=none (sp_gc_collect_fn),
+  which $LIB_DIR does not carry; build without the arena tier instead."
+  CFLAGS+=(
+    # The sizes below shrink tables that, without a collector, are never read
+    # or are read only by diagnostics. Each is an #ifndef in the vendor, and
+    # each must be the same in every TU -- which this one flags array
+    # guarantees.
+    #
+    # SPINEL_ALLOC_REPORT's site table, 192 KiB by default. Nothing reads it
+    # unless the report is switched on, and with one slot every further site
+    # is counted on the report's own overflow line, which it prints: the
+    # totals stay right and only the per-site split is lost. 1 is the
+    # smallest size the table accepts (it is indexed modulo its size).
+    -DSP_ALLOC_STATS=1
+    # This ring records completed major string sweeps for diagnostics only.
+    # Under --gc=none nothing calls the collector, so no sweep completes and
+    # the ring never receives a sample. Keep one slot (the ring indexes modulo
+    # its size), rather than 8192.
+    -DSP_STR_SHAPE_MAX=1
+    # SP_DYN_SYMS_MAX (symbols interned at run time, 8,192 slots = 32 KiB) is
+    # deliberately LEFT at the vendor default: past the cap sp_sym_intern_n
+    # returns symbol 0 without a word, and an edge program can call to_sym on
+    # request input, so a smaller cap would make silent corruption reachable.
+    # The GC root stack, 256 KiB by default. Under --gc=none nothing reads it:
+    # the mark is its only reader (lib/sp_gc.c), and nothing calls the
+    # collector. The pushes still run, and must: the root macros' &v is what
+    # keeps a rooted local in memory across the setjmp/longjmp of catch/throw
+    # and raise/rescue (with no-op macros,
+    # `i = 0; catch(:done) { i += 1; throw :done }; p i` printed 0). With one
+    # slot the macro still takes &v and still calls _sp_gc_root_push, which
+    # stores while there is room and otherwise returns 0, so the pop does
+    # nothing; a dropped entry has no reader to miss it.
+    # tests/edge/arena.sh holds catch/throw and raise/rescue over a String
+    # local to their Ruby values under this setting. NOTE: at the pin that
+    # three-line Integer program prints 0 in EVERY -O2 build -- native, wasm,
+    # with a collector or not (an Integer local is not a root, so nothing
+    # takes its address); that is a compiler defect of its own, which the same
+    # test records against the full build as its control.
+    -DSP_GC_STACK_MAX=1)
+  # The slab off by default (SPINEL_GC_SLAB=0): tools/wasm/arena_env.c, linked
+  # with --wrap=getenv below, says why and how.
+  DRIVER_TUS+=("$HERE/arena_env.c")
+  # An arena command module can have its instance reused by a host that writes
+  # its linear memory back before each request (decision 0039): the sbrk that
+  # keeps its break in linear memory, and the marker the host looks for.
+  # --no-snapshot leaves both out, and the host then makes an instance per
+  # request.
+  [ "$SNAPSHOT" -eq 0 ] || DRIVER_TUS+=("$HERE/snapshot.c")
+fi
+[ "$SNAPSHOT" -eq 1 ] || [ "${REQUEST_ARENA:-0}" -eq 1 ] \
+  || die "--no-snapshot applies to an arena build only (--request-arena or '# spinel-tier: arena'): no other build is offered for reuse"
+
+# ---- stage 0: stackless Fiber (decision 0035) --------------------------------
+# An entry file that names Fiber or Enumerator is rewritten into ordinary Ruby
+# first (Fiber.new and Enumerator.new blocks); the rewriter exits 3 when there
+# is nothing to do and 1 with call-site diagnostics when a construct is
+# outside what it rewrites.  Required files are not rewritten: a Fiber there
+# still reaches sp_Fiber_* and the scan below.
+SP_SOURCE=$SOURCE
+if LC_ALL=C grep -q -e Fiber -e Enumerator "$SOURCE"; then
+  fiber_rb="$TMPDIR_SP/$base.fiber.rb"
+  fiber_rc=0
+  fiber_roots=()   # the -I roots spinel gets below, so the rewrite can see required files
+  for r in ${I_ROOTS[@]+"${I_ROOTS[@]}"}; do fiber_roots+=(-I "$r"); done
+  [ "$HOST_API" -eq 0 ] || fiber_roots+=(-I "$HERE/lib" -I "$HERE/legacy")
+  # The analysis types the receiver of an `each` that suspends (0035); with
+  # no reader that form stays refused.  SPINEL_TYPEDUMP, or this tree's build.
+  fiber_td=${SPINEL_TYPEDUMP:-$REPO/tools/contract/build/spinel-typedump}
+  [ ! -x "$fiber_td" ] || fiber_roots+=(--typedump "$fiber_td")
+  "${RUBY:-ruby}" "$REPO/tools/fiber/spinel-fiber-rewrite" "$SOURCE" -o "$fiber_rb" ${fiber_roots[@]+"${fiber_roots[@]}"} || fiber_rc=$?
+  case $fiber_rc in
+    0) SP_SOURCE=$fiber_rb ;;
+    3) ;;
+    *) die "stackless Fiber rewrite refused $SOURCE (decision 0035; diagnostics above)" ;;
+  esac
+fi
+
+# ---- stage 1: spinel -c ------------------------------------------------------
+sp_args=("$SP_SOURCE" -c -o "$CFILE")
+# [E090] user require roots: E089's 3-line probe diff, formalized.  Passed in
+# the order given, ahead of --host-api's own root (the probe's measured order).
+for r in ${I_ROOTS[@]+"${I_ROOTS[@]}"}; do sp_args+=(-I "$r"); done
+[ "$INT_OVERFLOW" = raise ] || sp_args+=(--int-overflow "$INT_OVERFLOW")
+# --size-opt: turn OFF upstream's forced inlining of small leaf methods.  The
+# spelling is the driver flag, not SPINEL_INLINE_FORCE=0: E029 §4a verified the
+# two land on the same branch (src/codegen.c method_inline_force) and produce
+# byte-identical C, and a documented flag outlives an undocumented env var.
+[ "$SIZE_OPT" -eq 0 ] || sp_args+=(--no-inline-hot)
+# --request-arena: upstream's --gc=none (the flags block above says what it does).
+[ "${REQUEST_ARENA:-0}" -eq 0 ] || sp_args+=(--gc=none)
+# --elim-bigint: refuse up front if $SPINEL_DIR predates Patch 5, instead of
+# building the un-shrunk module and reporting a size that quietly did not move.
+if [ "$ELIM_BIGINT" -eq 1 ]; then
+  LC_ALL=C grep -q 'SP_TU_NO_BIGINT' "$LIB_DIR/sp_alloc.h" 2>/dev/null \
+    || die "--elim-bigint needs the SP_TU_NO_BIGINT gate, and $LIB_DIR/sp_alloc.h
+  does not have it.  That is Patch 5 in vendor/spinel/SPINEL_LLVM_PATCHES.md
+  (header half) plus the g_uses_bigint scan in src/codegen.c (compiler half);
+  E025 measured what it is worth and E062 implemented it.  Point SPINEL_DIR at
+  a tree that carries the patch, or drop --elim-bigint."
+  export SPINEL_ELIM_BIGINT=1
+fi
+# --host-api: make `require "edge/http"` resolve to tools/wasm/lib/edge/http.rb
+# (src/main.c:250, the -I feature root).  The prelude is plain Ruby over the
+# ffi_func declarations, so this is a convenience, not a dependency: a program
+# may paste the declarations instead (tools/wasm/lib/edge/bridge.rb lists them).
+#
+# The second root is FROZEN (E091): tools/wasm/legacy carries the pre-E091
+# `spinel_host*` spelling, kept resolvable only because the E014/E055 repro
+# subjects under docs/experiments/results are frozen artefacts that require it.
+# Live code uses edge/* | cloudflare/* | fastly/*; the note below says so.
+[ "$HOST_API" -eq 0 ] || sp_args+=(-I "$HERE/lib" -I "$HERE/legacy")
+sp_log="$TMPDIR_SP/spinel.log"
+set +e
+run "$SPINEL_BIN" "${sp_args[@]}" >/dev/null 2>"$sp_log"
+sp_rc=$?
+set -e
+if [ "$sp_rc" -ne 0 ]; then
+  cat "$sp_log" >&2
+  stage_fail "spinel -c" "$sp_rc"
+fi
+LC_ALL=C grep -v "^Wrote $CFILE\$" "$sp_log" >&2 || true
+[ -f "$CFILE" ] || die "spinel -c produced no C file at $CFILE"
+
+# `require "edge/http"` (or any host-API require) without --host-api: spinel
+# only *warns* that the feature is unknown and then compiles a program in which
+# Edge::HTTP does not exist, which dies later as a wall of C type errors about
+# sp_raise_nomethod.  Catch it here, where the answer is one flag.  The pattern
+# covers the E091 namespaces and the frozen pre-E091 spelling alike.
+#
+# ★ The refusal is UNCONDITIONAL (E091).  Before, it only fired with --host-api
+#   off, and an unresolved `require "edge/kv"` WITH the flag on (a wrong -I
+#   root, a typo, a driver that predates the namespace) went through as a
+#   warning and produced a module missing the capability -- observed while
+#   re-running E058's gate, where the pre-E091 driver quietly built
+#   examples/mvc-blog and examples/r2-d1 with every capability require ignored.
+#   A build that silently drops a capability is precisely the failure this
+#   target keeps designing out.
+if LC_ALL=C grep -qE \
+     "'(spinel_host[a-z0-9_]*|edge/[a-z0-9_]+|cloudflare/[a-z0-9_]+|fastly/[a-z0-9_]+)' is not available" "$sp_log"; then
+  if [ "$HOST_API" -eq 0 ]; then
+    die "this program requires a host-API feature (edge/* | cloudflare/* | fastly/*)
+  but --host-api is off, so the require resolved to nothing (spinel warns and
+  carries on, and the build then fails deep inside the generated C -- or, worse,
+  succeeds without the capability).  The host bridge is opt-in: rebuild with
+  --host-api, which puts tools/wasm/lib on the require path and links the thunks
+  (R003 §2-4 layer 1, E014, R016 T-4).
+
+$(LC_ALL=C grep "is not available in Spinel" "$sp_log" | sed 's/^/  /')"
+  fi
+  die "a host-API require did not resolve, and --host-api IS on.  The feature
+  name is not under tools/wasm/lib (nor under any -I root given), so the module
+  would have been built WITHOUT that capability -- silently.  Check the spelling
+  against tools/platform/menus.yaml and tools/wasm/lib/ (R016 T-4, E091).
+
+$(LC_ALL=C grep "is not available in Spinel" "$sp_log" | sed 's/^/  /')"
+fi
+
+# The pre-E091 Ruby surface is frozen (tools/wasm/legacy/README.md): it is
+# resolvable only so that the frozen E014/E055 repro subjects keep building.
+# Live code that still reaches it is a migration miss, so say so -- once, on
+# stderr, naming the new spelling (P008 Phase 2, E091).
+if LC_ALL=C grep -q 'SpinelHost' "$CFILE"; then
+  echo "$PROG: note: this program uses the pre-E091 \`SpinelHost\` surface, which is
+  frozen in tools/wasm/legacy for the E014/E055 repro subjects.  New code uses
+  the R016 T-4 namespaces: require \"edge/http\" (Edge::HTTP.request/get/post),
+  \"edge/kv\" (Edge::KV), \"edge/cgi\" (Edge::CGI), \"cloudflare/r2\" |
+  \"cloudflare/d1\" (Cloudflare::R2 / ::D1), \"fastly/config\" (Fastly::Config).
+  The hostcalls and the \`spinel_host\` import module are unchanged." >&2
+fi
+
+# --elim-bigint is a *request*; inference decides.  Say which way it went, so
+# "the module did not shrink" is never a mystery (E062: 2937/2988 of the suite
+# gate; the 51 that do not either type something Bignum or use Marshal).
+if [ "$ELIM_BIGINT" -eq 1 ]; then
+  if LC_ALL=C grep -q '^#define SP_TU_NO_BIGINT 1$' "$CFILE"; then
+    echo "$PROG: --elim-bigint: inference proved no Bignum; dropping the bigint subsystem" >&2
+  else
+    echo "$PROG: --elim-bigint: inference could NOT rule out a Bignum (a slot is typed
+  Bignum or Rational, or --int-overflow=promote, or the program uses Marshal),
+  so the bigint subsystem stays.  The module is the same size as without the
+  flag.  \`spinel --emit-types\` shows which slots carry those types." >&2
+  fi
+fi
+
+# ---- stage 2: markers (src/main.c:137-158, 470-481) --------------------------
+scrape() {
+  LC_ALL=C sed -n "s|^$1\\(.*\\)|\\1|p" "$CFILE" \
+    | sed -E 's/[ */]+$//' \
+    | tr '\n' ' '
+}
+FFI_CFLAGS=$(scrape '/\* SPINEL_CFLAGS: ')
+FFI_LINKS=$(scrape '/\* SPINEL_LINK: ')
+NATIVE_OBJS=$(scrape '/\* SPINEL_LINK_OBJ: ')
+
+# ---- stage 3: unsupported-construct gate -------------------------------------
+# The wasm32 profile is a strict subset (E009 §6/§10, E010).  Refuse up front
+# with the Ruby-level name of the construct instead of emitting a module that
+# links and then misbehaves at runtime.  Parallel arrays: bash 3.2 has no
+# associative arrays.
+#
+# R003 §4-2 measured two holes in the original six patterns and E012 closes
+# them.  Both had the same shape: the *runtime* reaches an unsupported facility
+# through a helper that never appears in the generated C.
+#
+#   1. Enumerator external iteration.  lib/sp_cold.c's sp_Enumerator_next /
+#      _peek / _to_a / _take go through sp_enum_gen_pull -> sp_Fiber_resume even
+#      when the receiver is a plain Array, so `[1,2,3].each.next` emits no
+#      sp_Fiber_* at all and died at link with a bare `undefined symbol:
+#      swapcontext`.  Seven idioms did this.  (sp_Enumerator_scan is in EVERY
+#      generated TU -- it is prologue boilerplate -- so it must never be part
+#      of a pattern.  sp_Enumerator_size / _new_from / _new_slices are fine.)
+#   2. UDPSocket.new / Socket.new / UNIXServer.new / UNIXSocket.new emit
+#      sp_sock_* and never sp_net_*, so the old socket pattern missed them.
+#
+U_PAT=(
+  'sp_Fiber_new|sp_Fiber_resume|sp_Fiber_yield|sp_fiber_'
+  'sp_Enumerator_next|sp_Enumerator_peek|sp_Enumerator_to_a|sp_Enumerator_take'
+  'sp_Thread_|sp_sched_init|sp_sched_drain'
+  'sp_net_[a-z]|sp_io_fdopen_sock|sp_sock_'
+  'sp_system_args|sp_backtick|sp_process_spawn|sp_process_fork'
+  'sp_dir_glob|sp_file_fnmatch'
+  'sp_dir_home|sp_dir_pwd'
+)
+U_WHY=(
+  'Fiber / Thread / Enumerator.new { |y| ... } -- wasm has no stack switching. Spinel implements Fiber with ucontext (lib/sp_fiber_ctx.h) and getcontext/makecontext/swapcontext do not exist in wasi-libc. Fiber.new and Enumerator.new in the entry file are rewritten into stackless state machines (decision 0035); this one was not -- it is in a required file, or it is a runtime enumerator (each/cycle/lazy without a block) or an Enumerable method that Spinel routes through one. Workaround: block-form iteration (each / map / each_slice { }), or .lazy over an Array/Range -- both are fiber-free (R003 §4)'
+  'Enumerator#next / #peek / #to_a / #take (external iteration) -- these reach the same ucontext code through sp_enum_gen_pull even when the source is a plain Array, so the module would fail at link with a bare "undefined symbol: swapcontext". Workaround: block-form iteration, or .lazy over an Array/Range (R003 §4-2)'
+  'Thread -- the wasm profile is the plain build; SP_THREADS is never enabled (E009 §3)'
+  'Socket / TCPSocket / TCPServer / UDPSocket / UNIXSocket / UNIXServer -- WASI preview1 has no sockets; lib/sp_net.c does not even compile for wasm32. Outbound traffic belongs in an explicit host bridge, and listen/accept has no counterpart on an edge platform (R003 §2-4)'
+  'Kernel#system / backticks / Process.spawn -- WASI cannot create processes (E009 §2 "process")'
+  'Dir.glob / File.fnmatch -- there is no filesystem to walk (no WASI preopens) and fnmatch() is a stub, not an implementation'
+  'Dir.home / Dir.pwd -- there is no passwd database and WASI preview1 has no current working directory'
+)
+if LC_ALL=C grep -qF '/* SPINEL_USES_THREADS */' "$CFILE"; then
+  U_PAT[2]='SPINEL_USES_THREADS'   # marker beats symbol scan; same message
+fi
+if [ -n "$NATIVE_OBJS" ]; then
+  die "unsupported: the program pulls in native FFI objects (SPINEL_LINK_OBJ: $NATIVE_OBJS)
+  These are host .o files; there is no wasm32 build of them.  Drop the FFI use
+  or build wasm objects for it and pass each with --link FILE."
+fi
+if [ -n "$FFI_LINKS" ]; then
+  echo "$PROG: warning: SPINEL_LINK markers ($FFI_LINKS) are host libraries and are NOT passed to wasm-ld" >&2
+fi
+i=0
+found=""
+while [ $i -lt ${#U_PAT[@]} ]; do
+  if LC_ALL=C grep -qE "${U_PAT[$i]}" "$CFILE"; then
+    found="$found
+  - ${U_WHY[$i]}"
+  fi
+  i=$((i + 1))
+done
+# The host bridge is opt-in, so "this program calls it and the flag is off" is
+# a build-configuration mistake, not an unsupported construct: say so here
+# rather than letting it fall through to `undefined symbol: sp_host_fetch`.
+if [ "$HOST_API" -eq 0 ] && LC_ALL=C grep -qE 'sp_host_[a-z_]+[[:space:]]*\(' "$CFILE"; then
+  if [ "$PLATFORM" = fastly ]; then
+    die "this program uses the host API (Edge::* / Cloudflare::* / sp_host_*) but --host-api is off.
+  The bridge to fetch/KV is opt-in: it links $HOST_TU, whose thunks call the
+  synchronous fastly_* hostcalls (R003 §2-4 layer 1, E058).  Rebuild with
+  --host-api (\`spinel-wasm app.rb --emit-fastly DIR --host-api\`), and declare
+  the backends / KV stores it reaches in the package's fastly.toml."
+  fi
+  die "this program uses the host API (Edge::* / Cloudflare::* / sp_host_*) but --host-api is off.
+  The bridge to fetch/KV is opt-in: it adds the \`spinel_host\` import namespace
+  and needs a host that supplies it (R003 §2-4 layer 1, E014).  Rebuild with
+  --host-api, and serve it with a worker whose worker.mjs installs the host
+  (\`spinel-wasm app.rb --emit-worker DIR --host-api\` does both)."
+fi
+if [ -n "$found" ]; then
+  if [ "$ALLOW_UNSUPPORTED" -eq 1 ]; then
+    echo "$PROG: warning: unsupported construct(s) present, building anyway (--allow-unsupported):$found" >&2
+  else
+    die "unsupported construct(s) for the wasm32 profile:$found
+
+  See tools/wasm/README.md for the supported surface.  --allow-unsupported
+  builds anyway; the construct then raises a catchable NotImplementedError at
+  the point of use instead of returning a wrong answer (R003 §3, E012)."
+  fi
+fi
+
+# ---- stage 4: runtime object cache ------------------------------------------
+# The vendor Makefile selects the runtime TUs; driver TUs are added explicitly.
+# The cache is invalidated whenever the flags change, so a driver edit can
+# never leave half the objects on the old (e.g. non-SP_INT64) flags.
+# The runtime member list excludes optional C-extension objects. Keep this
+# contract aligned with the selected vendor, including its regexp engine.
+make_list() { sed -n "s/^$1[[:space:]]*=[[:space:]]*//p" "$SPINEL_DIR/Makefile" | head -1; }
+rt_members=$(make_list RT_MEMBERS)
+re_sources=$(make_list RE_SRC)
+[ -n "$rt_members" ] && [ -n "$re_sources" ] || die "vendor Makefile has no RT_MEMBERS / RE_SRC"
+RT_SOURCES=()
+for member in $rt_members; do RT_SOURCES+=("$LIB_DIR/$member.c"); done
+for source in $re_sources; do RT_SOURCES+=("$SPINEL_DIR/$source"); done
+RT_SOURCES+=("${DRIVER_TUS[@]}")
+for source in "${RT_SOURCES[@]}"; do [ -f "$source" ] || die "runtime source missing: $source"; done
+
+# RE_CASE_FLAGS is empty by default at this pin; preserve the selected
+# Makefile's defaults or an explicit caller override for its regexp engine.
+re_case_flags=${RE_CASE_FLAGS-$(sed -n 's/^RE_CASE_FLAGS[[:space:]]*[?]*=[[:space:]]*//p' "$SPINEL_DIR/Makefile" | head -1)}
+RE_CFLAGS=()
+[ -z "$re_case_flags" ] || read -r -a RE_CFLAGS <<< "$re_case_flags"
+RT_DIR="$BUILD_DIR/rt"
+# The arena build has its own flags, so its own cache: alternating the two
+# would otherwise recompile every runtime TU on each switch.
+[ "${REQUEST_ARENA:-0}" -eq 0 ] || RT_DIR="$BUILD_DIR/rt-arena"
+mkdir -p "$RT_DIR"
+FLAG_STAMP="$RT_DIR/.flags"
+flags_now=$(printf '%s\n' "${CFLAGS[@]}"; printf '%s\n' "regexp: $re_case_flags" "rt-cache-v2")
+if [ "$REBUILD_RT" -eq 1 ] || [ ! -f "$FLAG_STAMP" ] || [ "$flags_now" != "$(cat "$FLAG_STAMP")" ]; then
+  rm -f "$RT_DIR"/*.o "$RT_DIR"/*.o.log "$RT_DIR"/*.o.fail
+  printf '%s' "$flags_now" > "$FLAG_STAMP"
+fi
+# Newest header anywhere under lib/ gates every object (coarser than upstream's
+# per-file dependency, but only ever in the over-rebuild direction).
+# The driver's own headers count too: shim_flockfile.h / fix_bigint.h are
+# force-included into every TU by $CFLAGS, and fastly_abi.h is
+# the contract header the platform layer is written against.  Leaving them out
+# meant an edit to any of them was invisible to the cache.
+# `sed -n 1p`, not `head -1`: head exits after one line, and under pipefail
+# the ls it leaves writing dies of SIGPIPE (141) and ends the script without a
+# word -- on Linux, one run in two (measured on Debian, 2026-09-23).
+# Header changes in either shim layer must invalidate successful AND failed
+# objects. nullglob retains compatibility with vendors without regexp/shim.
+shopt -s nullglob
+CACHE_HEADERS=("$LIB_DIR"/*.h "$LIB_DIR"/wasi/*.h "$LIB_DIR"/wasi/sys/*.h "$LIB_DIR"/wasi/*.c "$LIB_DIR"/regexp/*.h "$LIB_DIR"/regexp/*.inc
+               "$LIB_DIR"/regexp/shim/*.h "$LIB_DIR"/regexp/shim/mruby/*.h
+               "$HERE"/*.h "$HERE"/shim/*.h "$HERE"/shim/sys/*.h "$FASTLY_DIR"/*.h
+               "$SPINEL_DIR/Makefile" "${BASH_SOURCE[0]}")
+shopt -u nullglob
+newest_h=$(ls -t "${CACHE_HEADERS[@]}" | sed -n 1p)
+rt_built=0
+rt_pids=""
+compile_rt() {   # $1 = source, $2 = object
+  # Failed compilations are cached too; header and flag changes invalidate
+  # their stamps just as they invalidate successful objects.
+  for stamp in "$2" "$2.fail"; do
+    if [ -f "$stamp" ] && [ "$stamp" -nt "$1" ] && { [ -z "$newest_h" ] || [ "$stamp" -nt "$newest_h" ]; }; then
+      return 0
+    fi
+  done
+  rm -f "$2" "$2.fail"
+  rt_built=$((rt_built + 1))
+  local extra_flags=()
+  case "$1" in "$LIB_DIR"/regexp/*) extra_flags=( ${RE_CFLAGS[@]+"${RE_CFLAGS[@]}"} ) ;; esac
+  run "$CLANG" "${CFLAGS[@]}" ${extra_flags[@]+"${extra_flags[@]}"} -c "$1" -o "$2" 2>"$2.log" &
+  rt_pids="$rt_pids $!"
+  if [ "$(printf '%s' "$rt_pids" | wc -w)" -ge "$JOBS" ]; then wait; rt_pids=""; fi
+}
+for f in "${RT_SOURCES[@]}"; do
+  compile_rt "$f" "$RT_DIR/$(basename "$f" .c).o"
+done
+wait
+# Every selected runtime TU must compile; an unused failed TU must not hide
+# a mismatch between this profile and the pinned runtime's WASI contract.
+RT_OBJS=""
+RT_MISSING=""
+for f in "${RT_SOURCES[@]}"; do
+  b=$(basename "$f" .c)
+  if [ -f "$RT_DIR/$b.o" ]; then RT_OBJS="$RT_OBJS $RT_DIR/$b.o"
+  else RT_MISSING="$RT_MISSING $b"; : > "$RT_DIR/$b.o.fail"; fi
+done
+[ "$rt_built" -eq 0 ] || echo "$PROG: runtime cache: rebuilt $rt_built object(s) in $RT_DIR" >&2
+if [ -n "$RT_MISSING" ]; then
+  for member in $RT_MISSING; do cat "$RT_DIR/$member.o.log" >&2; done
+  die "runtime compilation failed:$RT_MISSING (logs in $RT_DIR/*.o.log)"
+fi
+
+# ---- stage 5: generated TU (+ reactor entry) ---------------------------------
+gen_cmd=("$CLANG" "${CFLAGS[@]}" "$OV_DEFINE")
+# shellcheck disable=SC2206  # word splitting is the point: markers are flag lists
+[ -z "$FFI_CFLAGS" ] || gen_cmd+=($FFI_CFLAGS)
+[ ${#EXTRA[@]} -eq 0 ] || gen_cmd+=("${EXTRA[@]}")
+run "${gen_cmd[@]}" -c "$CFILE" -o "$TMPDIR_SP/$base.gen.o" || stage_fail "clang -c (generated TU)" $?
+
+OBJS=("$TMPDIR_SP/$base.gen.o")
+if [ "$MODE" = reactor ]; then
+  run "$CLANG" "${CFLAGS[@]}" -c "$HERE/reactor.c" -o "$TMPDIR_SP/reactor.o" \
+    || stage_fail "clang -c reactor.c" $?
+  OBJS+=("$TMPDIR_SP/reactor.o")
+fi
+
+# ---- stage 6: link -----------------------------------------------------------
+# shellcheck disable=SC2206  # RT_OBJS is a whitespace-separated path list
+link=("$WASM_LD" "$CRT" "${OBJS[@]}" $RT_OBJS ${LINK_INPUTS[@]+"${LINK_INPUTS[@]}"}
+      -L"$WASI_SYSROOT/lib/wasm32-wasip1"
+      -lc -lm -lsetjmp
+      -lwasi-emulated-signal -lwasi-emulated-process-clocks
+      -lwasi-emulated-mman -lwasi-emulated-getpid
+      "$WASI_BUILTINS" --gc-sections --error-limit=0)
+# The raise policy (see $WRAPS at the top).  Passed in BOTH modes: --wrap is
+# link-time resolution, so R003 probe A2's "--mode command too" applies.
+for w in "${WRAPS[@]}"; do link+=("--wrap=$w"); done
+# The arena module's default for SPINEL_GC_SLAB (tools/wasm/arena_env.c).
+[ "${REQUEST_ARENA:-0}" -eq 0 ] || link+=(--wrap=getenv)
+# The instance-reuse contract (tools/wasm/snapshot.c, decision 0039).
+if [ "${REQUEST_ARENA:-0}" -eq 1 ] && [ "$SNAPSHOT" -eq 1 ]; then
+  link+=(--wrap=sbrk --export=__stack_pointer --export=spinel_snapshot_abi)
+fi
+if [ "$PLATFORM" = fastly ]; then
+  for w in "${FASTLY_WRAPS[@]}"; do link+=("--wrap=$w"); done
+fi
+if [ "$MODE" = reactor ]; then
+  link+=(--no-entry
+         --export=_initialize
+         --export=sp_reactor_run --export=sp_reactor_alloc --export=sp_reactor_free
+         --export=sp_reactor_calls --export=sp_reactor_heap_pages
+         --export=sp_reactor_gc --export=sp_reactor_gc_bytes
+         --export=sp_reactor_str_bytes --export=sp_reactor_gc_roots
+         --export=sp_reactor_re_cached
+         # sp_re_init() re-compiles every Regexp literal on every main() entry
+         # and nothing ever calls re_free; an uncaught Ruby exception ends in
+         # exit(1), which in a reactor must not reach proc_exit.  See reactor.c.
+         --wrap=re_compile --wrap=exit)
+         # (`memory` is exported by wasm-ld already; naming it here is an error)
+fi
+link+=(-o "$OUTPUT")
+LD_LOG="$TMPDIR_SP/wasm-ld.log"
+set +e
+run "${link[@]}" 2>"$LD_LOG"
+ld_rc=$?
+set -e
+if [ "$ld_rc" -eq 0 ]; then
+  cat "$LD_LOG" >&2                       # warnings, if any, pass through
+else
+  # ---- link-error -> Ruby-name translation (R003 §4-3) -----------------------
+  # The scan above is the primary gate, but it can only see what the *generated*
+  # C contains.  R003 §4-2 showed the runtime reaches unsupported facilities
+  # through helpers that never appear there (sp_enum_gen_pull -> swapcontext),
+  # and the honest boundary of that section is that other such holes may exist.
+  # So: never show the user a raw C symbol.  Translate what we know, and keep
+  # the raw log for anything we do not.
+  L_PAT=(
+    'sp_host_[a-z_]*'
+    'swapcontext|getcontext|makecontext|__sp_fiber|sp_fiber_'
+    'sp_Fiber_'
+    'sp_Thread_|sp_sched_|pthread_create'
+    'sp_system_args|sp_backtick|sp_net_shell_capture|popen|pclose|fork|execv[ep]?|execl[ep]?|posix_spawn|waitpid|system'
+    'sp_net_[a-z_]*|sp_sock_[a-z_]*|sp_io_fdopen_sock|socket|socketpair|getaddrinfo|gethostbyname|gethostname'
+    'getpwnam|getpwuid|getlogin'
+    'fnmatch|glob'
+    'dlopen|dlsym|dlclose'
+  )
+  L_WHY=(
+    "the host API (Edge::HTTP.request / Edge::KV) -- this build did not link it. Rebuild with --host-api, which links the $PLATFORM_NAME host bridge ($HOST_TU) (R003 §2-4 layer 1, E014, E058)"
+    'Fiber / Thread / Enumerator#next / #peek / #to_a / #take -- wasm has no stack switching. Spinel implements Fiber with ucontext (lib/sp_fiber_ctx.h) and wasi-libc has no getcontext/makecontext/swapcontext. Enumerator external iteration reaches the same code through sp_enum_gen_pull even when the source is a plain Array, which is why the build scan did not stop it. Workaround: block-form iteration (each / map / each_slice { }), or .lazy over an Array/Range -- both are fiber-free. (R003 §4)'
+    'Fiber -- wasm has no stack switching (R003 §4-4)'
+    'Thread -- the wasm profile is the plain build; SP_THREADS is never enabled (E009 §3)'
+    'Kernel#system / backticks / Process.spawn / Process.fork -- WASI preview1 cannot create processes (E009 §2)'
+    'Socket / TCPSocket / TCPServer / UDPSocket / UNIXSocket / UNIXServer -- WASI preview1 has no sockets and lib/sp_net.c does not compile for wasm32. Outbound traffic belongs in an explicit host bridge; listen/accept has no counterpart on an edge platform (R003 §2-4)'
+    'Dir.home -- there is no passwd database on this target (R003 §3-4)'
+    'Dir.glob / File.fnmatch -- there is no filesystem to walk (no WASI preopens) (R003 §3-4)'
+    'FFI dynamic loading (dlopen) -- there is no dynamic linker on this target'
+  )
+  # First match wins, so a symbol gets exactly one explanation; whatever is left
+  # over is printed raw rather than silently dropped.
+  rest=$(LC_ALL=C sed -n 's/.*undefined symbol: //p' "$LD_LOG" | LC_ALL=C sort -u)
+  xlat=""
+  i=0
+  while [ $i -lt ${#L_PAT[@]} ]; do
+    hits=$(printf '%s\n' "$rest" | LC_ALL=C grep -xE "${L_PAT[$i]}" | tr '\n' ' ') || true
+    if [ -n "$hits" ]; then
+      xlat="$xlat
+  - ${L_WHY[$i]}
+    (linker symbols: ${hits% })"
+      rest=$(printf '%s\n' "$rest" | LC_ALL=C grep -xvE "${L_PAT[$i]}") || true
+    fi
+    i=$((i + 1))
+  done
+  rest=$(printf '%s' "$rest" | tr '\n' ' ')
+  if [ -n "$xlat" ]; then
+    echo "$PROG: unsupported on the wasm32 ($PLATFORM_NAME) profile -- the link reached a
+  facility this target does not have:$xlat
+
+  See tools/wasm/README.md for the supported surface." >&2
+    [ -z "$rest" ] || echo "$PROG: also undefined (no translation known):$rest" >&2
+    [ "$VERBOSE" -eq 0 ] || { echo "$PROG: raw linker output:" >&2; cat "$LD_LOG" >&2; }
+  else
+    cat "$LD_LOG" >&2
+  fi
+  [ -z "$RT_MISSING" ] || echo "$PROG: note: these runtime TUs are absent from the link:$RT_MISSING
+  (they do not compile for wasm32; see $RT_DIR/*.o.log.)" >&2
+  stage_fail "wasm-ld ($MODE)" "$ld_rc"
+fi
+[ -f "$OUTPUT" ] || die "link reported success but $OUTPUT is missing"
+
+# ---- stage 7: --emit-worker scaffolding --------------------------------------
+# Two classes of file.  worker.mjs / wasi_shim.mjs are *copies of the driver's*
+# and are refreshed on every run, so a project never drifts onto an old shim
+# (the same reason the runtime object cache is keyed on the flag string).
+# index.mjs / wrangler.toml / .gitignore / examples are the user's and are
+# written only when absent -- re-running --emit-worker after editing the entry
+# point or adding a binding must not throw that away.
+if [ -n "$EMIT_WORKER" ]; then
+  mkdir -p "$EMIT_WORKER/examples"
+  # spinel_host.mjs ships unconditionally: worker.mjs imports it, and whether
+  # the host API is actually installed is decided per module at runtime (the
+  # module's own import list says so -- see moduleNeedsHost in wasi_shim.mjs),
+  # not by which flag built this directory.
+  cp "$HERE/worker.mjs" "$HERE/wasi_shim.mjs" "$HERE/spinel_host.mjs" "$EMIT_WORKER/"
+  cp "$TEMPLATE/README.md" "$EMIT_WORKER/README.md"
+  kept=""
+  for f in index.mjs .gitignore examples/echo.rb examples/env.rb examples/fetch.rb examples/r2d1.rb; do
+    if [ -e "$EMIT_WORKER/$f" ]; then kept="$kept $f"; else cp "$TEMPLATE/$f" "$EMIT_WORKER/$f"; fi
+  done
+  if [ -e "$EMIT_WORKER/wrangler.toml" ]; then
+    kept="$kept wrangler.toml"
+  else
+    # Worker names are [a-z0-9-]; the directory name is the natural default.
+    wname=$(basename -- "$EMIT_WORKER" | LC_ALL=C tr '[:upper:]_.' '[:lower:]--' \
+            | LC_ALL=C sed -e 's/[^a-z0-9-]//g' -e 's/^-*//' -e 's/-*$//')
+    [ -n "$wname" ] || wname="spinel-worker"
+    LC_ALL=C sed "s|@@NAME@@|$wname|" "$TEMPLATE/wrangler.toml" > "$EMIT_WORKER/wrangler.toml"
+  fi
+  echo "$PROG: worker project in $EMIT_WORKER (app.wasm <- $SOURCE)" >&2
+  [ "$HOST_API" -eq 0 ] || echo "$PROG: host API linked; the worker installs \`spinel_host\` for
+  any module that imports it.  Outbound fetch is on by default; a KV namespace
+  is reachable only if wrangler.toml lists it AND SPINEL_HOST_KV names it." >&2
+  [ -z "$kept" ] || echo "$PROG: kept existing:$kept" >&2
+  echo "$PROG: next: (cd $EMIT_WORKER && npx wrangler dev --local)" >&2
+fi
+
+# ---- stage 7b: --emit-fastly scaffolding -------------------------------------
+# Same two classes of file as --emit-worker, but there is much less to scaffold:
+# the platform layer is INSIDE bin/main.wasm, so a Fastly package is the wasm
+# plus a manifest.  README.md is the driver's and is refreshed; fastly.toml is
+# the user's (it carries the backend / KV / Config declarations, which are the
+# deployment's own decisions) and is written only when absent.
+if [ -n "$EMIT_FASTLY" ]; then
+  mkdir -p "$EMIT_FASTLY/examples"
+  cp "$FASTLY_TEMPLATE/README.md" "$EMIT_FASTLY/README.md"
+  kept=""
+  for f in .gitignore examples/echo.rb examples/portable.rb; do
+    if [ -e "$EMIT_FASTLY/$f" ]; then kept="$kept $f"
+    else cp "$FASTLY_TEMPLATE/$f" "$EMIT_FASTLY/$f"; fi
+  done
+  if [ -e "$EMIT_FASTLY/fastly.toml" ]; then
+    kept="$kept fastly.toml"
+  else
+    # Fastly service names are free-form, but the directory name is the natural
+    # default and keeps `fastly compute pack` output predictable.
+    fname=$(basename -- "$EMIT_FASTLY" | LC_ALL=C tr '[:upper:]_.' '[:lower:]--' \
+            | LC_ALL=C sed -e 's/[^a-z0-9-]//g' -e 's/^-*//' -e 's/-*$//')
+    [ -n "$fname" ] || fname="spinel-fastly"
+    LC_ALL=C sed "s|@@NAME@@|$fname|" "$FASTLY_TEMPLATE/fastly.toml" > "$EMIT_FASTLY/fastly.toml"
+  fi
+  echo "$PROG: fastly package in $EMIT_FASTLY (bin/main.wasm <- $SOURCE)" >&2
+  [ "$HOST_API" -eq 0 ] || echo "$PROG: host API linked (synchronous fastly_* hostcalls, no JSPI).
+  Edge::HTTP.request needs backend: naming an entry in [local_server.backends];
+  Edge::KV needs the store in [local_server.kv_stores].  R2 and D1 raise
+  NotImplementedError on this platform (R008 §4.2)." >&2
+  [ -z "$kept" ] || echo "$PROG: kept existing:$kept" >&2
+  echo "$PROG: next: (cd $EMIT_FASTLY && fastly compute serve --skip-build)" >&2
+fi
+exit 0

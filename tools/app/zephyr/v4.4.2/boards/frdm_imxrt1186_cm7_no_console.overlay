@@ -1,0 +1,17 @@
+/*
+ * tools/app/zephyr/v4.4.2/boards/frdm_imxrt1186_cm7_no_console.overlay -- the
+ * M7 of a pair without a console (decision 0027 stage 2): applied by the build
+ * when the M7's application declares no uart: channel and the companion's
+ * does, so that LPUART1 is the M33's. Its lines reach the console through the
+ * M33 (the region's line 14 and 15, and its channels).
+ */
+/ {
+	chosen {
+		/delete-property/ zephyr,console;
+		/delete-property/ zephyr,shell-uart;
+	};
+};
+
+&lpuart1 {
+	status = "disabled";
+};

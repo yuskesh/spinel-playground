@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "coverage": {"programs": "complete", "maps": "complete", "records": "complete", "telemetry": "complete"},
+  "core": {
+    "records": [],
+    "maps": [{"symbol": "hits", "kind": "array", "key": {"kind":"int","bits":32,"signed":false,"endianness":"little","alignment":4}, "value": {"kind":"int","bits":64,"signed":false,"endianness":"little","alignment":8}, "max_entries": 8, "flags": 0, "record": "", "note": "E024"}],
+    "programs": [
+      {"name": "tc", "kind": "tp_btf", "attach_target": "sched_process_fork", "maps": ["hits"], "args": [null], "note": "E024: 引数を読まない (null — bpf-mlir E316)"},
+      {"name": "fe", "kind": "fentry", "attach_target": "bpf_fentry_test1", "maps": ["hits"], "note": "E024"}
+    ]
+  },
+  "telemetry": {"clocks": [], "value_maps": [], "bounds_sets": [], "signals": []},
+  "extensions": {}
+}

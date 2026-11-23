@@ -1,0 +1,19 @@
+id	tool	expect	got	verdict	diagnostic
+g01_no_boundary	gradfs	REFUSE	REFUSE	EXPECTED	spinel-gradfs: REFUSE orphan [g01] freestanding_grad_def :orphan (line 4): there is no `freestanding_def :orphan` in this file. The gradient is taken of a BOUNDARY, not of a method.
+g02_f32_return	gradfs	REFUSE	REFUSE	EXPECTED	spinel-gradfs: REFUSE lossf [g02] freestanding_grad_def :lossf (line 5): returns: :f32 -- the loss must be `returns: :f64`. An :f32 result rounds the value the derivative is taken of (E077 D
+g03_scalar_wrt	gradfs	REFUSE	REFUSE	EXPECTED	spinel-gradfs: REFUSE lossx [g03] freestanding_grad_def :lossx (line 5): wrt: :x is a :f64 at the boundary, not a buffer. v1 differentiates with respect to [:f64_buf, :in] parameters only --
+g03_f32_buf	gradfs	REFUSE	REFUSE	EXPECTED	spinel-gradfs: REFUSE loss32 [g03] freestanding_grad_def :loss32 (line 4): wrt: :w is a [:f32_buf, :in]. Only f64 elements are active: Spinel infers in f64 and an f32 element would round the
+g04_unknown_wrt	gradfs	REFUSE	REFUSE	EXPECTED	spinel-gradfs: REFUSE lossu [g04] freestanding_grad_def :lossu (line 4): wrt: :theta is not a parameter of `def lossu(w, nw)`
+g05_forward	gradfs	REFUSE	REFUSE	EXPECTED	spinel-gradfs: REFUSE lossfw [g05] freestanding_grad_def :lossfw (line 4): mode: :forward is not implemented; only :reverse. (forward mode is P007 Phase 4 -- it is refused rather than silent
+g06_out_buffer	gradfs	REFUSE	REFUSE	EXPECTED	spinel-gradfs: REFUSE lossw [g06] freestanding_grad_def :lossw (line 6): parameter `scratch` is a [:f64_buf, :out] buffer. A differentiated kernel may not write memory: the adjoint would hav
+g07_bad_tol	gradfs	REFUSE	REFUSE	EXPECTED	spinel-gradfs: REFUSE losst [g07] freestanding_grad_def :losst (line 4): tol: 0 -- the G3 threshold must be positive.
+g08_duplicate	gradfs	REFUSE	REFUSE	EXPECTED	spinel-gradfs: g08: freestanding_grad_def (line 5): lossd already has a freestanding_grad_def at line 4
+g09_empty_wrt	gradfs	REFUSE	REFUSE	EXPECTED	spinel-gradfs: REFUSE losse [g09] freestanding_grad_def :losse (line 4): wrt: is empty. A gradient with respect to nothing is not a gradient.
+g12_unknown_kw	gradfs	REFUSE	REFUSE	EXPECTED	spinel-gradfs: freestanding_grad_def (line 6): unknown keyword `lr:` (wrt/mode/tol/export)
+b01_write_in_buffer	mlirgen	REFUSE	REFUSE	EXPECTED	spinel-mlirgen: unsupported: bad_step: `w[i] = ...` WRITES a buffer declared `:in`. The caller owns it and said it was read-only; the generated C prototype even spells it `const`. Declare it
+b02_reassign_len	mlirgen	REFUSE	REFUSE	EXPECTED	spinel-mlirgen: unsupported: bad_step2: `n` is a length parameter and cannot be reassigned (the bounds check compares against it). Copy it into another local if you need to move it. (E077 de
+b03_allocating_loss	mlirgen	REFUSE	REFUSE	EXPECTED	spinel-mlirgen: unsupported: lossa: `a[i]` indexes a heap object (Array / Hash / String), and there is no heap. The ONE exception is a parameter declared as a buffer -- `params: [[:u8_buf, :
+b04_loop_calls_adjoint	mlirgen	REFUSE	REFUSE	EXPECTED	spinel-mlirgen: unsupported: calibrate: call to 'spinel_grad_sq_hinge_loss', which is not a top-level method in this file (builtins and Kernel methods are not in the subset)
+b05_buffer_to_callee	mlirgen	REFUSE	REFUSE	EXPECTED	spinel-mlirgen: unsupported: one_step: `a[i] = v` writes into a heap object; see `[]`. A buffer declared `:out` or `:inout` is the exception.
+c01_control_ok	gradfs	ACCEPT	ACCEPT	EXPECTED	spinel-gradfs: c01_control_ok -- 1 gradient(s), adjoint(s) diffesp_ok_loss,diffespinel_ok_loss, 0 alloca, 2301 B
+c01_control_ok	mlirgen	ACCEPT	ACCEPT	EXPECTED	spinel-mlirgen: wrote /tmp/spinel-llvm-scratch/session-a/e079/reject/b/c01_control_ok.o (obj, wasm32-wasip1) -- spine

@@ -1,0 +1,12 @@
+# tools/app/adapters/pwm/class.tsv -- the Pwm class (decision 0014 §3)
+# key	value
+module	Pwm
+source	children pwm-leds
+controller	pwms
+table	struct pwm_dt_spec
+spec	PWM_DT_SPEC_GET(%NODE%)
+header	zephyr/drivers/pwm.h
+fn	set(index: u32, value: u32) -> i32
+safe_state	set(index, 0)
+index_guard	on
+subsystem	CONFIG_PWM

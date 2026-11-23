@@ -1,0 +1,17 @@
+# tools/doom/core-cycles.tsv — decision 0008 task 1's recursion table.
+#
+# One row per recursive component of the resolved call graph. The audit finds
+# the components itself (Tarjan over the closure); this table says, for each,
+# what bounds it on valid input and what shape it takes once a CORE entry can
+# no longer recurse. A component with no anchor here, or with two, fails the
+# run -- so a new cycle cannot appear unnoticed.
+#
+# `anchor` is a member that identifies the component. `termination` is the rule
+# that makes it finite on valid input. `frame` is the proposed iterative
+# representation, which Task 1 records and a later task implements.
+#
+# anchor	kind	termination	frame
+Renderer#render_bsp_node	bsp	The BSP tree is finite and acyclic: every child index is strictly a subnode or a leaf, and the node count comes from the map lump. Depth is bounded by the tree's height.	PROTOTYPE, not implemented. examples/doom/core/src/bspwalk.rb holds only the small helpers -- push, near, far, is-leaf, leaf-index and the side predicate. THE TRAVERSAL LOOP ITSELF LIVES IN tests/doom-core/bsp-model.rb, in Ruby, and is not CORE source; nothing here is compiled to a CORE object or invoked natively. Mac review of 33da4d9 asked for this correction and it is right: an entry that walks the tree does not exist yet. tests/doom-core/bsp-model.rb compares the visit order and the answer against the recursion over E1M1's real tree.
+Game#cross_bsp_node	bsp	The same BSP tree, walked for line crossing. Finite and acyclic for the same reason.	PROTOTYPE, the same frames, and the same limits as the row above: the loop is in bsp-model.rb, not in CORE source, and is not compiled. The phase field is what keeps the test between the two children at the point the original runs it.
+Game#recursive_sound	sound	A SECTOR IS NOT ENTERED ONCE. The guard is `validcount == current AND soundtraversed <= soundblocks + 1`, so a sector already visited IS re-entered when the sound reaches it more cheaply, and the second visit overwrites the first. What bounds the walk is that soundblocks never decreases along a path and the cheaper-reach test strictly decreases the recorded cost, so re-entry cannot repeat forever. AND THE SOUND CROSSES AT MOST ONE SOUNDBLOCK LINE, not two: `recursive_sound(other, 1) if soundblocks == 0` fires only while soundblocks is 0, so once one ML_SOUNDBLOCK line is crossed no other can be. Both of these were wrong here and were corrected after Mac review of 33da4d9.	PROTOTYPE. examples/doom/core/src/bspwalk.rb's sound half holds only skip, mark and other; THE LOOP IS IN tests/doom-core/sound-model.rb and is not compiled. The frame is (sector, soundblocks, LINE INDEX) -- the line index because the original recurses from inside the loop over the sector's lines and continues it when the call returns, so a stack of sectors alone would restart each loop. tests/doom-core/sound-model.rb compares the visit order and both marked arrays.
+Game#dispatch_action	action	Not structurally bounded: this is the 62-member knot of thing actions, weapon actions, blockmap iteration and damage, which recurs when one action spawns or damages a thing that acts in turn. Vanilla bounds it by the thing count and by each action returning before the next tic.	Unresolved. This component is the reason Task 1 exists, and the iterative representation is the decision this table is not yet in a position to record. Naming it here keeps it from being discovered during conversion.
